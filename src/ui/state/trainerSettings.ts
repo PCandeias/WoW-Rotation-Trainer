@@ -156,7 +156,7 @@ function createDefaultHudLayoutSettings(): HudLayoutSettings {
     buffIcons: { xPct: 50, yPct: 54.513064133016634, scale: 1 },
     buffBars: { xPct: 62.047244094488185, yPct: 45.72446555819478, scale: 1 },
     consumables: { xPct: 38.79265091863517, yPct: 72.56532066508314, scale: 1 },
-    challengePlayfield: { xPct: 50, yPct: 21.920087624397656, scale: 1.9181818181818182 },
+    challengePlayfield: { xPct: 50, yPct: 39, scale: 1 },
     playerFrame: { xPct: 33.43832020997375, yPct: 62.871222552358866, scale: 1 },
     resourceFrame: { xPct: 50, yPct: 62.871222552358866, scale: 1 },
     targetFrame: { xPct: 66.4, yPct: 61, scale: 1 },
@@ -209,7 +209,7 @@ function createDefaultActionBarSettings(): ActionBarSettings {
           { spellIds: ['slicing_winds'], keybind: '9' },
           { spellIds: ['touch_of_death'], keybind: ']' },
           { spellIds: ['touch_of_karma'], keybind: 'shift+r' },
-          { spellIds: ['berserking'], keybind: 'ctrl+3' },
+          { spellIds: [], keybind: 'ctrl+4' },
         ],
       },
       bar2: {
@@ -218,8 +218,8 @@ function createDefaultActionBarSettings(): ActionBarSettings {
         buttonsPerRow: 10,
         buttons: [
           { spellIds: ['algethar_puzzle_box'], keybind: 'ctrl+2' },
-          { spellIds: ['potion'], keybind: 'ctrl+3' },
-          { spellIds: [], keybind: '3' },
+          { spellIds: ['berserking'], keybind: 'ctrl+3' },
+          { spellIds: ['potion'], keybind: 'ctrl+4' },
           { spellIds: [], keybind: '4' },
           { spellIds: [], keybind: '5' },
           { spellIds: [], keybind: '6' },
@@ -253,7 +253,7 @@ export function getDefaultTrainerSettings(): TrainerSettings {
     },
     encounterPreset: 'fight90',
     audio: {
-      musicVolume: 24,
+      musicVolume: 10,
     },
     talents: [
       'against_all_odds',
@@ -873,6 +873,7 @@ function sanitizeHudLayoutSettings(value: unknown, fallback: HudLayoutSettings):
   }
 
   const legacyActionBar = sanitizeHudGroupLayout(value.actionBar, fallback.actionBar1);
+  const challengePlayfield = sanitizeHudGroupLayout(value.challengePlayfield, fallback.challengePlayfield);
 
   return {
     enemyIcon: sanitizeHudGroupLayout(value.enemyIcon, fallback.enemyIcon),
@@ -881,7 +882,9 @@ function sanitizeHudLayoutSettings(value: unknown, fallback: HudLayoutSettings):
     buffIcons: sanitizeHudGroupLayout(value.buffIcons, fallback.buffIcons),
     buffBars: sanitizeHudGroupLayout(value.buffBars, fallback.buffBars),
     consumables: sanitizeHudGroupLayout(value.consumables, fallback.consumables),
-    challengePlayfield: sanitizeHudGroupLayout(value.challengePlayfield, fallback.challengePlayfield),
+    challengePlayfield: shouldResetLegacyChallengePlayfield(challengePlayfield)
+      ? { ...fallback.challengePlayfield }
+      : challengePlayfield,
     playerFrame: sanitizeHudGroupLayout(value.playerFrame, fallback.playerFrame),
     resourceFrame: sanitizeHudGroupLayout(value.resourceFrame, fallback.resourceFrame),
     targetFrame: sanitizeHudGroupLayout(value.targetFrame, fallback.targetFrame),
@@ -920,6 +923,18 @@ function clampLayoutPct(value: unknown, fallback: number): number {
   }
 
   return Math.min(95, Math.max(5, value));
+}
+
+function shouldResetLegacyChallengePlayfield(layout: HudGroupLayout): boolean {
+  return (
+    nearlyEqual(layout.xPct, 50)
+    && nearlyEqual(layout.yPct, 21.920087624397656)
+    && nearlyEqual(layout.scale, 1.9181818181818182)
+  );
+}
+
+function nearlyEqual(left: number, right: number): boolean {
+  return Math.abs(left - right) < 0.0001;
 }
 
 function sanitizeActionBarButtons(

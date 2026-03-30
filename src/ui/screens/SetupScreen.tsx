@@ -240,19 +240,28 @@ export function SetupScreen({
   ];
 
   const root: CSSProperties = {
-    minHeight: '100vh',
+    height: '100dvh',
     background: `radial-gradient(circle at top, rgba(96, 122, 168, 0.16), transparent 30%), ${T.bg}`,
     color: T.text,
     fontFamily: FONTS.body,
     padding: '24px',
+    boxSizing: 'border-box',
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    overflow: 'hidden',
   };
 
   const shell: CSSProperties = {
+    flex: 1,
     maxWidth: 1380,
     margin: '0 auto',
     display: 'grid',
     gridTemplateColumns: '260px minmax(0, 1fr)',
     gap: 24,
+    width: '100%',
+    minHeight: 0,
+    overflow: 'hidden',
   };
 
   const sidebar: CSSProperties = {
@@ -261,16 +270,33 @@ export function SetupScreen({
     display: 'flex',
     flexDirection: 'column',
     gap: 10,
-    alignSelf: 'start',
+    minHeight: 0,
+    height: '100%',
+    boxSizing: 'border-box',
+    overflowY: 'auto',
   };
 
   const panel: CSSProperties = {
     ...buildPanelStyle({ elevated: true }),
     padding: '20px 24px',
-    minHeight: 'calc(100vh - 40px)',
     display: 'flex',
     flexDirection: 'column',
     gap: 18,
+    minHeight: 0,
+    height: '100%',
+    boxSizing: 'border-box',
+    overflow: 'hidden',
+  };
+
+  const panelContent: CSSProperties = {
+    flex: 1,
+    display: 'grid',
+    gap: 18,
+    minHeight: 0,
+    minWidth: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    paddingRight: 4,
   };
 
   const headerRow: CSSProperties = {
@@ -952,38 +978,40 @@ export function SetupScreen({
             </button>
           </div>
 
-          <div style={summaryGrid}>
-            <div style={summaryCard}>
-              <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Mode</div>
-              <div style={{ color: T.textBright, marginTop: 8 }}>{settings.mode}</div>
-            </div>
-            <div style={summaryCard}>
-              <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Fight Type</div>
+          <div data-testid="setup-panel-content" style={panelContent}>
+            <div style={summaryGrid}>
+              <div style={summaryCard}>
+                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Mode</div>
+                <div style={{ color: T.textBright, marginTop: 8 }}>{settings.mode}</div>
+              </div>
+              <div style={summaryCard}>
+                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Fight Type</div>
                 <div style={{ color: T.textBright, marginTop: 8 }}>{getEncounterPresetLabel(settings.encounterPreset)}</div>
               </div>
-            <div style={summaryCard}>
-              <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Duration</div>
-              <div style={{ color: T.textBright, marginTop: 8 }}>{encounterDuration}s</div>
-            </div>
-            <div style={summaryCard}>
-              <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Raid Effects</div>
-              <div style={{ color: T.textBright, marginTop: 8 }}>{enabledExternalBuffs.length} enabled</div>
-            </div>
-            {settings.mode === 'practice' && (
               <div style={summaryCard}>
-                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Practice Speed</div>
-                <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.practiceSpeedMultiplier}</div>
+                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Duration</div>
+                <div style={{ color: T.textBright, marginTop: 8 }}>{encounterDuration}s</div>
               </div>
-            )}
-            {settings.mode === 'challenge' && (
               <div style={summaryCard}>
-                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Element Speed</div>
-                <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.challenge.disappearSpeedMultiplier}</div>
+                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Raid Effects</div>
+                <div style={{ color: T.textBright, marginTop: 8 }}>{enabledExternalBuffs.length} enabled</div>
               </div>
-            )}
-          </div>
+              {settings.mode === 'practice' && (
+                <div style={summaryCard}>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Practice Speed</div>
+                  <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.practiceSpeedMultiplier}</div>
+                </div>
+              )}
+              {settings.mode === 'challenge' && (
+                <div style={summaryCard}>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Element Speed</div>
+                  <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.challenge.disappearSpeedMultiplier}</div>
+                </div>
+              )}
+            </div>
 
-          {renderTabContent()}
+            {renderTabContent()}
+          </div>
         </main>
       </div>
 

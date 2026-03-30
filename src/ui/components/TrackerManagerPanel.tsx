@@ -115,16 +115,31 @@ export function TrackerManagerPanel({
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) 84px',
     gap: 16,
-    minHeight: 500,
+    minHeight: 0,
+    height: '100%',
   };
 
   const managerShell: CSSProperties = {
     ...buildPanelStyle({ elevated: true }),
     padding: 18,
-    display: 'grid',
+    display: 'flex',
+    flexDirection: 'column',
     gap: 16,
     position: 'relative',
+    minHeight: 0,
+    height: '100%',
     overflow: 'hidden',
+  };
+
+  const managerContent: CSSProperties = {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    overflowY: 'auto',
+    overflowX: 'hidden',
+    display: 'grid',
+    gap: 16,
+    paddingRight: 4,
   };
 
   const managerTabRail: CSSProperties = {
@@ -132,6 +147,8 @@ export function TrackerManagerPanel({
     flexDirection: 'column',
     gap: 10,
     alignItems: 'stretch',
+    minHeight: 0,
+    height: '100%',
   };
 
   const tabButtonStyle = (active: boolean): CSSProperties => ({
@@ -593,179 +610,181 @@ export function TrackerManagerPanel({
           </div>
         </div>
 
-        {activeTab === 'cooldowns' && renderCooldownsTab()}
-        {activeTab === 'buffs' && renderBuffsTab()}
-        {activeTab === 'consumables' && renderConsumablesTab()}
+        <div data-testid="tracker-manager-content" style={managerContent}>
+          {activeTab === 'cooldowns' && renderCooldownsTab()}
+          {activeTab === 'buffs' && renderBuffsTab()}
+          {activeTab === 'consumables' && renderConsumablesTab()}
 
-        <HudLayoutPreview
-          layout={settings.hud.layout}
-          actionBars={settings.actionBars}
-          trackerRows={{
-            essentialCooldowns: settings.hud.cooldowns.essential.iconsPerRow ?? 12,
-            utilityCooldowns: settings.hud.cooldowns.utility.iconsPerRow ?? 12,
-            buffIcons: settings.hud.buffs.iconTracker.iconsPerRow ?? 12,
-            consumables: settings.hud.consumables.iconsPerRow ?? 12,
-          }}
-          visibility={{
-            enemyIcon: settings.hud.general.showEnemyIcon,
-            essentialCooldowns: settings.hud.cooldowns.essential.enabled,
-            utilityCooldowns: settings.hud.cooldowns.utility.enabled,
-            buffIcons: settings.hud.buffs.iconTracker.enabled,
-            buffBars: settings.hud.buffs.barTracker.enabled,
-            consumables: settings.hud.consumables.enabled,
-            challengePlayfield: true,
-            playerFrame: true,
-            resourceFrame: true,
-            targetFrame: true,
-            castBar: true,
-            actionBar1: settings.actionBars.bars.bar1.enabled,
-            actionBar2: settings.actionBars.bars.bar2.enabled,
-            actionBar3: settings.actionBars.bars.bar3.enabled,
-            actionBar4: settings.actionBars.bars.bar4.enabled,
-            actionBar5: settings.actionBars.bars.bar5.enabled,
-          }}
-          cooldownTracking={settings.hud.cooldowns}
-          buffTracking={{
-            iconTracker: settings.hud.buffs.iconTracker,
-            barTracker: settings.hud.buffs.barTracker,
-            targetDebuffs: settings.hud.targetDebuffs,
-          }}
-          consumableTracking={settings.hud.consumables}
-          onChange={onChange}
-          launchRequest={null}
-          onOpenEditor={onOpenHudLayoutEditor}
-        />
-
-        {currentContextConfig && (
-          <section
-            style={{
-              border: `1px solid ${T.borderBright}`,
-              borderRadius: 16,
-              padding: 14,
-              background: 'rgba(0,0,0,0.28)',
-              display: 'grid',
-              gap: 10,
+          <HudLayoutPreview
+            layout={settings.hud.layout}
+            actionBars={settings.actionBars}
+            trackerRows={{
+              essentialCooldowns: settings.hud.cooldowns.essential.iconsPerRow ?? 12,
+              utilityCooldowns: settings.hud.cooldowns.utility.iconsPerRow ?? 12,
+              buffIcons: settings.hud.buffs.iconTracker.iconsPerRow ?? 12,
+              consumables: settings.hud.consumables.iconsPerRow ?? 12,
             }}
-          >
-            <div style={headerRow}>
-              <div>
-                <div style={{ fontFamily: FONTS.display, color: T.textBright, fontSize: '0.98rem' }}>
-                  {currentContextConfig.entry.displayName}
+            visibility={{
+              enemyIcon: settings.hud.general.showEnemyIcon,
+              essentialCooldowns: settings.hud.cooldowns.essential.enabled,
+              utilityCooldowns: settings.hud.cooldowns.utility.enabled,
+              buffIcons: settings.hud.buffs.iconTracker.enabled,
+              buffBars: settings.hud.buffs.barTracker.enabled,
+              consumables: settings.hud.consumables.enabled,
+              challengePlayfield: true,
+              playerFrame: true,
+              resourceFrame: true,
+              targetFrame: true,
+              castBar: true,
+              actionBar1: settings.actionBars.bars.bar1.enabled,
+              actionBar2: settings.actionBars.bars.bar2.enabled,
+              actionBar3: settings.actionBars.bars.bar3.enabled,
+              actionBar4: settings.actionBars.bars.bar4.enabled,
+              actionBar5: settings.actionBars.bars.bar5.enabled,
+            }}
+            cooldownTracking={settings.hud.cooldowns}
+            buffTracking={{
+              iconTracker: settings.hud.buffs.iconTracker,
+              barTracker: settings.hud.buffs.barTracker,
+              targetDebuffs: settings.hud.targetDebuffs,
+            }}
+            consumableTracking={settings.hud.consumables}
+            onChange={onChange}
+            launchRequest={null}
+            onOpenEditor={onOpenHudLayoutEditor}
+          />
+
+          {currentContextConfig && (
+            <section
+              style={{
+                border: `1px solid ${T.borderBright}`,
+                borderRadius: 16,
+                padding: 14,
+                background: 'rgba(0,0,0,0.28)',
+                display: 'grid',
+                gap: 10,
+              }}
+            >
+              <div style={headerRow}>
+                <div>
+                  <div style={{ fontFamily: FONTS.display, color: T.textBright, fontSize: '0.98rem' }}>
+                    {currentContextConfig.entry.displayName}
+                  </div>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', marginTop: 4 }}>
+                    Right-click options
+                  </div>
                 </div>
-                <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', marginTop: 4 }}>
-                  Right-click options
-                </div>
+                <button type="button" style={toggleButton(false)} onClick={(): void => setContextEntry(null)}>
+                  Close
+                </button>
               </div>
-              <button type="button" style={toggleButton(false)} onClick={(): void => setContextEntry(null)}>
-                Close
-              </button>
-            </div>
 
-            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                aria-pressed={currentContextConfig.enabled}
-                style={toggleButton(currentContextConfig.enabled)}
-                onClick={(): void => {
-                  onClearMessages();
-                  if (currentContextConfig.groupKey.startsWith('buffs.')) {
-                    toggleBuffTracked(onChange, currentContextConfig.entryId);
-                  } else {
-                    toggleTrackedEntry(onChange, currentContextConfig.groupKey, currentContextConfig.entryId);
-                  }
-                }}
-              >
-                {currentContextConfig.groupKey.startsWith('buffs.')
-                  ? currentContextConfig.buffAssignment === 'hidden'
-                    ? 'Hidden from trackers'
-                    : `Tracked as ${currentContextConfig.buffAssignment === 'bars' ? 'bar' : 'icon'}`
-                  : currentContextConfig.enabled
-                    ? 'Tracked in group'
-                    : 'Hidden from group'}
-              </button>
-
-              {currentContextConfig.groupKey.startsWith('buffs.') && (
-                <>
-                  <button
-                    type="button"
-                    aria-pressed={currentContextConfig.buffAssignment === 'icons'}
-                    style={toggleButton(currentContextConfig.buffAssignment === 'icons')}
-                    onClick={(): void => {
-                      onClearMessages();
-                      setBuffAssignment(onChange, currentContextConfig.entryId, 'icons');
-                    }}
-                  >
-                    Move to Icon Group
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={currentContextConfig.buffAssignment === 'bars'}
-                    style={toggleButton(currentContextConfig.buffAssignment === 'bars')}
-                    onClick={(): void => {
-                      onClearMessages();
-                      setBuffAssignment(onChange, currentContextConfig.entryId, 'bars');
-                    }}
-                  >
-                    Move to Bar Group
-                  </button>
-                </>
-              )}
-
-              {currentContextConfig.groupKey.startsWith('cooldowns.') && (
-                <>
-                  <button
-                    type="button"
-                    aria-pressed={currentContextConfig.cooldownAssignment === 'essential'}
-                    style={toggleButton(currentContextConfig.cooldownAssignment === 'essential')}
-                    onClick={(): void => {
-                      onClearMessages();
-                      setCooldownAssignment(onChange, currentContextConfig.entryId, 'essential');
-                    }}
-                  >
-                    Move to Essential
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={currentContextConfig.cooldownAssignment === 'utility'}
-                    style={toggleButton(currentContextConfig.cooldownAssignment === 'utility')}
-                    onClick={(): void => {
-                      onClearMessages();
-                      setCooldownAssignment(onChange, currentContextConfig.entryId, 'utility');
-                    }}
-                  >
-                    Move to Utility
-                  </button>
-                </>
-              )}
-
-              <button
-                type="button"
-                aria-pressed={currentContextConfig.options.glowWhenReady}
-                style={toggleButton(currentContextConfig.options.glowWhenReady)}
-                onClick={(): void => {
-                  onClearMessages();
-                  updateEntryOption(onChange, currentContextConfig.groupKey, currentContextConfig.entryId, 'glowWhenReady');
-                }}
-              >
-                Glow When Ready
-              </button>
-
-              {currentContextConfig.entry.supportsProcGlow && (
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                 <button
                   type="button"
-                  aria-pressed={currentContextConfig.options.disableProcGlow}
-                  style={toggleButton(currentContextConfig.options.disableProcGlow)}
+                  aria-pressed={currentContextConfig.enabled}
+                  style={toggleButton(currentContextConfig.enabled)}
                   onClick={(): void => {
                     onClearMessages();
-                    updateEntryOption(onChange, currentContextConfig.groupKey, currentContextConfig.entryId, 'disableProcGlow');
+                    if (currentContextConfig.groupKey.startsWith('buffs.')) {
+                      toggleBuffTracked(onChange, currentContextConfig.entryId);
+                    } else {
+                      toggleTrackedEntry(onChange, currentContextConfig.groupKey, currentContextConfig.entryId);
+                    }
                   }}
                 >
-                  Disable Proc Glow
+                  {currentContextConfig.groupKey.startsWith('buffs.')
+                    ? currentContextConfig.buffAssignment === 'hidden'
+                      ? 'Hidden from trackers'
+                      : `Tracked as ${currentContextConfig.buffAssignment === 'bars' ? 'bar' : 'icon'}`
+                    : currentContextConfig.enabled
+                      ? 'Tracked in group'
+                      : 'Hidden from group'}
                 </button>
-              )}
-            </div>
-          </section>
-        )}
+
+                {currentContextConfig.groupKey.startsWith('buffs.') && (
+                  <>
+                    <button
+                      type="button"
+                      aria-pressed={currentContextConfig.buffAssignment === 'icons'}
+                      style={toggleButton(currentContextConfig.buffAssignment === 'icons')}
+                      onClick={(): void => {
+                        onClearMessages();
+                        setBuffAssignment(onChange, currentContextConfig.entryId, 'icons');
+                      }}
+                    >
+                      Move to Icon Group
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={currentContextConfig.buffAssignment === 'bars'}
+                      style={toggleButton(currentContextConfig.buffAssignment === 'bars')}
+                      onClick={(): void => {
+                        onClearMessages();
+                        setBuffAssignment(onChange, currentContextConfig.entryId, 'bars');
+                      }}
+                    >
+                      Move to Bar Group
+                    </button>
+                  </>
+                )}
+
+                {currentContextConfig.groupKey.startsWith('cooldowns.') && (
+                  <>
+                    <button
+                      type="button"
+                      aria-pressed={currentContextConfig.cooldownAssignment === 'essential'}
+                      style={toggleButton(currentContextConfig.cooldownAssignment === 'essential')}
+                      onClick={(): void => {
+                        onClearMessages();
+                        setCooldownAssignment(onChange, currentContextConfig.entryId, 'essential');
+                      }}
+                    >
+                      Move to Essential
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={currentContextConfig.cooldownAssignment === 'utility'}
+                      style={toggleButton(currentContextConfig.cooldownAssignment === 'utility')}
+                      onClick={(): void => {
+                        onClearMessages();
+                        setCooldownAssignment(onChange, currentContextConfig.entryId, 'utility');
+                      }}
+                    >
+                      Move to Utility
+                    </button>
+                  </>
+                )}
+
+                <button
+                  type="button"
+                  aria-pressed={currentContextConfig.options.glowWhenReady}
+                  style={toggleButton(currentContextConfig.options.glowWhenReady)}
+                  onClick={(): void => {
+                    onClearMessages();
+                    updateEntryOption(onChange, currentContextConfig.groupKey, currentContextConfig.entryId, 'glowWhenReady');
+                  }}
+                >
+                  Glow When Ready
+                </button>
+
+                {currentContextConfig.entry.supportsProcGlow && (
+                  <button
+                    type="button"
+                    aria-pressed={currentContextConfig.options.disableProcGlow}
+                    style={toggleButton(currentContextConfig.options.disableProcGlow)}
+                    onClick={(): void => {
+                      onClearMessages();
+                      updateEntryOption(onChange, currentContextConfig.groupKey, currentContextConfig.entryId, 'disableProcGlow');
+                    }}
+                  >
+                    Disable Proc Glow
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+        </div>
       </div>
 
       <div style={managerTabRail}>

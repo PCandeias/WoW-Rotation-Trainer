@@ -49,6 +49,8 @@ interface DragState {
   startClientX: number;
   startClientY: number;
   startPosition: HudGroupLayout;
+  baseWidth: number;
+  baseHeight: number;
 }
 
 interface PositionEditorState {
@@ -125,6 +127,11 @@ const SNAP_THRESHOLD_PCT = 1.25;
 const CENTER_GUIDE_PCT = 50;
 const MIN_LAYOUT_SCALE = 0.5;
 const MAX_LAYOUT_SCALE = 2.5;
+const POPOVER_MARGIN_PX = 12;
+const POSITION_EDITOR_WIDTH_PX = 220;
+const POSITION_EDITOR_HEIGHT_PX = 420;
+const BUTTON_EDITOR_WIDTH_PX = 340;
+const BUTTON_EDITOR_HEIGHT_PX = 560;
 const PREVIEW_CURRENT_TIME = 42;
 const PREVIEW_CHALLENGE_PLAYFIELD: ChallengePlayfield = {
   width: 760,
@@ -184,6 +191,18 @@ const PREVIEW_CHALLENGE_NOTES: ChallengeNoteRuntime[] = [
     pointerActive: false,
   },
 ];
+
+interface CanvasMetrics {
+  width: number;
+  height: number;
+  left: number;
+  top: number;
+}
+
+const FALLBACK_GROUP_BASE_SIZES: Partial<Record<HudLayoutGroupKey, { width: number; height: number }>> = {
+  enemyIcon: { width: 72, height: 96 },
+  challengePlayfield: { width: PREVIEW_CHALLENGE_PLAYFIELD.width, height: PREVIEW_CHALLENGE_PLAYFIELD.height },
+};
 const PREVIEW_GAME_STATE: GameStateSnapshot = {
   chi: 4,
   chiMax: 6,
@@ -419,14 +438,14 @@ export function HudLayoutPreview({
   };
 
   const handleDragMove = (groupKey: HudLayoutGroupKey, clientX: number, clientY: number): void => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    const width = rect?.width && rect.width > 0 ? rect.width : 1000;
-    const height = rect?.height && rect.height > 0 ? rect.height : 600;
-    const left = rect?.left ?? 0;
-    const top = rect?.top ?? 0;
+    if (!dragState) {
+      return;
+    }
 
-    const baseX = clampPct(((clientX - left) / width) * 100);
-    const baseY = clampPct(((clientY - top) / height) * 100);
+    const metrics = getCanvasMetrics(canvasRef.current);
+
+    const baseX = clampPct(((clientX - metrics.left) / metrics.width) * 100);
+    const baseY = clampPct(((clientY - metrics.top) / metrics.height) * 100);
 
     const otherPositions = (Object.entries(draftLayout) as [HudLayoutGroupKey, HudGroupLayout][])
       .filter(([key]) => key !== groupKey)
@@ -440,22 +459,46 @@ export function HudLayoutPreview({
       y: snapEnabled && snappedY !== baseY ? snappedY : null,
     });
 
-    updateDraftPosition(groupKey, {
-      xPct: snappedX,
-      yPct: snappedY,
-      scale: draftLayout[groupKey].scale,
-    });
+    updateDraftPosition(
+      groupKey,
+      clampLayoutPositionToCanvas(
+        {
+          xPct: snappedX,
+          yPct: snappedY,
+          scale: draftLayout[groupKey].scale,
+        },
+        metrics,
+        dragState.baseWidth,
+        dragState.baseHeight,
+      ),
+    );
   };
 
   const handleResizeMove = (drag: DragState, clientX: number, clientY: number): void => {
     const deltaX = clientX - drag.startClientX;
     const deltaY = clientY - drag.startClientY;
     const deltaScale = Math.max(deltaX, deltaY) / 220;
+    const metrics = getCanvasMetrics(canvasRef.current);
+    const nextScale = clampScaleToCanvasBounds(
+      drag.startPosition.scale + deltaScale,
+      drag.startPosition,
+      metrics,
+      drag.baseWidth,
+      drag.baseHeight,
+    );
 
-    updateDraftPosition(drag.key, {
-      ...drag.startPosition,
-      scale: clampScale(drag.startPosition.scale + deltaScale),
-    });
+    updateDraftPosition(
+      drag.key,
+      clampLayoutPositionToCanvas(
+        {
+          ...drag.startPosition,
+          scale: nextScale,
+        },
+        metrics,
+        drag.baseWidth,
+        drag.baseHeight,
+      ),
+    );
   };
 
   useEffect(() => {
@@ -690,24 +733,34 @@ export function HudLayoutPreview({
                 previewBuffBlacklist,
                 keybindMode,
                 onMouseDown: (event): void => {
+                  const rect = event.currentTarget.getBoundingClientRect();
+                  const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
+                  const baseSize = resolveBaseGroupSize(group.key, rect.width / scale, rect.height / scale);
                   setDragState({
                     key: group.key,
                     mode: 'move',
                     startClientX: event.clientX,
                     startClientY: event.clientY,
                     startPosition: draftLayout[group.key],
+                    baseWidth: baseSize.width,
+                    baseHeight: baseSize.height,
                   });
                   setPositionEditor(null);
                   setButtonEditor(null);
                 },
                 onResizeMouseDown: (event): void => {
                   event.stopPropagation();
+                  const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+                  const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
+                  const baseSize = resolveBaseGroupSize(group.key, (rect?.width ?? 0) / scale, (rect?.height ?? 0) / scale);
                   setDragState({
                     key: group.key,
                     mode: 'resize',
                     startClientX: event.clientX,
                     startClientY: event.clientY,
                     startPosition: draftLayout[group.key],
+                    baseWidth: baseSize.width,
+                    baseHeight: baseSize.height,
                   });
                   setPositionEditor(null);
                   setButtonEditor(null);
@@ -756,8 +809,12 @@ export function HudLayoutPreview({
                   data-testid="hud-layout-position-editor"
                   style={{
                     ...positionEditorStyle,
-                    left: `${Math.min(70, Math.max(6, ((positionEditor.anchorX - (canvasRef.current?.getBoundingClientRect().left ?? 0)) / ((canvasRef.current?.getBoundingClientRect().width ?? 1000) || 1000)) * 100))}%`,
-                    top: `${Math.min(70, Math.max(8, ((positionEditor.anchorY - (canvasRef.current?.getBoundingClientRect().top ?? 0)) / ((canvasRef.current?.getBoundingClientRect().height ?? 600) || 600)) * 100))}%`,
+                    ...clampViewportPopoverPosition(
+                      positionEditor.anchorX,
+                      positionEditor.anchorY,
+                      POSITION_EDITOR_WIDTH_PX,
+                      POSITION_EDITOR_HEIGHT_PX,
+                    ),
                   }}
                 >
                   <div style={{ fontFamily: FONTS.display, color: T.textBright, fontSize: '0.9rem' }}>
@@ -888,11 +945,31 @@ export function HudLayoutPreview({
                           return;
                         }
 
-                        updateDraftPosition(positionEditor.key, {
-                          xPct: clampPct(Number(positionEditor.xDraft)),
-                          yPct: clampPct(Number(positionEditor.yDraft)),
-                          scale: clampScale(Number(positionEditor.scaleDraft)),
-                        });
+                        const metrics = getCanvasMetrics(canvasRef.current);
+                        const groupElement = canvasRef.current?.querySelector<HTMLElement>(
+                          `[data-testid="hud-layout-group-${positionEditor.key}"]`,
+                        );
+                        const currentScale = Math.max(MIN_LAYOUT_SCALE, draftLayout[positionEditor.key].scale);
+                        const scale = clampScale(Number(positionEditor.scaleDraft));
+                        const baseSize = resolveBaseGroupSize(
+                          positionEditor.key,
+                          groupElement ? groupElement.getBoundingClientRect().width / currentScale : 0,
+                          groupElement ? groupElement.getBoundingClientRect().height / currentScale : 0,
+                        );
+
+                        updateDraftPosition(
+                          positionEditor.key,
+                          clampLayoutPositionToCanvas(
+                            {
+                              xPct: clampPct(Number(positionEditor.xDraft)),
+                              yPct: clampPct(Number(positionEditor.yDraft)),
+                              scale,
+                            },
+                            metrics,
+                            baseSize.width,
+                            baseSize.height,
+                          ),
+                        );
 
                         const actionBarId = getActionBarIdFromLayoutKey(positionEditor.key);
                         if (actionBarId) {
@@ -930,9 +1007,13 @@ export function HudLayoutPreview({
                   data-testid="hud-layout-button-editor"
                   style={{
                     ...positionEditorStyle,
-                    left: `${Math.min(72, Math.max(8, ((buttonEditor.anchorX - (canvasRef.current?.getBoundingClientRect().left ?? 0)) / ((canvasRef.current?.getBoundingClientRect().width ?? 1000) || 1000)) * 100))}%`,
-                    top: `${Math.min(72, Math.max(10, ((buttonEditor.anchorY - (canvasRef.current?.getBoundingClientRect().top ?? 0)) / ((canvasRef.current?.getBoundingClientRect().height ?? 600) || 600)) * 100))}%`,
-                    width: 340,
+                    ...clampViewportPopoverPosition(
+                      buttonEditor.anchorX,
+                      buttonEditor.anchorY,
+                      BUTTON_EDITOR_WIDTH_PX,
+                      BUTTON_EDITOR_HEIGHT_PX,
+                    ),
+                    width: BUTTON_EDITOR_WIDTH_PX,
                   }}
                 >
                   <div style={{ fontFamily: FONTS.display, color: T.textBright, fontSize: '0.9rem' }}>
@@ -1232,6 +1313,18 @@ function renderGroupCard({
       />
     </div>
   );
+}
+
+function clampPopoverCoordinate(value: number, size: number, viewportSize: number): number {
+  const max = Math.max(POPOVER_MARGIN_PX, viewportSize - size - POPOVER_MARGIN_PX);
+  return Math.min(max, Math.max(POPOVER_MARGIN_PX, value));
+}
+
+function clampViewportPopoverPosition(anchorX: number, anchorY: number, width: number, height: number): { left: number; top: number } {
+  return {
+    left: clampPopoverCoordinate(anchorX, width, window.innerWidth),
+    top: clampPopoverCoordinate(anchorY, height, window.innerHeight),
+  };
 }
 
 function MockEncounterBackdrop(): React.ReactElement {
@@ -1644,6 +1737,78 @@ function clampPct(value: number): number {
   return Math.min(95, Math.max(5, value));
 }
 
+function getCanvasMetrics(canvas: HTMLDivElement | null): CanvasMetrics {
+  const rect = canvas?.getBoundingClientRect();
+  return {
+    width: rect?.width && rect.width > 0 ? rect.width : 1000,
+    height: rect?.height && rect.height > 0 ? rect.height : 600,
+    left: rect?.left ?? 0,
+    top: rect?.top ?? 0,
+  };
+}
+
+function resolveBaseGroupSize(groupKey: HudLayoutGroupKey, width: number, height: number): { width: number; height: number } {
+  if (width > 0 && height > 0) {
+    return { width, height };
+  }
+
+  const fallback = FALLBACK_GROUP_BASE_SIZES[groupKey];
+  return {
+    width: fallback?.width ?? width,
+    height: fallback?.height ?? height,
+  };
+}
+
+function clampPercentWithinBounds(value: number, min: number, max: number): number {
+  if (!Number.isFinite(value)) {
+    return CENTER_GUIDE_PCT;
+  }
+
+  if (min > max) {
+    return (min + max) / 2;
+  }
+
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampLayoutPositionToCanvas(
+  position: HudGroupLayout,
+  metrics: CanvasMetrics,
+  baseWidth: number,
+  baseHeight: number,
+): HudGroupLayout {
+  const halfWidthPct = ((baseWidth * position.scale) / 2 / metrics.width) * 100;
+  const halfHeightPct = ((baseHeight * position.scale) / 2 / metrics.height) * 100;
+  const minXPct = Math.max(0, halfWidthPct);
+  const maxXPct = Math.min(100, 100 - halfWidthPct);
+  const minYPct = Math.max(0, halfHeightPct);
+  const maxYPct = Math.min(100, 100 - halfHeightPct);
+
+  return {
+    ...position,
+    xPct: clampPercentWithinBounds(position.xPct, minXPct, maxXPct),
+    yPct: clampPercentWithinBounds(position.yPct, minYPct, maxYPct),
+  };
+}
+
+function clampScaleToCanvasBounds(
+  scale: number,
+  position: HudGroupLayout,
+  metrics: CanvasMetrics,
+  baseWidth: number,
+  baseHeight: number,
+): number {
+  const centerX = (position.xPct / 100) * metrics.width;
+  const centerY = (position.yPct / 100) * metrics.height;
+  const horizontalRoom = Math.max(0, Math.min(centerX, metrics.width - centerX));
+  const verticalRoom = Math.max(0, Math.min(centerY, metrics.height - centerY));
+  const widthLimit = baseWidth > 0 ? (horizontalRoom * 2) / baseWidth : MAX_LAYOUT_SCALE;
+  const heightLimit = baseHeight > 0 ? (verticalRoom * 2) / baseHeight : MAX_LAYOUT_SCALE;
+  const boundedScale = Math.min(scale, widthLimit, heightLimit);
+
+  return clampScale(boundedScale);
+}
+
 function clampScale(value: number): number {
   if (!Number.isFinite(value)) {
     return 1;
@@ -1781,9 +1946,8 @@ const toggleLabelStyle: CSSProperties = {
 
 const positionEditorStyle: CSSProperties = {
   ...buildPanelStyle({ elevated: true, density: 'compact' }),
-  position: 'absolute',
+  position: 'fixed',
   width: 220,
-  transform: 'translate(-50%, 0)',
   borderRadius: 14,
   border: `1px solid ${T.borderBright}`,
   background: 'linear-gradient(180deg, rgba(10, 15, 26, 0.98), rgba(5, 10, 18, 0.96))',
@@ -1791,6 +1955,8 @@ const positionEditorStyle: CSSProperties = {
   display: 'grid',
   gap: 10,
   zIndex: 4,
+  maxHeight: 'calc(100dvh - 24px)',
+  overflowY: 'auto',
 };
 
 const inputLabelStyle: CSSProperties = {
