@@ -5,6 +5,7 @@ import {
   loadEncounterMusicCatalog,
   pickEncounterMusicStartTrack,
   pickNextEncounterMusicTrack,
+  pickSkippedEncounterMusicTrack,
   type ResolvedEncounterMusicTrack,
 } from './encounterMusic';
 
@@ -106,8 +107,8 @@ export function useEncounterMusic({
         return;
       }
 
-      const remainingDuration = Math.max(0, encounterDurationRef.current - simTimeRef.current);
       if (currentTrackIndexRef.current === null) {
+        const remainingDuration = Math.max(0, encounterDurationRef.current - simTimeRef.current);
         const startTrack = pickEncounterMusicStartTrack(catalog, remainingDuration);
         if (startTrack !== null) {
           await playTrack(catalog, startTrack.index);
@@ -115,7 +116,7 @@ export function useEncounterMusic({
         return;
       }
 
-      const nextTrack = pickNextEncounterMusicTrack(catalog, currentTrackIndexRef.current, remainingDuration);
+      const nextTrack = pickSkippedEncounterMusicTrack(catalog, currentTrackIndexRef.current);
       if (nextTrack !== null) {
         await playTrack(catalog, nextTrack.index);
       }

@@ -13,102 +13,49 @@ export interface IndexedEncounterMusicTrack extends ResolvedEncounterMusicTrack 
 }
 
 const TRACK_FIT_BUFFER_SECONDS = 2;
+const ENCOUNTER_MUSIC_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
+  The_Sovereign_s_Last_Sprint: "The Sovereign's Last Sprint",
+};
+
+const encounterMusicAssetModules = import.meta.glob<string>('../../../assets/*.mp3', {
+  eager: true,
+  import: 'default',
+});
+
+function toTrackId(basename: string): string {
+  return basename
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function toTrackTitle(basename: string): string {
+  return basename
+    .split('_')
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ');
+}
+
+function createEncounterMusicTrack(assetPath: string, src: string): EncounterMusicTrack {
+  const basename = assetPath.slice(assetPath.lastIndexOf('/') + 1, assetPath.lastIndexOf('.'));
+  const title = ENCOUNTER_MUSIC_TITLE_OVERRIDES[basename] ?? toTrackTitle(basename);
+
+  return {
+    id: toTrackId(title),
+    title,
+    src,
+  };
+}
 
 /**
  * The encounter playlist used for competitive modes.
  */
-export const ENCOUNTER_MUSIC_TRACKS: readonly EncounterMusicTrack[] = [
-  {
-    id: 'across-the-ancient-canopy',
-    title: 'Across the Ancient Canopy',
-    src: new URL('../../../assets/Across_the_Ancient_Canopy.mp3', import.meta.url).href,
-  },
-  {
-    id: 'apex-of-the-siege',
-    title: 'Apex of the Siege',
-    src: new URL('../../../assets/Apex_of_the_Siege.mp3', import.meta.url).href,
-  },
-  {
-    id: 'ascent-of-the-final-peak',
-    title: 'Ascent of the Final Peak',
-    src: new URL('../../../assets/Ascent_of_the_Final_Peak.mp3', import.meta.url).href,
-  },
-  {
-    id: 'beneath-the-heavy-gate',
-    title: 'Beneath the Heavy Gate',
-    src: new URL('../../../assets/Beneath_the_Heavy_Gate.mp3', import.meta.url).href,
-  },
-  {
-    id: 'golden-horizon-charge',
-    title: 'Golden Horizon Charge',
-    src: new URL('../../../assets/Golden_Horizon_Charge.mp3', import.meta.url).href,
-  },
-  {
-    id: 'iron-against-scales',
-    title: 'Iron Against Scales',
-    src: new URL('../../../assets/Iron_Against_Scales.mp3', import.meta.url).href,
-  },
-  {
-    id: 'leap-above-the-canopy',
-    title: 'Leap Above the Canopy',
-    src: new URL('../../../assets/Leap_Above_the_Canopy.mp3', import.meta.url).href,
-  },
-  {
-    id: 'over-the-ramparts',
-    title: 'Over the Ramparts',
-    src: new URL('../../../assets/Over_the_Ramparts.mp3', import.meta.url).href,
-  },
-  {
-    id: 'siege-of-the-high-peak',
-    title: 'Siege of the High Peak',
-    src: new URL('../../../assets/Siege_of_the_High_Peak.mp3', import.meta.url).href,
-  },
-  {
-    id: 'storming-the-great-hall',
-    title: 'Storming the Great Hall',
-    src: new URL('../../../assets/Storming_the_Great_Hall.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-final-gauntlet',
-    title: 'The Final Gauntlet',
-    src: new URL('../../../assets/The_Final_Gauntlet.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-forge-sovereign',
-    title: 'The Forge Sovereign',
-    src: new URL('../../../assets/The_Forge_Sovereign.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-final-gatekeeper',
-    title: 'The Final Gatekeeper',
-    src: new URL('../../../assets/The_Final_Gatekeeper.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-last-corridor',
-    title: 'The Last Corridor',
-    src: new URL('../../../assets/The_Last_Corridor.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-last-platform',
-    title: 'The Last Platform',
-    src: new URL('../../../assets/The_Last_Platform.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-obsidian-gate-remains',
-    title: 'The Obsidian Gate Remains',
-    src: new URL('../../../assets/The_Obsidian_Gate_Remains.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-sovereigns-last-sprint',
-    title: "The Sovereign's Last Sprint",
-    src: new URL('../../../assets/The_Sovereign_s_Last_Sprint.mp3', import.meta.url).href,
-  },
-  {
-    id: 'the-weight-of-every-step',
-    title: 'The Weight of Every Step',
-    src: new URL('../../../assets/The_Weight_Of_Every_Step.mp3', import.meta.url).href,
-  },
-] as const;
+export const ENCOUNTER_MUSIC_TRACKS: readonly EncounterMusicTrack[] = Object.freeze(
+  Object.entries(encounterMusicAssetModules)
+    .sort(([leftPath], [rightPath]) => leftPath.localeCompare(rightPath))
+    .map(([assetPath, src]) => createEncounterMusicTrack(assetPath, src)),
+);
 
 let cachedCatalogPromise: Promise<ResolvedEncounterMusicTrack[]> | null = null;
 
@@ -133,24 +80,6 @@ function toIndexedTracks(tracks: readonly ResolvedEncounterMusicTrack[]): Indexe
   return tracks.map((track, index) => ({ ...track, index }));
 }
 
-function findShortestKnownTrack(tracks: readonly IndexedEncounterMusicTrack[]): IndexedEncounterMusicTrack | null {
-  return tracks.reduce<IndexedEncounterMusicTrack | null>((shortest, track) => {
-    if (track.durationSeconds === null) {
-      return shortest;
-    }
-
-    if (shortest === null) {
-      return track;
-    }
-
-    if (shortest.durationSeconds === null || track.durationSeconds < shortest.durationSeconds) {
-      return track;
-    }
-
-    return shortest;
-  }, null);
-}
-
 /**
  * Chooses the first encounter track, preferring songs that fit the full run length.
  */
@@ -169,16 +98,11 @@ export function pickEncounterMusicStartTrack(
     return fittingTracks[clampCandidateIndex(fittingTracks.length, random())] ?? fittingTracks[0] ?? null;
   }
 
-  const shortestKnownTrack = findShortestKnownTrack(indexedTracks);
-  if (shortestKnownTrack !== null) {
-    return shortestKnownTrack;
-  }
-
   return indexedTracks[clampCandidateIndex(indexedTracks.length, random())] ?? null;
 }
 
 /**
- * Chooses a random follow-up track that still fits the remaining encounter time.
+ * Chooses a random follow-up track, preferring songs that still fit the remaining encounter time.
  */
 export function pickNextEncounterMusicTrack(
   tracks: readonly ResolvedEncounterMusicTrack[],
@@ -203,7 +127,37 @@ export function pickNextEncounterMusicTrack(
     return currentTrack;
   }
 
-  return null;
+  const alternativeTracksIgnoringDuration = indexedTracks.filter((track) => track.index !== currentTrackIndex);
+  if (alternativeTracksIgnoringDuration.length > 0) {
+    return (
+      alternativeTracksIgnoringDuration[clampCandidateIndex(alternativeTracksIgnoringDuration.length, random())] ??
+      alternativeTracksIgnoringDuration[0] ??
+      null
+    );
+  }
+
+  return indexedTracks[currentTrackIndex] ?? null;
+}
+
+/**
+ * Chooses a different track for an explicit user skip, ignoring encounter duration limits.
+ */
+export function pickSkippedEncounterMusicTrack(
+  tracks: readonly ResolvedEncounterMusicTrack[],
+  currentTrackIndex: number,
+  random: () => number = Math.random,
+): IndexedEncounterMusicTrack | null {
+  if (tracks.length === 0) {
+    return null;
+  }
+
+  const indexedTracks = toIndexedTracks(tracks);
+  const alternativeTracks = indexedTracks.filter((track) => track.index !== currentTrackIndex);
+  if (alternativeTracks.length > 0) {
+    return alternativeTracks[clampCandidateIndex(alternativeTracks.length, random())] ?? alternativeTracks[0] ?? null;
+  }
+
+  return indexedTracks[currentTrackIndex] ?? indexedTracks[0] ?? null;
 }
 
 function resolveTrackDuration(
