@@ -18,8 +18,9 @@ import {
 } from '@ui/state/trainerSettings';
 import { resolveEncounterDuration } from '@ui/state/trainerSettings';
 import { cloneLoadout } from '@core/data/loadout';
+import { getRecentRuns, getSavedRuns, type StoredRunRecord } from '@ui/state/runHistory';
 
-type SetupTab = 'mode' | 'general' | 'loadout' | 'buffs' | 'consumables' | 'gear' | 'hud' | 'action-bars';
+export type SetupTab = 'mode' | 'general' | 'loadout' | 'buffs' | 'consumables' | 'gear' | 'hud' | 'action-bars' | 'history';
 const ACTION_BAR_BUTTON_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1);
 
 function formatSpellIdList(ids: readonly number[]): string {
@@ -45,6 +46,24 @@ function getActionBarLabel(actionBarId: ActionBarId): string {
 
 function getEncounterPresetLabel(encounterPreset: TrainerSettings['encounterPreset']): string {
   return ENCOUNTER_PRESET_OPTIONS.find((option) => option.value === encounterPreset)?.label ?? '1 min 30';
+}
+
+function getModeLabel(mode: TrainerMode): string {
+  return mode.charAt(0).toUpperCase() + mode.slice(1);
+}
+
+function formatHistoryTimestamp(value: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'Unknown date';
+  }
+
+  return parsed.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function parseSpellIdListInput(value: string, label: string, allowedSpellIds?: ReadonlySet<number>): number[] {
@@ -73,6 +92,11 @@ export interface SetupScreenProps {
   onBack: () => void;
   onChange: (settings: TrainerSettingsUpdater) => void;
   onStart: () => void;
+  initialTab?: SetupTab;
+  historyRuns?: readonly StoredRunRecord[];
+  onOpenHistoryRun?: (runId: string) => void;
+  onSaveHistoryRun?: (runId: string, saved: boolean) => void;
+  onDeleteHistoryRun?: (runId: string) => void;
 }
 
 interface ModeCardProps {
@@ -112,8 +136,13 @@ export function SetupScreen({
   onBack,
   onChange,
   onStart,
+  initialTab = 'mode',
+  historyRuns = [],
+  onOpenHistoryRun,
+  onSaveHistoryRun,
+  onDeleteHistoryRun,
 }: SetupScreenProps): React.ReactElement {
-  const [activeTab, setActiveTab] = useState<SetupTab>('mode');
+  const [activeTab, setActiveTab] = useState<SetupTab>(initialTab);
   const [modeOptionsExpanded, setModeOptionsExpanded] = useState(false);
   const [loadoutOpen, setLoadoutOpen] = useState(false);
   const [layoutLaunchRequest, setLayoutLaunchRequest] = useState<{ mode: 'layout' | 'keybind'; nonce: number } | null>(null);
@@ -130,6 +159,8 @@ export function SetupScreen({
     () => Object.entries(settings.loadout.externalBuffs).filter(([, enabled]) => enabled).map(([id]) => id),
     [settings.loadout.externalBuffs],
   );
+  const recentRuns = useMemo(() => getRecentRuns({ runs: [...historyRuns] }), [historyRuns]);
+  const savedRuns = useMemo(() => getSavedRuns({ runs: [...historyRuns] }), [historyRuns]);
   const appliedBuffBlacklist = useMemo(
     () => formatSpellIdList(settings.hud.buffs.iconTracker.blacklistSpellIds),
     [settings.hud.buffs.iconTracker.blacklistSpellIds],
@@ -174,6 +205,10 @@ export function SetupScreen({
   useEffect(() => {
     setModeOptionsExpanded(false);
   }, [settings.mode]);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const clearHudMessages = (): void => {
     setHudFilterError(null);
@@ -237,6 +272,7 @@ export function SetupScreen({
     { id: 'gear', label: 'Gear' },
     { id: 'hud', label: 'HUD' },
     { id: 'action-bars', label: 'Action Bars' },
+    { id: 'history', label: 'History' },
   ];
 
   const root: CSSProperties = {
@@ -958,6 +994,110 @@ export function SetupScreen({
               showLauncher={false}
               launchRequest={layoutLaunchRequest}
             />
+          </>
+        );
+      case 'history':
+        return (
+          <>
+            <section style={{ display: 'grid', gap: 12 }}>
+              <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.82rem', lineHeight: 1.5 }}>
+                Review the last five unsaved runs here, or save standout pulls so they stay available long-term.
+              </div>
+              <div style={summaryGrid}>
+                <div style={summaryCard}>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Saved Runs</div>
+                  <div style={{ color: T.textBright, marginTop: 8 }}>{savedRuns.length}</div>
+                </div>
+                <div style={summaryCard}>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Recent Runs</div>
+                  <div style={{ color: T.textBright, marginTop: 8 }}>{recentRuns.length} / 5</div>
+                </div>
+              </div>
+            </section>
+            {([
+              { title: 'Saved Runs', subtitle: 'Pinned analyses stay until you remove them.', runs: savedRuns },
+              { title: 'Recent Runs', subtitle: 'Unsaved runs auto-rotate so only the latest five remain.', runs: recentRuns },
+            ] as const).map((section) => (
+              <section
+                key={section.title}
+                style={{
+                  display: 'grid',
+                  gap: 12,
+                  border: `1px solid ${T.border}`,
+                  borderRadius: 16,
+                  padding: '14px 16px',
+                  backgroundColor: 'rgba(255,255,255,0.02)',
+                }}
+              >
+                <div style={{ display: 'grid', gap: 4 }}>
+                  <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '1.05rem' }}>{section.title}</div>
+                  <div style={{ color: T.textDim, fontSize: '0.78rem', lineHeight: 1.5 }}>{section.subtitle}</div>
+                </div>
+                {section.runs.length === 0 ? (
+                  <div style={{ color: T.textDim, fontSize: '0.86rem' }}>No runs here yet.</div>
+                ) : (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {section.runs.map((run) => (
+                      <div
+                        key={run.id}
+                        style={{
+                          ...buildPanelStyle({ density: 'compact' }),
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(0, 1fr) auto',
+                          gap: 12,
+                          alignItems: 'center',
+                          padding: '12px 14px',
+                          borderRadius: 14,
+                        }}
+                      >
+                        <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                            <span style={{ color: T.textBright, fontFamily: FONTS.ui }}>{formatHistoryTimestamp(run.createdAt)}</span>
+                            <span style={{ color: T.textDim, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                              {getModeLabel(run.mode)}
+                            </span>
+                            {run.saved && (
+                              <span style={{ color: T.gold, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Saved
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, color: T.textDim, fontSize: '0.82rem' }}>
+                            <span>Your DPS: {Math.round(run.report.score.playerDps).toLocaleString()}</span>
+                            <span>Trainer DPS: {Math.round(run.report.score.trainerDps).toLocaleString()}</span>
+                            <span>Gap: {Math.round((1 - run.report.score.trainerDpsRatio) * 100)}%</span>
+                            <span>Duration: {Math.round(run.duration)}s</span>
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                          <button
+                            type="button"
+                            style={buildControlStyle({ tone: 'primary' })}
+                            onClick={(): void => onOpenHistoryRun?.(run.id)}
+                          >
+                            View Analysis
+                          </button>
+                          <button
+                            type="button"
+                            style={buildControlStyle({ tone: run.saved ? 'secondary' : 'ghost' })}
+                            onClick={(): void => onSaveHistoryRun?.(run.id, !run.saved)}
+                          >
+                            {run.saved ? 'Remove Save' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            style={buildControlStyle({ tone: 'ghost' })}
+                            onClick={(): void => onDeleteHistoryRun?.(run.id)}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </section>
+            ))}
           </>
         );
       default:

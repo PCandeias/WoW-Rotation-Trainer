@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { applyThemeVars, T } from '@ui/theme/elvui';
-import { EncounterScreen } from '@ui/screens/EncounterScreen';
+import { AnalysisReviewScreen, EncounterScreen } from '@ui/screens/EncounterScreen';
 import { SpecSelectionScreen } from '@ui/screens/SpecSelectionScreen';
-import { SetupScreen } from '@ui/screens/SetupScreen';
+import { SetupScreen, type SetupTab } from '@ui/screens/SetupScreen';
 import { cloneLoadout } from '@core/data/loadout';
 import {
   resolveEncounterDuration,
@@ -10,8 +10,15 @@ import {
   toTalentSet,
   useTrainerSettings,
 } from '@ui/state/trainerSettings';
+import {
+  addRunToHistory,
+  createStoredRunRecord,
+  deleteRunFromHistory,
+  saveRunInHistory,
+  useRunHistory,
+} from '@ui/state/runHistory';
 
-type Screen = 'spec-select' | 'setup' | 'encounter';
+type Screen = 'spec-select' | 'setup' | 'encounter' | 'history-review';
 
 /**
  * Root application component.
@@ -22,6 +29,13 @@ type Screen = 'spec-select' | 'setup' | 'encounter';
 export function App(): React.JSX.Element {
   const [screen, setScreen] = useState<Screen>('spec-select');
   const [settings, setSettings] = useTrainerSettings();
+  const [history, setHistory] = useRunHistory();
+  const [setupInitialTab, setSetupInitialTab] = useState<SetupTab>('mode');
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | null>(null);
+  const selectedHistoryRun = useMemo(
+    () => history.runs.find((run) => run.id === selectedHistoryRunId) ?? null,
+    [history.runs, selectedHistoryRunId],
+  );
 
   useEffect(() => {
     applyThemeVars();
@@ -102,6 +116,13 @@ export function App(): React.JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    if (screen === 'history-review' && selectedHistoryRun === null) {
+      setSetupInitialTab('history');
+      setScreen('setup');
+    }
+  }, [screen, selectedHistoryRun]);
+
   if (screen === 'encounter') {
     return (
       <EncounterScreen
@@ -137,7 +158,33 @@ export function App(): React.JSX.Element {
             loadout: cloneLoadout(loadout),
           }));
         }}
-        onExit={() => setScreen('setup')}
+        onAnalysisReady={(result): void => {
+          setHistory((current) => addRunToHistory(current, createStoredRunRecord(result)));
+        }}
+        onExit={() => {
+          setSetupInitialTab('mode');
+          setScreen('setup');
+        }}
+      />
+    );
+  }
+
+  if (screen === 'history-review' && selectedHistoryRun) {
+    return (
+      <AnalysisReviewScreen
+        mode={selectedHistoryRun.mode}
+        duration={selectedHistoryRun.duration}
+        endReason={selectedHistoryRun.endReason}
+        report={selectedHistoryRun.report}
+        onRestart={() => {
+          setSetupInitialTab('mode');
+          setScreen('encounter');
+        }}
+        onExit={() => {
+          setSetupInitialTab('history');
+          setScreen('setup');
+        }}
+        heading="Saved Analysis"
       />
     );
   }
@@ -146,9 +193,27 @@ export function App(): React.JSX.Element {
     return (
       <SetupScreen
         settings={settings}
+        initialTab={setupInitialTab}
+        historyRuns={history.runs}
         onBack={(): void => setScreen('spec-select')}
         onChange={setSettings}
-        onStart={(): void => setScreen('encounter')}
+        onStart={(): void => {
+          setSetupInitialTab('mode');
+          setScreen('encounter');
+        }}
+        onOpenHistoryRun={(runId): void => {
+          setSelectedHistoryRunId(runId);
+          setScreen('history-review');
+        }}
+        onSaveHistoryRun={(runId, saved): void => {
+          setHistory((current) => saveRunInHistory(current, runId, saved));
+        }}
+        onDeleteHistoryRun={(runId): void => {
+          if (selectedHistoryRunId === runId) {
+            setSelectedHistoryRunId(null);
+          }
+          setHistory((current) => deleteRunFromHistory(current, runId));
+        }}
       />
     );
   }
@@ -158,6 +223,7 @@ export function App(): React.JSX.Element {
       selectedSpec={settings.selectedSpec}
       onSelectSpec={(selectedSpec): void => {
         setSettings((current) => ({ ...current, selectedSpec }));
+        setSetupInitialTab('mode');
         setScreen('setup');
       }}
     />

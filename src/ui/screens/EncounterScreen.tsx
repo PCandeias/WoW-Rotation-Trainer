@@ -67,6 +67,12 @@ export interface EncounterScreenProps {
   speedMultiplier?: number;
   challengeSettings?: ChallengeSettings;
   onExit: () => void;
+  onAnalysisReady?: (result: {
+    mode: TrainerMode;
+    duration: number;
+    endReason: string | null;
+    report: RunAnalysisReport;
+  }) => void;
   encounterDuration?: number;
   musicVolume?: number;
   initialTalents?: ReadonlySet<string>;
@@ -106,6 +112,7 @@ export function EncounterScreen({
   speedMultiplier,
   challengeSettings,
   onExit,
+  onAnalysisReady,
   encounterDuration = usesCompetitiveTrainerRules(mode) ? 90 : 120,
   musicVolume = getDefaultTrainerSettings().audio.musicVolume,
   initialTalents,
@@ -350,6 +357,7 @@ export function EncounterScreen({
 
   const showRecommendations = !usesCompetitiveTrainerRules(mode) && hasStarted && countdownValue === null;
   const showChallengePlayfield = challengeEnabled && countdownValue === null && hasStarted && !isEnded;
+  const reportedAnalysisRef = useRef<RunAnalysisReport | null>(null);
   const postRunAnalysis = usePostRunAnalysis({
     enabled: isEnded && analysisTrace !== null,
     specId: 'monk_windwalker',
@@ -359,6 +367,25 @@ export function EncounterScreen({
     loadout,
     playerTrace: analysisTrace,
   });
+
+  useEffect(() => {
+    if (!isEnded) {
+      reportedAnalysisRef.current = null;
+      return;
+    }
+
+    if (postRunAnalysis.status !== 'ready' || postRunAnalysis.report === null || reportedAnalysisRef.current === postRunAnalysis.report) {
+      return;
+    }
+
+    reportedAnalysisRef.current = postRunAnalysis.report;
+    onAnalysisReady?.({
+      mode,
+      duration: finalDuration ?? encounterDuration,
+      endReason,
+      report: postRunAnalysis.report,
+    });
+  }, [encounterDuration, endReason, finalDuration, isEnded, mode, onAnalysisReady, postRunAnalysis]);
 
   // ---------------------------------------------------------------------------
   // Styles
@@ -383,14 +410,14 @@ export function EncounterScreen({
     background: 'radial-gradient(circle at center, rgba(255,255,255,0.03), transparent 42%)',
   };
 
-  const viewportScale = useFixedSceneScale();
+  const viewportScale = useFixedSceneScale({ paddingY: 48 });
   const layoutScale = hudSettings?.general.layoutScale ?? 1;
   const encounterSceneScale = viewportScale * layoutScale;
 
   const encounterStage: CSSProperties = {
     position: 'absolute',
     left: '50%',
-    top: '50%',
+    top: 'calc(50% + 28px)',
     width: `${FIXED_SCENE_WIDTH}px`,
     height: `${FIXED_SCENE_HEIGHT}px`,
     transform: `translate(-50%, -50%) scale(${encounterSceneScale})`,
@@ -1121,6 +1148,9 @@ interface EndScreenProps {
   endReason: string | null;
   onRestart: () => void;
   onExit: () => void;
+  heading?: string;
+  restartLabel?: string;
+  exitLabel?: string;
 }
 
 const ANALYSIS_SERIES = {
@@ -1159,6 +1189,9 @@ function EndScreen({
   endReason,
   onRestart,
   onExit,
+  heading = 'Encounter Complete',
+  restartLabel = 'Run Again',
+  exitLabel = 'Back to Setup',
 }: EndScreenProps): React.ReactElement {
   const trainerRatio = analysisReport?.score.trainerDpsRatio ?? 0;
   const summaryDps = analysisStatus === 'ready' && analysisReport ? analysisReport.score.playerDps : dps;
@@ -1291,8 +1324,8 @@ function EndScreen({
     <div style={overlay}>
       <div style={shell}>
         <div style={{ display: 'grid', gap: 6 }}>
-          <h2 style={title}>Encounter Complete</h2>
-          {failedChallenge && (
+          <h2 style={title}>{heading}</h2>
+          {failedChallenge && heading === 'Encounter Complete' && (
             <div style={{ color: T.red, fontFamily: FONTS.ui, letterSpacing: '0.08em', textTransform: 'uppercase' }}>
               Challenge Failed
             </div>
@@ -1440,14 +1473,56 @@ function EndScreen({
 
         <div style={btnRow}>
           <button style={btnPrimary} onClick={onRestart}>
-            Run Again
+            {restartLabel}
           </button>
           <button style={btnSecondary} onClick={onExit}>
-            Back to Setup
+            {exitLabel}
           </button>
         </div>
       </div>
     </div>
+  );
+}
+
+export interface AnalysisReviewScreenProps {
+  mode: TrainerMode;
+  duration: number;
+  endReason: string | null;
+  report: RunAnalysisReport;
+  onRestart: () => void;
+  onExit: () => void;
+  heading?: string;
+  restartLabel?: string;
+  exitLabel?: string;
+}
+
+export function AnalysisReviewScreen({
+  mode,
+  duration,
+  endReason,
+  report,
+  onRestart,
+  onExit,
+  heading = 'Run Analysis',
+  restartLabel = 'Start New Encounter',
+  exitLabel = 'Back to History',
+}: AnalysisReviewScreenProps): React.ReactElement {
+  return (
+    <EndScreen
+      dps={report.score.playerDps}
+      totalDamage={report.score.playerTotalDamage}
+      duration={duration}
+      mode={mode}
+      analysisStatus="ready"
+      analysisReport={report}
+      analysisError={null}
+      endReason={endReason}
+      onRestart={onRestart}
+      onExit={onExit}
+      heading={heading}
+      restartLabel={restartLabel}
+      exitLabel={exitLabel}
+    />
   );
 }
 
