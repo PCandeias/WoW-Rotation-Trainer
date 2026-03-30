@@ -1133,21 +1133,20 @@ function EndScreen({
 
   const overlay: CSSProperties = {
     width: '100%',
-    height: '100dvh',
-    maxHeight: '100dvh',
+    minHeight: '100dvh',
     background: `radial-gradient(circle at top, rgba(96, 122, 168, 0.16), transparent 28%), ${T.bg}`,
     padding: 16,
     boxSizing: 'border-box',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
   };
 
   const shell: CSSProperties = {
     width: 'min(1880px, 100%)',
-    height: '100%',
-    minHeight: 0,
+    minHeight: 'calc(100dvh - 32px)',
     margin: '0 auto',
     display: 'grid',
-    gridTemplateRows: 'auto auto minmax(0, 1fr) auto',
+    gridTemplateRows: 'auto auto auto auto',
     gap: 16,
   };
 
@@ -1219,10 +1218,9 @@ function EndScreen({
   const reportGrid: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(420px, 1.05fr)',
-    gridTemplateRows: 'minmax(250px, 0.9fr) minmax(360px, 1.2fr) minmax(300px, 1fr)',
+    gridTemplateRows: 'minmax(280px, auto) minmax(380px, auto) minmax(320px, auto)',
     gap: 16,
-    minHeight: 0,
-    overflow: 'hidden',
+    alignItems: 'start',
   };
 
   const btnBase: CSSProperties = {
@@ -1511,7 +1509,7 @@ function AnalysisLineChart({
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: 260 }}>
+    <div style={{ width: '100%', height: 260, minHeight: 260 }}>
       {typeof ResizeObserver === 'undefined'
         ? chart
         : (
@@ -1528,8 +1526,7 @@ function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resou
     <div
       style={{
         width: '100%',
-        height: '100%',
-        minHeight: 260,
+        minHeight: 280,
         display: 'grid',
         gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
         gap: 14,
@@ -1592,7 +1589,7 @@ function ResourceWastePanel({
   return (
     <div style={{ minWidth: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 10 }}>
       <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{title}</div>
-      <div style={{ width: '100%', height: '100%', minHeight: 220 }}>
+      <div style={{ width: '100%', height: 240, minHeight: 240 }}>
         {typeof ResizeObserver === 'undefined'
           ? chart
           : (
@@ -1624,7 +1621,7 @@ function SpellTimeline({
   const labelColumnWidth = 68;
 
   return (
-    <div style={{ display: 'grid', gap: 12, height: '100%', minHeight: 300 }}>
+    <div style={{ display: 'grid', gap: 12, minHeight: 320 }}>
       <div style={{ color: T.textDim, fontSize: '0.76rem' }}>
         Scroll horizontally to inspect the full encounter timeline.
       </div>
