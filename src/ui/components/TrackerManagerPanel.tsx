@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { AbilityIcon } from './AbilityIcon';
 import { HudLayoutPreview } from './HudLayoutPreview';
@@ -42,6 +42,8 @@ interface TrackerManagerPanelProps {
 interface ContextEntryState {
   groupKey: GroupKey;
   entryId: string;
+  anchorX: number;
+  anchorY: number;
 }
 
 interface DragEntryState {
@@ -61,6 +63,9 @@ const MANAGER_TABS: { id: ManagerTab; label: string }[] = [
   { id: 'buffs', label: 'Buffs' },
   { id: 'consumables', label: 'Consumables' },
 ];
+const TRACKER_CONTEXT_MENU_WIDTH_PX = 360;
+const TRACKER_CONTEXT_MENU_HEIGHT_PX = 420;
+const TRACKER_CONTEXT_MENU_MARGIN_PX = 12;
 
 /**
  * Blizzard-style tracker manager used from the setup HUD tab.
@@ -83,6 +88,7 @@ export function TrackerManagerPanel({
   const [activeTab, setActiveTab] = useState<ManagerTab>('cooldowns');
   const [contextEntry, setContextEntry] = useState<ContextEntryState | null>(null);
   const [dragEntry, setDragEntry] = useState<DragEntryState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const currentContextConfig = useMemo(() => {
     if (!contextEntry) {
@@ -98,6 +104,8 @@ export function TrackerManagerPanel({
     return {
       groupKey: contextEntry.groupKey,
       entryId: contextEntry.entryId,
+      anchorX: contextEntry.anchorX,
+      anchorY: contextEntry.anchorY,
       entry,
       group,
       options: group.entryOptions[contextEntry.entryId] ?? getDefaultEntrySettings(),
@@ -110,6 +118,26 @@ export function TrackerManagerPanel({
         : null,
     };
   }, [contextEntry, settings]);
+
+  useEffect(() => {
+    if (!currentContextConfig) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent): void => {
+      const target = event.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) {
+        return;
+      }
+
+      setContextEntry(null);
+    };
+
+    window.addEventListener('mousedown', handlePointerDown, true);
+    return (): void => {
+      window.removeEventListener('mousedown', handlePointerDown, true);
+    };
+  }, [currentContextConfig]);
 
   const root: CSSProperties = {
     display: 'grid',
@@ -218,7 +246,7 @@ export function TrackerManagerPanel({
         onContextMenu={(event): void => {
           event.preventDefault();
           onClearMessages();
-          setContextEntry({ groupKey, entryId: entry.id });
+          setContextEntry({ groupKey, entryId: entry.id, anchorX: event.clientX, anchorY: event.clientY });
         }}
         draggable={tracked}
         onDragStart={(): void => {
@@ -304,6 +332,8 @@ export function TrackerManagerPanel({
           setContextEntry({
             groupKey: assignment === 'bars' ? 'buffs.barTracker' : 'buffs.iconTracker',
             entryId: entry.id,
+            anchorX: event.clientX,
+            anchorY: event.clientY,
           });
         }}
         draggable={assignment !== 'hidden'}
@@ -657,13 +687,16 @@ export function TrackerManagerPanel({
 
           {currentContextConfig && (
             <section
+              ref={contextMenuRef}
+              data-testid="tracker-entry-context-menu"
               style={{
-                border: `1px solid ${T.borderBright}`,
-                borderRadius: 16,
-                padding: 14,
-                background: 'rgba(0,0,0,0.28)',
-                display: 'grid',
-                gap: 10,
+                ...contextMenuStyle,
+                ...clampViewportPopoverPosition(
+                  currentContextConfig.anchorX,
+                  currentContextConfig.anchorY,
+                  TRACKER_CONTEXT_MENU_WIDTH_PX,
+                  TRACKER_CONTEXT_MENU_HEIGHT_PX,
+                ),
               }}
             >
               <div style={headerRow}>
@@ -1156,6 +1189,34 @@ function writeGroup(settings: TrainerSettings, groupKey: GroupKey, nextGroup: Tr
       };
   }
 }
+
+function clampPopoverCoordinate(value: number, size: number, viewportSize: number): number {
+  const max = Math.max(TRACKER_CONTEXT_MENU_MARGIN_PX, viewportSize - size - TRACKER_CONTEXT_MENU_MARGIN_PX);
+  return Math.min(max, Math.max(TRACKER_CONTEXT_MENU_MARGIN_PX, value));
+}
+
+function clampViewportPopoverPosition(anchorX: number, anchorY: number, width: number, height: number): { left: number; top: number } {
+  return {
+    left: clampPopoverCoordinate(anchorX, width, window.innerWidth),
+    top: clampPopoverCoordinate(anchorY, height, window.innerHeight),
+  };
+}
+
+const contextMenuStyle: CSSProperties = {
+  ...buildPanelStyle({ elevated: true, density: 'compact' }),
+  position: 'fixed',
+  width: TRACKER_CONTEXT_MENU_WIDTH_PX,
+  maxHeight: 'calc(100dvh - 24px)',
+  overflowY: 'auto',
+  borderRadius: 16,
+  padding: 14,
+  background: 'linear-gradient(180deg, rgba(10, 15, 26, 0.98), rgba(5, 10, 18, 0.96))',
+  border: `1px solid ${T.borderBright}`,
+  display: 'grid',
+  gap: 10,
+  zIndex: 30,
+  boxShadow: '0 22px 44px rgba(0,0,0,0.42)',
+};
 
 function setGroupEnabled(settings: TrainerSettings, groupKey: GroupKey, enabled: boolean): TrainerSettings {
   const group = readGroup(settings, groupKey);

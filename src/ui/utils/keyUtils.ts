@@ -76,6 +76,9 @@ const CODE_KEY_ALIASES: Record<string, string> = {
   NumpadEnter: 'numenter',
 };
 
+const LETTER_CODE_PATTERN = /^Key([A-Z])$/;
+const DIGIT_CODE_PATTERN = /^Digit([0-9])$/;
+
 function buildModifierParts(event: Pick<KeyboardEvent, 'ctrlKey' | 'shiftKey' | 'altKey' | 'metaKey'>): string[] {
   const parts: string[] = [];
   if (event.ctrlKey) parts.push('ctrl');
@@ -89,6 +92,18 @@ function resolveKeyboardBaseKey(event: Pick<KeyboardEvent, 'key' | 'code'>): str
   const codeAlias = CODE_KEY_ALIASES[event.code];
   if (codeAlias !== undefined) {
     return codeAlias;
+  }
+
+  const letterMatch = LETTER_CODE_PATTERN.exec(event.code);
+  const letterCode = letterMatch?.[1];
+  if (letterCode) {
+    return letterCode.toLowerCase();
+  }
+
+  const digitMatch = DIGIT_CODE_PATTERN.exec(event.code);
+  const digitCode = digitMatch?.[1];
+  if (digitCode) {
+    return digitCode;
   }
 
   const namedAlias = NAMED_KEY_ALIASES[event.key];

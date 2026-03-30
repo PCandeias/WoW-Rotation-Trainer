@@ -465,6 +465,40 @@ export function HudLayoutPreview({
     } : current);
   };
 
+  const applyButtonEditorDraft = useCallback((currentActionBars: ActionBarSettings, editor: ButtonEditorState): ActionBarSettings => {
+    const nextKeybind = editor.keybindDraft.trim();
+
+    return {
+      bars: Object.fromEntries(
+        ACTION_BAR_IDS.map((actionBarId) => [
+          actionBarId,
+          {
+            ...currentActionBars.bars[actionBarId],
+            buttons: currentActionBars.bars[actionBarId].buttons.map((button, index) => {
+              const isEditedButton = actionBarId === editor.actionBarId && index === editor.buttonIndex;
+              if (isEditedButton) {
+                return {
+                  ...button,
+                  spellIds: editor.spellSequenceDraft,
+                  keybind: nextKeybind,
+                };
+              }
+
+              if (nextKeybind.length > 0 && button.keybind === nextKeybind) {
+                return {
+                  ...button,
+                  keybind: '',
+                };
+              }
+
+              return button;
+            }),
+          },
+        ]),
+      ) as ActionBarSettings['bars'],
+    };
+  }, []);
+
   const updateDraftPosition = (groupKey: HudLayoutGroupKey, position: HudGroupLayout): void => {
     setDraftLayout((current) => ({
       ...current,
@@ -550,11 +584,13 @@ export function HudLayoutPreview({
         return;
       }
 
-      if (SYSTEM_KEYS.has(event.key.toLowerCase()) || MODIFIER_ONLY_KEYS.has(event.key.toLowerCase())) {
+      const chord = normalizeKey(event);
+      const chordParts = chord.split('+');
+      const baseKey = chordParts[chordParts.length - 1] ?? '';
+      if (SYSTEM_KEYS.has(baseKey) || MODIFIER_ONLY_KEYS.has(baseKey)) {
         return;
       }
 
-      const chord = normalizeKey(event);
       setButtonEditor((current) => current ? { ...current, keybindDraft: chord } : current);
       setListeningForKeybind(false);
     };
@@ -1219,23 +1255,7 @@ export function HudLayoutPreview({
                       type="button"
                       style={controlButton(true)}
                       onClick={(): void => {
-                        const nextActionBars = {
-                          bars: {
-                            ...draftActionBars.bars,
-                            [buttonEditor.actionBarId]: {
-                              ...draftActionBars.bars[buttonEditor.actionBarId],
-                              buttons: draftActionBars.bars[buttonEditor.actionBarId].buttons.map((button, index) => (
-                                index === buttonEditor.buttonIndex
-                                  ? {
-                                    ...button,
-                                    spellIds: buttonEditor.spellSequenceDraft,
-                                    keybind: buttonEditor.keybindDraft,
-                                  }
-                                  : button
-                              )),
-                            },
-                          },
-                        };
+                        const nextActionBars = applyButtonEditorDraft(draftActionBars, buttonEditor);
                         setDraftActionBars(nextActionBars);
                         setButtonEditor(null);
                         setListeningForKeybind(false);
