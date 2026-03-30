@@ -1706,29 +1706,26 @@ function buildPreviewActionBarAssignments(actionBar: ActionBarSettings['bars'][A
   slots: typeof WW_ACTION_BAR;
 } {
   const slotBySpellId = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot]));
-  const visibleButtons = actionBar.buttons
+  const preservedButtons = actionBar.buttons
     .slice(0, actionBar.buttonCount)
-    .flatMap((button) => {
+    .map((button) => {
       const primarySpellId = button.spellIds[0];
       const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
-      if (!slot) {
-        return [];
-      }
 
-      return [{
+      return {
         spellIds: [...button.spellIds],
-        keybind: button.keybind || slot.defaultKey,
-      }];
+        keybind: button.keybind ?? slot?.defaultKey ?? '',
+      };
     });
 
-  const visibleSlots = visibleButtons.flatMap((button) => {
+  const visibleSlots = preservedButtons.flatMap((button) => {
     const primarySpellId = button.spellIds[0];
     const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
     return slot ? [slot] : [];
   });
 
   return {
-    buttons: visibleButtons,
+    buttons: preservedButtons,
     slots: visibleSlots,
   };
 }
