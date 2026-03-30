@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ActionBarSlot } from './ActionBarSlot';
-import { SIZES } from '@ui/theme/elvui';
+import { SIZES, T } from '@ui/theme/elvui';
 import type { GameStateSnapshot, CooldownState } from '@core/engine/gameState';
 import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
@@ -185,21 +185,29 @@ export function ActionBar({
 
   // Rebuild keyMap each render, using chord strings and ordered bindings
   const renderedButtons = buttons && buttons.length > 0
-    ? buttons.flatMap((button) => {
-      const primarySpellId = button.spellIds[0];
-      const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
-      const visibleSlot = slot ? visibleSlots.find((candidate) => candidate.spellId === slot.spellId) : undefined;
-      if (!visibleSlot || button.spellIds.length === 0) {
-        return [];
-      }
+    ? Array.from({ length: totalButtons ?? buttons.length }, (_, index) => buttons[index] ?? { spellIds: [], keybind: '' })
+      .map((button, index) => {
+        const primarySpellId = button.spellIds[0];
+        const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
+        const visibleSlot = slot ? visibleSlots.find((candidate) => candidate.spellId === slot.spellId) : undefined;
+        if (!visibleSlot || button.spellIds.length === 0) {
+          return {
+            key: `empty-${index}`,
+            slot: null,
+            spellIds: [],
+            keybind: button.keybind,
+          };
+        }
 
-      return [{
-        slot: visibleSlot,
-        spellIds: button.spellIds,
-        keybind: button.keybind || visibleSlot.defaultKey,
-      }];
-    })
+        return {
+          key: visibleSlot.spellId,
+          slot: visibleSlot,
+          spellIds: button.spellIds,
+          keybind: button.keybind || visibleSlot.defaultKey,
+        };
+      })
     : visibleSlots.map((slot) => ({
+      key: slot.spellId,
       slot,
       spellIds: [slot.spellId],
       keybind: slot.defaultKey,
@@ -207,7 +215,7 @@ export function ActionBar({
 
   const newKeyMap: Record<string, string[]> = {};
   for (const button of renderedButtons) {
-    if (!button.keybind) {
+    if (!button.keybind || button.slot === null || button.spellIds.length === 0) {
       continue;
     }
 
@@ -321,7 +329,25 @@ export function ActionBar({
 
   return (
     <div role="toolbar" aria-label={ariaLabel} aria-rowcount={Math.max(1, rows)} style={containerStyle}>
-      {renderedButtons.map(({ slot, spellIds, keybind }) => {
+      {renderedButtons.map(({ key, slot, spellIds, keybind }) => {
+        if (slot === null) {
+          return (
+            <div
+              key={key}
+              data-testid="action-bar-empty-slot"
+              aria-hidden="true"
+              style={{
+                width: `${size}px`,
+                height: `${size}px`,
+                borderRadius: `${SIZES.borderRadius}px`,
+                border: `1px solid ${T.border}`,
+                background: 'linear-gradient(180deg, rgba(10, 16, 28, 0.44), rgba(5, 10, 18, 0.32))',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+              }}
+            />
+          );
+        }
+
         // Determine effective spell ID (base or proc override)
         const overrideActive = slot.procOverride ? isBuffActive(slot.procOverride.buffId) : false;
         const glowActive = slot.procGlow ? isBuffActive(slot.procGlow.buffId) : false;
@@ -370,7 +396,7 @@ export function ActionBar({
 
         return (
           <ActionBarSlot
-            key={slot.spellId}
+            key={key}
             iconName={icons.iconName}
             emoji={icons.emoji}
             abilityName={displayName}
