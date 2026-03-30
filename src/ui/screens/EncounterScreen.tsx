@@ -1148,28 +1148,30 @@ function EndScreen({
 
   const overlay: CSSProperties = {
     width: '100%',
-    minHeight: '100dvh',
+    height: '100dvh',
     background: `radial-gradient(circle at top, rgba(96, 122, 168, 0.16), transparent 28%), ${T.bg}`,
-    padding: 16,
+    padding: 12,
     boxSizing: 'border-box',
     overflowX: 'hidden',
-    overflowY: 'auto',
+    overflowY: 'hidden',
   };
 
   const shell: CSSProperties = {
     width: 'min(1880px, 100%)',
-    minHeight: 'calc(100dvh - 32px)',
+    height: 'calc(100dvh - 24px)',
     margin: '0 auto',
     display: 'grid',
-    gridTemplateRows: 'auto auto auto auto',
-    gap: 16,
+    gridTemplateRows: 'auto auto minmax(0, 1fr) auto',
+    gap: 12,
+    minHeight: 0,
   };
 
   const hero: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'auto minmax(280px, 0.9fr) minmax(0, 1.5fr)',
-    gap: 18,
+    gap: 14,
     alignItems: 'center',
+    minHeight: 0,
   };
 
   const gradeStyle: CSSProperties = {
@@ -1232,9 +1234,11 @@ function EndScreen({
 
   const reportGrid: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(420px, 1.05fr)',
-    gridTemplateRows: '280px 380px 320px',
-    gap: 16,
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(380px, 0.92fr)',
+    gridTemplateRows: 'minmax(0, 0.82fr) minmax(0, 1.08fr) minmax(0, 0.9fr)',
+    gap: 12,
+    minHeight: 0,
+    overflow: 'hidden',
   };
 
   const btnBase: CSSProperties = {
@@ -1331,7 +1335,7 @@ function EndScreen({
           <ReportCard
             title="Damage Over Time"
             subtitle="See where your live DPS pace drifted away from the trainer."
-            bodyOverflow="hidden"
+            bodyOverflow="auto"
             style={{ gridColumn: '1', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1343,7 +1347,7 @@ function EndScreen({
           <ReportCard
             title="Cumulative Damage"
             subtitle="The total gap makes missed burst windows easier to spot."
-            bodyOverflow="hidden"
+            bodyOverflow="auto"
             style={{ gridColumn: '2', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1363,7 +1367,7 @@ function EndScreen({
           <ReportCard
             title="Spell Timeline"
             subtitle="Cast-by-cast comparison across the encounter, using the same timeline style as the validation report."
-            bodyOverflow="hidden"
+            bodyOverflow="auto"
             style={{ gridColumn: '1 / span 2', gridRow: '2' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1387,7 +1391,7 @@ function EndScreen({
           <ReportCard
             title="Resource Waste"
             subtitle="Track Chi and Energy waste separately so overcaps are easier to spot."
-            bodyOverflow="hidden"
+            bodyOverflow="auto"
             style={{ gridColumn: '1 / span 2', gridRow: '3' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1509,7 +1513,7 @@ function AnalysisLineChart({
   };
 
   const chart = (
-    <LineChart data={data} width={520} height={260}>
+    <LineChart data={data} width={520} height={220}>
       <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="2 6" vertical={false} />
       <XAxis dataKey="time" stroke={T.textMuted} tick={axisTick} tickLine={false} axisLine={false} />
       <YAxis stroke={T.textMuted} tick={axisTick} tickFormatter={yFormatter} width={52} tickLine={false} axisLine={false} />
@@ -1525,7 +1529,7 @@ function AnalysisLineChart({
   );
 
   return (
-    <div style={{ width: '100%', height: 260, minHeight: 260 }}>
+    <div style={{ width: '100%', height: '100%', minHeight: 220 }}>
       {typeof ResizeObserver === 'undefined'
         ? chart
         : (
@@ -1542,7 +1546,8 @@ function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resou
     <div
       style={{
         width: '100%',
-        minHeight: 280,
+        height: '100%',
+        minHeight: 0,
         display: 'grid',
         gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
         gap: 14,
@@ -1603,9 +1608,9 @@ function ResourceWastePanel({
   );
 
   return (
-    <div style={{ minWidth: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 10 }}>
+    <div style={{ minWidth: 0, height: '100%', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 10 }}>
       <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{title}</div>
-      <div style={{ width: '100%', height: 240, minHeight: 240 }}>
+      <div style={{ width: '100%', height: '100%', minHeight: 210 }}>
         {typeof ResizeObserver === 'undefined'
           ? chart
           : (
@@ -1637,11 +1642,11 @@ function SpellTimeline({
   const labelColumnWidth = 68;
 
   return (
-    <div style={{ display: 'grid', gap: 12, minHeight: 320 }}>
+    <div style={{ display: 'grid', gap: 12, minHeight: 0, height: '100%', gridTemplateRows: 'auto minmax(0, 1fr)' }}>
       <div style={{ color: T.textDim, fontSize: '0.76rem' }}>
         Scroll horizontally to inspect the full encounter timeline.
       </div>
-      <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 4 }}>
+      <div style={{ overflowX: 'auto', overflowY: 'auto', minHeight: 0, paddingBottom: 4 }}>
         <div style={{ display: 'grid', gap: 12, minWidth: labelColumnWidth + 12 + timelineWidth }}>
           <SpellTimelineLane
             label="You"

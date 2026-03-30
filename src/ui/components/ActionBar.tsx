@@ -337,14 +337,26 @@ export function ActionBar({
               data-testid="action-bar-empty-slot"
               aria-hidden="true"
               style={{
+                position: 'relative',
                 width: `${size}px`,
                 height: `${size}px`,
                 borderRadius: `${SIZES.borderRadius}px`,
-                border: `1px solid ${T.border}`,
-                background: 'linear-gradient(180deg, rgba(10, 16, 28, 0.44), rgba(5, 10, 18, 0.32))',
-                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+                border: `1px solid rgba(12, 18, 28, 0.96)`,
+                background: 'linear-gradient(180deg, rgba(16, 24, 36, 0.92), rgba(7, 11, 18, 0.96))',
+                boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05), inset 0 0 0 1px rgba(0,0,0,0.55), 0 8px 18px rgba(0,0,0,0.24)',
               }}
-            />
+            >
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 4,
+                  borderRadius: Math.max(4, SIZES.borderRadius - 4),
+                  border: `1px solid ${T.border}`,
+                  background: 'linear-gradient(180deg, rgba(4, 8, 14, 0.78), rgba(8, 12, 20, 0.42))',
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.03)',
+                }}
+              />
+            </div>
           );
         }
 
