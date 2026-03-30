@@ -47,6 +47,7 @@ export interface HudSettings {
     showEnemyIcon: boolean;
     showMeleeSwingDamage: boolean;
     showDamageText: boolean;
+    layoutScale?: number;
   };
   cooldowns: {
     essential: TrackerGroupSettings;
@@ -148,7 +149,7 @@ function createDefaultTrackerGroupSettings(
   };
 }
 
-function createDefaultHudLayoutSettings(): HudLayoutSettings {
+export function getDefaultHudLayoutSettings(): HudLayoutSettings {
   return {
     enemyIcon: { xPct: 50, yPct: 9.933406565357117, scale: 1 },
     essentialCooldowns: { xPct: 50, yPct: 72.56532066508314, scale: 1 },
@@ -592,11 +593,12 @@ export function getDefaultTrainerSettings(): TrainerSettings {
       ],
     },
     hud: {
-      layout: createDefaultHudLayoutSettings(),
+      layout: getDefaultHudLayoutSettings(),
       general: {
         showEnemyIcon: false,
         showMeleeSwingDamage: false,
         showDamageText: true,
+        layoutScale: 1,
       },
       cooldowns: {
         essential: {
@@ -776,6 +778,7 @@ function sanitizeHudSettings(value: unknown, fallback: HudSettings): HudSettings
           showEnemyIcon: fallback.general.showEnemyIcon,
           showMeleeSwingDamage: fallback.general.showMeleeSwingDamage,
           showDamageText: fallback.general.showDamageText,
+          layoutScale: fallback.general.layoutScale ?? 1,
         },
         cooldowns: {
         essential: sanitizeTrackerGroupSettings(undefined, fallback.cooldowns.essential),
@@ -808,11 +811,15 @@ function sanitizeHudSettings(value: unknown, fallback: HudSettings): HudSettings
           ? value.general.showMeleeSwingDamage
           : fallback.general.showMeleeSwingDamage,
         showDamageText: typeof value.general.showDamageText === 'boolean' ? value.general.showDamageText : fallback.general.showDamageText,
+        layoutScale: typeof value.general.layoutScale === 'number' && Number.isFinite(value.general.layoutScale)
+          ? Math.min(1.5, Math.max(0.75, value.general.layoutScale))
+          : fallback.general.layoutScale ?? 1,
       }
       : {
         showEnemyIcon: fallback.general.showEnemyIcon,
         showMeleeSwingDamage: fallback.general.showMeleeSwingDamage,
         showDamageText: fallback.general.showDamageText,
+        layoutScale: fallback.general.layoutScale ?? 1,
       },
     cooldowns: {
       essential: sanitizeTrackerGroupSettings(cooldowns.essential, fallback.cooldowns.essential),

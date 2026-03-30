@@ -617,6 +617,7 @@ export function TrackerManagerPanel({
 
           <HudLayoutPreview
             layout={settings.hud.layout}
+            layoutScale={settings.hud.general.layoutScale ?? 1}
             actionBars={settings.actionBars}
             trackerRows={{
               essentialCooldowns: settings.hud.cooldowns.essential.iconsPerRow ?? 12,

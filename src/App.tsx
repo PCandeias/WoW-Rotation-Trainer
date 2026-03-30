@@ -77,6 +77,31 @@ export function App(): React.JSX.Element {
     };
   }, []);
 
+  useEffect(() => {
+    const handleWheel = (event: WheelEvent): void => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.ctrlKey || event.metaKey)) {
+        return;
+      }
+
+      if (['+', '=', '-', '_', '0'].includes(event.key)) {
+        event.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    window.addEventListener('keydown', handleKeyDown, { passive: false });
+    return (): void => {
+      window.removeEventListener('wheel', handleWheel);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   if (screen === 'encounter') {
     return (
       <EncounterScreen

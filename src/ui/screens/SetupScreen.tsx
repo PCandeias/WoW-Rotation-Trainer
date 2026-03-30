@@ -329,6 +329,7 @@ export function SetupScreen({
       <div style={root}>
         <HudLayoutPreview
           layout={settings.hud.layout}
+          layoutScale={settings.hud.general.layoutScale ?? 1}
           actionBars={settings.actionBars}
           trackerRows={hudLayoutTrackerRows}
           visibility={hudLayoutVisibility}
@@ -666,6 +667,37 @@ export function SetupScreen({
               </section>
               <section style={summaryCard}>
                 <div style={{ color: T.textBright, fontFamily: FONTS.ui, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+                  HUD scaling
+                </div>
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <label style={{ color: T.text, display: 'grid', gap: 8 }}>
+                    <span>HUD scale</span>
+                    <input
+                      aria-label="HUD scale"
+                      type="range"
+                      min={0.75}
+                      max={1.5}
+                      step={0.05}
+                      value={settings.hud.general.layoutScale ?? 1}
+                      onChange={(event): void => onChange((current) => ({
+                        ...current,
+                        hud: {
+                          ...current.hud,
+                          general: {
+                            ...current.hud.general,
+                            layoutScale: Number(event.target.value),
+                          },
+                        },
+                      }))}
+                    />
+                    <span style={{ color: T.textDim, fontSize: '0.78rem' }}>
+                      {(settings.hud.general.layoutScale ?? 1).toFixed(2)}x
+                    </span>
+                  </label>
+                </div>
+              </section>
+              <section style={summaryCard}>
+                <div style={{ color: T.textBright, fontFamily: FONTS.ui, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
                   Damage text
                 </div>
                 <div style={{ display: 'grid', gap: 10 }}>
@@ -709,6 +741,7 @@ export function SetupScreen({
             </div>
             <HudLayoutPreview
               layout={settings.hud.layout}
+              layoutScale={settings.hud.general.layoutScale ?? 1}
               actionBars={settings.actionBars}
               trackerRows={hudLayoutTrackerRows}
               visibility={hudLayoutVisibility}
@@ -910,6 +943,7 @@ export function SetupScreen({
             </div>
             <HudLayoutPreview
               layout={settings.hud.layout}
+              layoutScale={settings.hud.general.layoutScale ?? 1}
               actionBars={settings.actionBars}
               trackerRows={hudLayoutTrackerRows}
               visibility={hudLayoutVisibility}

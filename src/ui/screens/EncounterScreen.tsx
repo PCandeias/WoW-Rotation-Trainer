@@ -56,6 +56,7 @@ import { useChallengeMode } from '@ui/challenge/useChallengeMode';
 import type { RunAnalysisReport } from '@core/analysis';
 import { usePostRunAnalysis } from '@ui/analysis/usePostRunAnalysis';
 import { useEncounterMusic } from '@ui/audio/useEncounterMusic';
+import { FIXED_SCENE_HEIGHT, FIXED_SCENE_WIDTH, useFixedSceneScale } from '@ui/utils/layoutScaling';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -356,11 +357,22 @@ export function EncounterScreen({
   const playArea: CSSProperties = {
     flex: 1,
     position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingBottom: 64,
+    overflow: 'hidden',
     background: 'radial-gradient(circle at center, rgba(255,255,255,0.03), transparent 42%)',
+  };
+
+  const viewportScale = useFixedSceneScale();
+  const layoutScale = hudSettings?.general.layoutScale ?? 1;
+  const encounterSceneScale = viewportScale * layoutScale;
+
+  const encounterStage: CSSProperties = {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: `${FIXED_SCENE_WIDTH}px`,
+    height: `${FIXED_SCENE_HEIGHT}px`,
+    transform: `translate(-50%, -50%) scale(${encounterSceneScale})`,
+    transformOrigin: 'center center',
   };
 
   // Training dummy placeholder
@@ -396,7 +408,7 @@ export function EncounterScreen({
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 'min(480px, calc(100vw - 32px))',
+    width: 480,
     pointerEvents: 'none',
     zIndex: 2,
   };
@@ -409,6 +421,7 @@ export function EncounterScreen({
     alignItems: 'center',
     justifyContent: 'center',
   };
+
 
   // Frames row — centered, spread horizontally (PlayerFrame | Resources | TargetFrame)
   // Timer / DPS overlay
@@ -581,6 +594,7 @@ export function EncounterScreen({
     <div style={root}>
       {/* Main play area */}
       <div style={playArea}>
+        <div style={encounterStage}>
         {showEnemyIcon && (
           <div data-testid="encounter-enemy-icon" style={buildHudGroupStyle(hudLayout?.enemyIcon ?? { xPct: 50, yPct: 30 })}>
             <div style={dummyArea}>🪆</div>
@@ -860,6 +874,7 @@ export function EncounterScreen({
           />
         </div>
       ))}
+        </div>
 
       {loadoutOpen && (
         <LoadoutPanel

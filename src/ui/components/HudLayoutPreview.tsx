@@ -23,6 +23,7 @@ import {
   type ActionBarId,
   type ActionBarButtonSettings,
   type ActionBarSettings,
+  getDefaultHudLayoutSettings,
   type HudGroupLayout,
   type HudLayoutSettings,
   type TrackerGroupSettings,
@@ -33,6 +34,7 @@ import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import { createEmptyChallengeStats, type ChallengeNoteRuntime, type ChallengePlayfield } from '@ui/challenge/noteTypes';
 import { TRACKED_BUFF_SPELL_IDS, buildTrackerBlacklist } from './trackerSpellIds';
 import { SYSTEM_KEYS, normalizeKey, normalizeMouseButton } from '@ui/utils/keyUtils';
+import { FIXED_SCENE_HEIGHT, FIXED_SCENE_WIDTH, useFixedSceneScale } from '@ui/utils/layoutScaling';
 
 type HudLayoutGroupKey = keyof HudLayoutSettings;
 
@@ -81,6 +83,7 @@ interface ButtonEditorState {
 
 export interface HudLayoutPreviewProps {
   layout: HudLayoutSettings;
+  layoutScale?: number;
   actionBars: ActionBarSettings;
   trackerRows: Record<TrackerRowGroupKey, number>;
   visibility: Record<HudLayoutGroupKey, boolean>;
@@ -299,6 +302,7 @@ const PREVIEW_SPELL_INPUT_STATUS: ReadonlyMap<string, SpellInputStatus> = new Ma
  */
 export function HudLayoutPreview({
   layout,
+  layoutScale = 1,
   actionBars,
   trackerRows,
   visibility,
@@ -325,6 +329,8 @@ export function HudLayoutPreview({
   const [listeningForKeybind, setListeningForKeybind] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const launchNonceRef = useRef<number | null>(launchRequest?.nonce ?? null);
+  const editorSceneScale = useFixedSceneScale({ paddingX: 64, paddingY: 180 });
+  const defaultLayout = useMemo(() => getDefaultHudLayoutSettings(), []);
 
   useEffect(() => {
     if (!isEditing) {
@@ -428,6 +434,24 @@ export function HudLayoutPreview({
     setPositionEditor(null);
     setButtonEditor(null);
     setListeningForKeybind(false);
+  };
+
+  const resetDraftToDefaults = (): void => {
+    setDraftLayout(defaultLayout);
+    setGuideState({ x: null, y: null });
+    setPositionEditor(null);
+    setButtonEditor(null);
+    setListeningForKeybind(false);
+  };
+
+  const resetSavedLayout = (): void => {
+    onChange((current) => ({
+      ...current,
+      hud: {
+        ...current.hud,
+        layout: getDefaultHudLayoutSettings(),
+      },
+    }));
   };
 
   const updateDraftPosition = (groupKey: HudLayoutGroupKey, position: HudGroupLayout): void => {
@@ -592,6 +616,13 @@ export function HudLayoutPreview({
               >
                 Edit Layout
               </button>
+              <button
+                type="button"
+                onClick={resetSavedLayout}
+                style={controlButton(false)}
+              >
+                Reset Layout
+              </button>
             </div>
           </div>
 
@@ -683,13 +714,15 @@ export function HudLayoutPreview({
                   Keybind Mode
                 </label>
                 <button type="button" onClick={resetDraftLayout} style={controlButton(false)}>
-                  Reset Draft
+                  Revert Draft
+                </button>
+                <button type="button" onClick={resetDraftToDefaults} style={controlButton(false)}>
+                  Reset Layout
                 </button>
               </div>
             </div>
 
             <div
-              ref={canvasRef}
               data-testid="hud-layout-editor-canvas"
               style={buildCanvasStyle(showGrid)}
               onMouseLeave={(): void => {
@@ -697,112 +730,125 @@ export function HudLayoutPreview({
                 setGuideState({ x: null, y: null });
               }}
             >
-              {showGrid && (
-                <>
-                  <div style={buildGuideLineStyle('vertical', CENTER_GUIDE_PCT, 'rgba(255,255,255,0.16)')} />
-                  <div style={buildGuideLineStyle('horizontal', CENTER_GUIDE_PCT, 'rgba(255,255,255,0.16)')} />
-                </>
-              )}
+              <div
+                ref={canvasRef}
+                style={{
+                  position: 'absolute',
+                  left: '50%',
+                  top: '50%',
+                  width: `${FIXED_SCENE_WIDTH}px`,
+                  height: `${FIXED_SCENE_HEIGHT}px`,
+                  transform: `translate(-50%, -50%) scale(${editorSceneScale * layoutScale})`,
+                  transformOrigin: 'center center',
+                }}
+              >
+                {showGrid && (
+                  <>
+                    <div style={buildGuideLineStyle('vertical', CENTER_GUIDE_PCT, 'rgba(255,255,255,0.16)')} />
+                    <div style={buildGuideLineStyle('horizontal', CENTER_GUIDE_PCT, 'rgba(255,255,255,0.16)')} />
+                  </>
+                )}
 
-              {guideState.x !== null && (
-                <div data-testid="hud-layout-guide-x" style={buildGuideLineStyle('vertical', guideState.x, 'rgba(53, 200, 155, 0.55)')} />
-              )}
-              {guideState.y !== null && (
-                <div data-testid="hud-layout-guide-y" style={buildGuideLineStyle('horizontal', guideState.y, 'rgba(53, 200, 155, 0.55)')} />
-              )}
+                {guideState.x !== null && (
+                  <div data-testid="hud-layout-guide-x" style={buildGuideLineStyle('vertical', guideState.x, 'rgba(53, 200, 155, 0.55)')} />
+                )}
+                {guideState.y !== null && (
+                  <div data-testid="hud-layout-guide-y" style={buildGuideLineStyle('horizontal', guideState.y, 'rgba(53, 200, 155, 0.55)')} />
+                )}
 
-              <MockEncounterBackdrop />
+                <MockEncounterBackdrop />
 
-              {visibility.challengePlayfield && (
-                <ChallengeHud
-                  difficulty="hard"
-                  validKeys={['w', 'a', 's', 'd']}
-                  stats={createEmptyChallengeStats()}
-                  showStats={false}
-                />
-              )}
+                {visibility.challengePlayfield && (
+                  <ChallengeHud
+                    difficulty="hard"
+                    validKeys={['w', 'a', 's', 'd']}
+                    stats={createEmptyChallengeStats()}
+                    showStats={false}
+                  />
+                )}
 
-              {visibleGroups.map((group) => renderGroupCard({
-                group,
-                position: draftLayout[group.key],
-                actionBars: draftActionBars,
-                trackerRows: draftTrackerRows,
-                cooldownTracking,
-                buffTracking,
-                consumableTracking,
-                previewBuffBlacklist,
-                keybindMode,
-                onMouseDown: (event): void => {
-                  const rect = event.currentTarget.getBoundingClientRect();
-                  const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
-                  const baseSize = resolveBaseGroupSize(group.key, rect.width / scale, rect.height / scale);
-                  setDragState({
-                    key: group.key,
-                    mode: 'move',
-                    startClientX: event.clientX,
-                    startClientY: event.clientY,
-                    startPosition: draftLayout[group.key],
-                    baseWidth: baseSize.width,
-                    baseHeight: baseSize.height,
-                  });
-                  setPositionEditor(null);
-                  setButtonEditor(null);
-                },
-                onResizeMouseDown: (event): void => {
-                  event.stopPropagation();
-                  const rect = event.currentTarget.parentElement?.getBoundingClientRect();
-                  const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
-                  const baseSize = resolveBaseGroupSize(group.key, (rect?.width ?? 0) / scale, (rect?.height ?? 0) / scale);
-                  setDragState({
-                    key: group.key,
-                    mode: 'resize',
-                    startClientX: event.clientX,
-                    startClientY: event.clientY,
-                    startPosition: draftLayout[group.key],
-                    baseWidth: baseSize.width,
-                    baseHeight: baseSize.height,
-                  });
-                  setPositionEditor(null);
-                  setButtonEditor(null);
-                },
-                onContextMenu: (event): void => {
-                  event.preventDefault();
-                  setDragState(null);
-                  setButtonEditor(null);
-                  const actionBarId = getActionBarIdFromLayoutKey(group.key);
-                  const trackerRowGroupKey = getTrackerRowGroupKey(group.key);
-                  setPositionEditor({
-                    key: group.key,
-                    xDraft: draftLayout[group.key].xPct.toFixed(1),
-                    yDraft: draftLayout[group.key].yPct.toFixed(1),
-                    scaleDraft: draftLayout[group.key].scale.toFixed(2),
-                    anchorX: event.clientX,
-                    anchorY: event.clientY,
-                    enabledDraft: actionBarId ? draftActionBars.bars[actionBarId].enabled : undefined,
-                    buttonCountDraft: actionBarId ? String(draftActionBars.bars[actionBarId].buttonCount) : undefined,
-                    buttonsPerRowDraft: actionBarId ? String(draftActionBars.bars[actionBarId].buttonsPerRow) : undefined,
-                    iconsPerRowDraft: trackerRowGroupKey ? String(draftTrackerRows[trackerRowGroupKey]) : undefined,
-                  });
-                },
-                onActionBarButtonClick: (actionBarId, buttonIndex, button, event): void => {
-                  if (!keybindMode) {
-                    return;
-                  }
+                {visibleGroups.map((group) => renderGroupCard({
+                  group,
+                  position: draftLayout[group.key],
+                  actionBars: draftActionBars,
+                  trackerRows: draftTrackerRows,
+                  cooldownTracking,
+                  buffTracking,
+                  consumableTracking,
+                  previewBuffBlacklist,
+                  keybindMode,
+                  onMouseDown: (event): void => {
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
+                    const baseSize = resolveBaseGroupSize(group.key, rect.width / scale, rect.height / scale);
+                    setDragState({
+                      key: group.key,
+                      mode: 'move',
+                      startClientX: event.clientX,
+                      startClientY: event.clientY,
+                      startPosition: draftLayout[group.key],
+                      baseWidth: baseSize.width,
+                      baseHeight: baseSize.height,
+                    });
+                    setPositionEditor(null);
+                    setButtonEditor(null);
+                  },
+                  onResizeMouseDown: (event): void => {
+                    event.stopPropagation();
+                    const rect = event.currentTarget.parentElement?.getBoundingClientRect();
+                    const scale = Math.max(MIN_LAYOUT_SCALE, draftLayout[group.key].scale);
+                    const baseSize = resolveBaseGroupSize(group.key, (rect?.width ?? 0) / scale, (rect?.height ?? 0) / scale);
+                    setDragState({
+                      key: group.key,
+                      mode: 'resize',
+                      startClientX: event.clientX,
+                      startClientY: event.clientY,
+                      startPosition: draftLayout[group.key],
+                      baseWidth: baseSize.width,
+                      baseHeight: baseSize.height,
+                    });
+                    setPositionEditor(null);
+                    setButtonEditor(null);
+                  },
+                  onContextMenu: (event): void => {
+                    event.preventDefault();
+                    setDragState(null);
+                    setButtonEditor(null);
+                    const actionBarId = getActionBarIdFromLayoutKey(group.key);
+                    const trackerRowGroupKey = getTrackerRowGroupKey(group.key);
+                    setPositionEditor({
+                      key: group.key,
+                      xDraft: draftLayout[group.key].xPct.toFixed(1),
+                      yDraft: draftLayout[group.key].yPct.toFixed(1),
+                      scaleDraft: draftLayout[group.key].scale.toFixed(2),
+                      anchorX: event.clientX,
+                      anchorY: event.clientY,
+                      enabledDraft: actionBarId ? draftActionBars.bars[actionBarId].enabled : undefined,
+                      buttonCountDraft: actionBarId ? String(draftActionBars.bars[actionBarId].buttonCount) : undefined,
+                      buttonsPerRowDraft: actionBarId ? String(draftActionBars.bars[actionBarId].buttonsPerRow) : undefined,
+                      iconsPerRowDraft: trackerRowGroupKey ? String(draftTrackerRows[trackerRowGroupKey]) : undefined,
+                    });
+                  },
+                  onActionBarButtonClick: (actionBarId, buttonIndex, button, event): void => {
+                    if (!keybindMode) {
+                      return;
+                    }
 
-                  event.stopPropagation();
-                  setDragState(null);
-                  setPositionEditor(null);
-                  setButtonEditor({
-                    actionBarId,
-                    buttonIndex,
-                    spellSequenceDraft: [...button.spellIds],
-                    addSpellDraft: '',
-                    keybindDraft: button.keybind,
-                    anchorX: event.clientX,
-                    anchorY: event.clientY,
-                  });
-                },
-              }))}
+                    event.stopPropagation();
+                    setDragState(null);
+                    setPositionEditor(null);
+                    setButtonEditor({
+                      actionBarId,
+                      buttonIndex,
+                      spellSequenceDraft: [...button.spellIds],
+                      addSpellDraft: '',
+                      keybindDraft: button.keybind,
+                      anchorX: event.clientX,
+                      anchorY: event.clientY,
+                    });
+                  },
+                }))}
+              </div>
 
               {positionEditor && (
                 <div
@@ -1247,28 +1293,28 @@ function renderGroupCard({
         transformOrigin: 'center center',
         width: 'fit-content',
         border: `1px solid ${group.visible ? group.accent : T.border}`,
-        borderRadius: 12,
-        background: 'linear-gradient(180deg, rgba(10, 16, 28, 0.92), rgba(5, 10, 18, 0.9))',
+        borderRadius: 10,
+        background: 'linear-gradient(180deg, rgba(10, 16, 28, 0.74), rgba(5, 10, 18, 0.68))',
         color: group.visible ? T.textBright : T.textDim,
         cursor: 'grab',
         display: 'grid',
         gap: 0,
-        boxShadow: group.visible ? `0 12px 28px ${group.accent}22` : T.shadow,
+        boxShadow: group.visible ? `0 10px 22px ${group.accent}1f` : T.shadow,
         overflow: 'visible',
-        backdropFilter: 'blur(8px)',
+        backdropFilter: 'blur(6px)',
       }}
     >
       <span
         style={{
           position: 'absolute',
-          top: -20,
+          top: -18,
           left: 0,
           fontFamily: FONTS.ui,
           fontSize: '0.62rem',
           textTransform: 'uppercase',
           letterSpacing: '0.08em',
           textAlign: 'left',
-          padding: '3px 8px',
+          padding: '2px 7px',
           borderRadius: 999,
           background: 'linear-gradient(180deg, rgba(18, 24, 38, 0.98), rgba(7, 11, 20, 0.96))',
           border: `1px solid ${group.visible ? group.accent : T.border}`,
@@ -1290,13 +1336,13 @@ function renderGroupCard({
       <span
         style={{
           position: 'absolute',
-          bottom: -18,
+          bottom: -16,
           left: 0,
           fontFamily: FONTS.ui,
           fontSize: '0.58rem',
           color: group.visible ? T.textBright : T.textDim,
           textAlign: 'left',
-          padding: '2px 6px',
+          padding: '1px 6px',
           borderRadius: 999,
           background: 'linear-gradient(180deg, rgba(18, 24, 38, 0.98), rgba(7, 11, 20, 0.96))',
           border: `1px solid ${group.visible ? `${group.accent}55` : T.border}`,
@@ -1387,7 +1433,7 @@ function MockGroupContent({
   if (groupKey === 'playerFrame') {
     return (
       <div style={previewShellStyle}>
-        <PlayerFrame gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} />
+        <PlayerFrame gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} showResources={false} />
       </div>
     );
   }
@@ -1853,7 +1899,7 @@ function controlButton(primary: boolean): CSSProperties {
 function buildCanvasStyle(showGrid: boolean): CSSProperties {
   return {
     position: 'relative',
-    minHeight: 220,
+    minHeight: 680,
     height: '100%',
     borderRadius: 18,
     overflow: 'hidden',
