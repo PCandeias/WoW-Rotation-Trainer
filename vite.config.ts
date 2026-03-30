@@ -2,6 +2,20 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
+function getGitHubPagesBase(): string {
+  const repository = process.env.GITHUB_REPOSITORY;
+  if (!repository) {
+    return '/';
+  }
+
+  const [, repositoryName] = repository.split('/');
+  if (!repositoryName || repositoryName.endsWith('.github.io')) {
+    return '/';
+  }
+
+  return `/${repositoryName}/`;
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -13,5 +27,8 @@ export default defineConfig({
       '@data': resolve(__dirname, 'src/core/data'),
     },
   },
-  base: './',
+  build: {
+    sourcemap: false,
+  },
+  base: process.env.GITHUB_ACTIONS === 'true' ? getGitHubPagesBase() : '/',
 });

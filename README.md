@@ -46,6 +46,37 @@ Rather than presenting the rotation only as a theoretical priority system, the t
 
 This is a focused public snapshot of the app itself. It contains the code and assets needed to run and publish the trainer, without the broader private development environment or supporting internal materials.
 
+## Running locally
+
+Install dependencies and start the Vite dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+To verify the production build locally:
+
+```bash
+npm run build
+npm run preview
+```
+
+## GitHub Pages
+
+The repository includes a GitHub Actions workflow that builds the app and deploys the generated Vite site to GitHub Pages.
+
+Only the generated `dist/` site artifact is published. Repository metadata, GitHub workflow files, local environment files, and source maps are not uploaded as part of the Pages deployment.
+
+To enable it:
+
+1. Push the repository to GitHub.
+2. In GitHub, open `Settings -> Pages`.
+3. Set `Source` to `GitHub Actions`.
+4. Push to `main` or run the workflow manually.
+
+The Vite base path is resolved automatically during GitHub Actions builds, so the app works both locally and when served from a repository Pages URL.
+
 ## Acknowledgements
 
 - SimulationCraft, for the simulation philosophy and APL-centered modeling approach
