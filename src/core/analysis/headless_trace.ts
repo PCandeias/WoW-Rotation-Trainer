@@ -1,0 +1,189 @@
+import type { SimResult } from '@core/engine/headless';
+import type { BenchmarkSignature, RawRunTrace } from './types';
+import { buildCumulativeDamageTimeline } from './live_trace_collector';
+
+function mapDamageBySpell(source: SimResult['damageBySpell']): RawRunTrace['damageBySpell'] {
+  return Object.fromEntries(
+    Object.entries(source).map(([spellId, stats]) => [
+      spellId,
+      {
+        casts: stats.casts,
+        damage: stats.damage,
+        crits: stats.crits,
+      },
+    ]),
+  );
+}
+
+export function buildTraceFromSimResult(
+  result: SimResult,
+  specId: string,
+  benchmarkSignature: BenchmarkSignature,
+): RawRunTrace {
+  return {
+    source: 'trainer',
+    specId,
+    encounterDuration: result.encounterDuration,
+    totalDamage: result.totalDamage,
+    dps: result.dps,
+    casts: result.actionSequence.map((entry) => ({
+      time: entry.time,
+      spellId: entry.spellId,
+      recommendedSpellId: null,
+    })),
+    recommendations: [],
+    damageBySpell: mapDamageBySpell(result.damageBySpell),
+    damageTimelineBySecond: [...result.damageTimelineBySecond],
+    cumulativeDamageBySecond: buildCumulativeDamageTimeline(result.damageTimelineBySecond),
+    buffStacksTimelineBySecond: Object.fromEntries(
+      Object.entries(result.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
+    ),
+    cooldownTimelineBySecond: {},
+    resourceTimelineBySecond: {
+      energy: [...result.resourceTimelineBySecond.energy],
+      chi: [...result.resourceTimelineBySecond.chi],
+    },
+    wasteTimelineBySecond: {
+      energy: [...result.wasteTimelineBySecond.energy],
+      chi: [...result.wasteTimelineBySecond.chi],
+    },
+    waitingTime: result.waitingTime,
+    benchmarkSignature,
+  };
+}
+
+function averageSeries(seriesList: number[][]): number[] {
+  const length = Math.max(...seriesList.map((series) => series.length), 0);
+  const averaged: number[] = [];
+
+  for (let index = 0; index < length; index += 1) {
+    let total = 0;
+    let count = 0;
+    for (const series of seriesList) {
+      const value = series[index];
+      if (value === undefined) {
+        continue;
+      }
+      total += value;
+      count += 1;
+    }
+    averaged.push(count > 0 ? total / count : 0);
+  }
+
+  return averaged;
+}
+
+function averageDamageBySpell(traces: RawRunTrace[]): RawRunTrace['damageBySpell'] {
+  const spellIds = new Set(traces.flatMap((trace) => Object.keys(trace.damageBySpell)));
+  const averaged: RawRunTrace['damageBySpell'] = {};
+
+  for (const spellId of spellIds) {
+    let casts = 0;
+    let damage = 0;
+    let crits = 0;
+    let count = 0;
+
+    for (const trace of traces) {
+      const stats = trace.damageBySpell[spellId];
+      if (!stats) {
+        continue;
+      }
+      casts += stats.casts;
+      damage += stats.damage;
+      crits += stats.crits;
+      count += 1;
+    }
+
+    averaged[spellId] = {
+      casts: count > 0 ? casts / count : 0,
+      damage: count > 0 ? damage / count : 0,
+      crits: count > 0 ? crits / count : 0,
+    };
+  }
+
+  return averaged;
+}
+
+function averageBuffTimelines(traces: RawRunTrace[]): RawRunTrace['buffStacksTimelineBySecond'] {
+  const buffIds = new Set(traces.flatMap((trace) => Object.keys(trace.buffStacksTimelineBySecond)));
+  return Object.fromEntries(
+    [...buffIds].map((buffId) => [
+      buffId,
+      averageSeries(
+        traces
+          .map((trace) => trace.buffStacksTimelineBySecond[buffId])
+          .filter((series): series is number[] => series !== undefined),
+      ),
+    ]),
+  );
+}
+
+function buildAverageCasts(traces: RawRunTrace[]): RawRunTrace['casts'] {
+  const spellIds = new Set(traces.flatMap((trace) => trace.casts.map((cast) => cast.spellId)));
+  const averagedCasts: RawRunTrace['casts'] = [];
+
+  for (const spellId of spellIds) {
+    const castsByTrace = traces.map((trace) => trace.casts.filter((cast) => cast.spellId === spellId));
+    const averageCount = castsByTrace.reduce((sum, casts) => sum + casts.length, 0) / Math.max(1, castsByTrace.length);
+    const targetCount = Math.max(0, Math.round(averageCount));
+
+    for (let index = 0; index < targetCount; index += 1) {
+      let timeTotal = 0;
+      let timeCount = 0;
+      for (const casts of castsByTrace) {
+        const cast = casts[index];
+        if (!cast) {
+          continue;
+        }
+        timeTotal += cast.time;
+        timeCount += 1;
+      }
+
+      if (timeCount === 0) {
+        continue;
+      }
+
+      averagedCasts.push({
+        time: timeTotal / timeCount,
+        spellId,
+        recommendedSpellId: null,
+      });
+    }
+  }
+
+  return averagedCasts.sort((left, right) => left.time - right.time || left.spellId.localeCompare(right.spellId));
+}
+
+export function buildAverageTrainerTrace(
+  traces: RawRunTrace[],
+  benchmarkSignature: BenchmarkSignature,
+): RawRunTrace {
+  if (traces.length === 0) {
+    throw new Error('Cannot average zero trainer traces.');
+  }
+
+  return {
+    source: 'trainer',
+    specId: traces[0].specId,
+    encounterDuration: traces[0].encounterDuration,
+    totalDamage: traces.reduce((sum, trace) => sum + trace.totalDamage, 0) / traces.length,
+    dps: traces.reduce((sum, trace) => sum + trace.dps, 0) / traces.length,
+    casts: buildAverageCasts(traces),
+    recommendations: [],
+    damageBySpell: averageDamageBySpell(traces),
+    damageTimelineBySecond: averageSeries(traces.map((trace) => trace.damageTimelineBySecond)),
+    cumulativeDamageBySecond: averageSeries(traces.map((trace) => trace.cumulativeDamageBySecond)),
+    buffStacksTimelineBySecond: averageBuffTimelines(traces),
+    cooldownTimelineBySecond: {},
+    resourceTimelineBySecond: {
+      energy: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.energy)),
+      chi: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.chi)),
+    },
+    wasteTimelineBySecond: {
+      energy: averageSeries(traces.map((trace) => trace.wasteTimelineBySecond.energy)),
+      chi: averageSeries(traces.map((trace) => trace.wasteTimelineBySecond.chi)),
+    },
+    waitingTime: traces.reduce((sum, trace) => sum + trace.waitingTime, 0) / traces.length,
+    benchmarkSignature,
+  };
+}

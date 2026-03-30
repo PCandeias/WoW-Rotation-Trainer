@@ -1,0 +1,44 @@
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-body);
+  background:
+    radial-gradient(circle at top, rgba(80, 124, 196, 0.18), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(86, 221, 179, 0.1), transparent 24%),
+    linear-gradient(180deg, #07101d 0%, #04070f 52%, #02040a 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, filter 160ms ease;
+}
+
+button:hover {
+  filter: brightness(1.03);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(86, 221, 179, 0.5);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: rgba(86, 221, 179, 0.25);
+}

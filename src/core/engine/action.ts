@@ -1,0 +1,362 @@
+// src/core/engine/action.ts
+import type { IGameState } from './i_game_state';
+import type { SimEventQueue, DamageSnapshot } from './eventQueue';
+import type { RngInstance } from './rng';
+import type { SpellData } from '../dbc/spell_data';
+import type { SimEvent } from './eventQueue';
+import type { SpellDef } from '../data/spells';
+import { computePhysicalArmorMultiplier } from './armor';
+import { getSharedPlayerDamageMultiplier } from '../shared/player_effects';
+import { rollRange, rollChance } from './rng';
+
+export interface ActionResult {
+  /** Raw damage after all multipliers and crit. 0 for non-damaging actions. */
+  damage: number;
+  isCrit: boolean;
+  newEvents: SimEvent[];
+  buffsApplied: { id: string; duration: number; stacks?: number }[];
+  /**
+   * Positive seconds to reduce from each named cooldown.
+   * e.g. `{ spellId: 'rising_sun_kick', delta: 1 }` reduces RSK CD by 1s.
+   * Applied via `state.adjustCooldown(spellId, delta)` in applyActionResult.
+   * NOTE: `GameState.adjustCooldown` guards `if (deltaSeconds <= 0) return` —
+   * passing a negative delta silently does nothing. Always use positive values here.
+   */
+  cooldownAdjustments: { spellId: string; delta: number }[];
+}
+
+export type ActionCastFailReason = 'talent_missing' | 'wdp_constraint' | 'execute_not_ready';
+
+export abstract class Action {
+  abstract readonly name: string;
+  abstract readonly spellData: SpellData;
+
+  constructor(protected readonly p: IGameState) { }
+
+  // ---------------------------------------------------------------------------
+  // Virtual method chain (override in subclasses, call super())
+  // ---------------------------------------------------------------------------
+
+  /** Ability-specific damage multiplier (WW base 0.9, spell bonus, talent bonuses). */
+  composite_da_multiplier(): number { return 1.0; }
+
+  /**
+   * Player damage multiplier. Base implementation covers versatility only
+   * (a generic player stat). Spec-specific modifiers (mastery, hit_combo) are
+   * added by subclasses that call `super.composite_player_multiplier(isComboStrike)`.
+   */
+  composite_player_multiplier(isComboStrike: boolean): number {
+    void isComboStrike; // base does not use isComboStrike; subclasses may
+    return 1 + this.p.getVersatilityPercent() / 100;
+  }
+
+  composite_target_multiplier(): number {
+    const hookTargetMultiplier = this.p.damageHooks?.getTargetMultiplier?.(this.spellDef(), this.p) ?? 1.0;
+    const armorPen = this.p.damageHooks?.getArmorPenPercent?.(this.p) ?? 0;
+    const armorFactor = this.actionIsPhysical()
+      ? computePhysicalArmorMultiplier(this.p, armorPen)
+      : 1.0;
+    return hookTargetMultiplier * armorFactor;
+  }
+
+  protected actionIsPhysical(): boolean {
+    return true;
+  }
+
+  /** Crit chance fraction (0–1). Override to add spell-specific bonuses. */
+  composite_crit_chance(): number {
+    let critChancePercent = this.p.getCritPercent();
+    critChancePercent += this.p.damageHooks?.getSpellCritChanceBonusPercent?.(this.spellDef(), this.p) ?? 0;
+    return Math.min(100, critChancePercent) / 100;
+  }
+
+  /**
+   * Effective chi cost for this cast, accounting for buff-based cost reductions.
+   * Override in subclasses for spell-specific waivers (e.g. Dance of Chi-Ji on SCK).
+   * The executor applies global modifiers (Zenith -1) on top of this return value.
+   * Default: 0 (non-chi-spending actions).
+   */
+  chiCost(): number {
+    return 0;
+  }
+
+  /**
+   * Called by the executor immediately after chi is spent for this cast.
+   * Override in spec-specific subclasses to trigger chi-spend procs.
+   * Default implementation is a no-op.
+   */
+  onChiSpent(_chiCost: number, _rng: RngInstance, _queue: SimEventQueue): void {
+    void _chiCost;
+    void _rng;
+    void _queue;
+  }
+
+  /**
+   * Optional pre-cast action gating (e.g. proc-only spells).
+   * Return a fail reason to block cast, otherwise undefined.
+   */
+  preCastFailReason(): ActionCastFailReason | undefined {
+    return undefined;
+  }
+
+  /**
+   * Whether a player cast attempt with `nextSpell` may interrupt this action's
+   * active channel before the normal pre-cast checks run.
+   */
+  canBeInterruptedByCastAttempt(_nextSpell: SpellDef): boolean {
+    return false;
+  }
+
+  /**
+   * Whether a cast attempt with `nextSpell` may proceed while this action is
+   * actively channeling, without interrupting the channel.
+   */
+  canCastWhileChannelingWithoutInterrupt(_nextSpell: SpellDef): boolean {
+    return false;
+  }
+
+  /**
+   * Cleanup to run immediately when a cast attempt interrupts this action.
+   * Default: no extra effect.
+   */
+  onCastInterrupted(_queue: SimEventQueue, _rng: RngInstance): ActionResult {
+    return { damage: 0, isCrit: false, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
+  }
+
+  /**
+   * Identifier used for combo-strike checks and prev_gcd recording.
+   * Defaults to action name.
+   */
+  comboStrikeName(): string {
+    return this.name;
+  }
+
+  /**
+   * Whether this action participates in combo-strike tracking (SimC: may_combo_strike).
+   * Controls whether the action updates lastComboStrikeAbility and triggers
+   * combo_strikes_trigger().  SimC defaults may_combo_strike to false in action_t;
+   * subclasses (e.g. MonkAction) opt in by overriding to return true.
+   */
+  mayComboStrike(): boolean {
+    return false;
+  }
+
+  /**
+   * Effective cooldown duration for this action.
+   * Defaults to haste scaling when spell metadata opts in.
+   */
+  cooldownDuration(baseDuration: number, hasteScalesCooldown: boolean): number {
+    if (!hasteScalesCooldown) {
+      return baseDuration;
+    }
+    return baseDuration / (1 + this.p.getHastePercent() / 100);
+  }
+
+  /**
+   * Effective channel duration for this action.
+   * Defaults to haste-scaled channel duration.
+   */
+  channelDuration(baseDuration: number, hastePercent: number): number {
+    return baseDuration / (1 + hastePercent / 100);
+  }
+
+  /**
+   * Effective number of channel ticks for this action.
+   */
+  channelTicks(baseTicks: number): number {
+    return baseTicks;
+  }
+
+  /**
+   * Relative tick offsets in seconds from channel start.
+   * Defaults to evenly spacing ticks across the full channel, ending on the last tick.
+   */
+  channelTickOffsets(channelDuration: number, channelTicks: number): number[] {
+    if (channelTicks <= 0) {
+      return [];
+    }
+
+    return Array.from(
+      { length: channelTicks },
+      (_, index) => (channelDuration / channelTicks) * (index + 1),
+    );
+  }
+
+  total_multiplier(isComboStrike: boolean): number {
+    return this.composite_da_multiplier()
+      * this.composite_player_multiplier(isComboStrike)
+      * this.composite_target_multiplier();
+  }
+
+  protected snapshotActionMultiplier(): number {
+    return this.composite_da_multiplier();
+  }
+
+  protected snapshotPlayerMultiplier(): number {
+    return getSharedPlayerDamageMultiplier(this.p);
+  }
+
+  protected snapshotMasteryMultiplier(_isComboStrike: boolean): number {
+    return 1.0;
+  }
+
+  protected snapshotHitComboMultiplier(): number {
+    return 1.0;
+  }
+
+  protected snapshotVersatilityMultiplier(): number {
+    return 1 + this.p.getVersatilityPercent() / 100;
+  }
+
+  protected snapshotTargetMultiplier(): number {
+    return this.composite_target_multiplier();
+  }
+
+  protected snapshotCritChancePercent(): number {
+    return Math.min(100, this.composite_crit_chance() * 100);
+  }
+
+  protected critDamageMultiplier(): number {
+    return this.p.damageHooks?.getCritDamageMultiplier?.(this.spellDef(), this.p) ?? 2.0;
+  }
+
+  protected spellDef(): SpellDef {
+    return {
+      id: this.spellData.id(),
+      name: this.name,
+      displayName: this.spellData.name(),
+      energyCost: 0,
+      chiCost: 0,
+      chiGain: 0,
+      cooldown: 0,
+      hasteScalesCooldown: false,
+      isChanneled: false,
+      channelDuration: 0,
+      channelTicks: 0,
+      isOnGcd: true,
+      apCoefficient: this.spellData.effectN(1).ap_coeff(),
+      baseDmgMin: 0,
+      baseDmgMax: 0,
+      requiresComboStrike: false,
+      isWdp: false,
+      isZenith: false,
+      isExecute: false,
+      executeHpDamage: 0,
+      isPhysical: this.actionIsPhysical(),
+    };
+  }
+
+  /**
+   * Capture a channel snapshot using the same virtual multiplier chain as the
+   * action's direct-damage path.
+   */
+  captureSnapshot(isComboStrike: boolean): DamageSnapshot {
+    return {
+      actionMultiplier: this.snapshotActionMultiplier(),
+      playerMultiplier: this.snapshotPlayerMultiplier(),
+      masteryMultiplier: this.snapshotMasteryMultiplier(isComboStrike),
+      hitComboMultiplier: this.snapshotHitComboMultiplier(),
+      versatilityMultiplier: this.snapshotVersatilityMultiplier(),
+      targetMultiplier: this.snapshotTargetMultiplier(),
+      apCoefficient: this.spellData.effectN(1).ap_coeff(),
+      attackPower: this.effectiveAttackPower(),
+      baseDmgMin: 0,
+      baseDmgMax: 0,
+      critChance: this.snapshotCritChancePercent(),
+      snapshotTime: this.p.currentTime,
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Damage helper
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attack power used for this action's damage formula.
+   *
+   * Default: WEAPON_MAINHAND.
+   * Override in subclasses that use WEAPON_BOTH (e.g. Blackout Kick, SCK tick)
+   * to return getWeaponBothAttackPower().
+   *
+   * Source: SimC attack_power_type enum (sc_enums.hpp) and
+   *         composite_total_attack_power_by_type (player.cpp).
+   */
+  protected effectiveAttackPower(): number {
+    return this.p.getWeaponMainHandAttackPower?.() ?? this.p.getAttackPower();
+  }
+
+  /**
+   * Compute raw AP-scaled damage using effectN(1).ap_coeff() × total_multiplier().
+   * Subclasses override for multi-hit or non-standard formulas.
+   */
+  calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
+    const ap = this.effectiveAttackPower();
+    const apCoeff = this.spellData.effectN(1).ap_coeff();
+    const critChance = this.composite_crit_chance();
+    const isCrit = rng.next() < critChance;
+    const critMult = isCrit ? this.critDamageMultiplier() : 1.0;
+    const damage = ap * apCoeff * this.total_multiplier(isComboStrike) * critMult;
+    return { damage, isCrit };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Execute
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Execute the action: compute damage, return ActionResult.
+   * Subclasses override to add proc effects. Always call super.execute() first.
+   */
+  execute(
+    _queue: SimEventQueue,
+    rng: RngInstance,
+    isComboStrike: boolean,
+  ): ActionResult {
+    return {
+      ...this.calculateDamage(rng, isComboStrike),
+      newEvents: [],
+      buffsApplied: [],
+      cooldownAdjustments: [],
+    };
+  }
+
+  afterExecute(_queue: SimEventQueue, _rng: RngInstance): void {
+    void _queue;
+    void _rng;
+  }
+
+  tick(
+    _state: IGameState,
+    _rng: RngInstance,
+    _snapshot: DamageSnapshot,
+    _tickNum: number,
+  ): ActionResult {
+    return { damage: 0, isCrit: false, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
+  }
+
+  last_tick(
+    _state: IGameState,
+    _queue: SimEventQueue,
+    _rng: RngInstance,
+  ): ActionResult {
+    return { damage: 0, isCrit: false, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
+  }
+
+  protected calculateDamageFromSnapshot(
+    snapshot: DamageSnapshot,
+    rng: RngInstance,
+  ): { damage: number; isCrit: boolean } {
+    const base = snapshot.baseDmgMin === snapshot.baseDmgMax
+      ? snapshot.baseDmgMin
+      : rollRange(rng, snapshot.baseDmgMin, snapshot.baseDmgMax);
+    const baseDamage = base + snapshot.apCoefficient * snapshot.attackPower;
+    const combined = snapshot.actionMultiplier
+      * snapshot.playerMultiplier
+      * snapshot.masteryMultiplier
+      * snapshot.hitComboMultiplier
+      * snapshot.versatilityMultiplier
+      * snapshot.targetMultiplier;
+    const isCrit = rollChance(rng, snapshot.critChance);
+    return { damage: baseDamage * combined * (isCrit ? this.critDamageMultiplier() : 1.0), isCrit };
+  }
+}

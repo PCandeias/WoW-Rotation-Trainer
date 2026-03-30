@@ -1,0 +1,212 @@
+// src/core/class_modules/monk/actions/whirling_dragon_punch.ts
+import { MonkMeleeAction } from '../monk_action';
+import { requireMonkSpellData } from '../../../dbc/monk_spell_data';
+import type { ActionResult } from '../../../engine/action';
+import { EventType } from '../../../engine/eventQueue';
+import type { SimEventQueue } from '../../../engine/eventQueue';
+import { rollChance } from '../../../engine/rng';
+import type { RngInstance } from '../../../engine/rng';
+import { calculateDamage } from '../../../engine/damage';
+import type { SpellDef } from '../../../data/spells';
+import { MONK_WW_BUFFS } from '../../../data/spells/monk_windwalker';
+import {
+  WHIRLING_DRAGON_PUNCH_AOE_SPELL,
+  WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL,
+} from '../monk_proc_spells';
+
+const KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL = requireMonkSpellData(451529);
+const COMMUNION_WITH_WIND_SPELL = requireMonkSpellData(451576);
+const MIDNIGHT_SEASON_2PC_SPELL = requireMonkSpellData(1264842);
+const REVOLVING_WHIRL_SPELL = requireMonkSpellData(451524);
+const THUNDERFIST_TALENT = requireMonkSpellData(392985);
+const THUNDERFIST_BUFF = requireMonkSpellData(393565);
+const THUNDERFIST_BASE_STACKS = THUNDERFIST_TALENT.effectN(1).base_value();
+const THUNDERFIST_MAX_STACKS = THUNDERFIST_BUFF.max_stacks() ?? MONK_WW_BUFFS.get('thunderfist')?.maxStacks ?? 10;
+const THUNDERFIST_DURATION_SECONDS = THUNDERFIST_BUFF.duration_ms() > 0
+  ? THUNDERFIST_BUFF.duration_ms() / 1000
+  : (MONK_WW_BUFFS.get('thunderfist')?.duration ?? 60);
+const TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.maxStacks ?? 4;
+const TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.duration ?? 20;
+const BLACKOUT_REINFORCEMENT_MAX_STACKS = MONK_WW_BUFFS.get('blackout_reinforcement')?.maxStacks ?? 2;
+const BLACKOUT_REINFORCEMENT_DURATION_SECONDS = MONK_WW_BUFFS.get('blackout_reinforcement')?.duration ?? 15;
+
+export class WhirlingDragonPunchAction extends MonkMeleeAction {
+  readonly name = 'whirling_dragon_punch';
+  readonly spellData = requireMonkSpellData(152175);
+
+  private calculateChildHitDamage(
+    spell: SpellDef,
+    rng: RngInstance,
+    isComboStrike: boolean,
+  ): { damage: number; isCrit: boolean } {
+    const result = calculateDamage(spell, this.p, rng, isComboStrike);
+    // Child spell damage already passes through generic monk hooks in
+    // calculateDamage(); apply only WDP-specific bonuses here.
+    let spellSpecificMultiplier = 1.0;
+    if (this.p.hasTalent('knowledge_of_the_broken_temple')) {
+      spellSpecificMultiplier *= 1 + KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL.effectN(2).percent();
+    }
+    if (this.p.hasTalent('communion_with_wind')) {
+      spellSpecificMultiplier *= 1 + COMMUNION_WITH_WIND_SPELL.effectN(2).percent();
+    }
+    if (this.p.hasTalent('midnight_season_1_2pc')) {
+      spellSpecificMultiplier *= 1 + MIDNIGHT_SEASON_2PC_SPELL.effectN(1).percent();
+    }
+    return {
+      damage: result.finalDamage * spellSpecificMultiplier,
+      isCrit: result.isCrit,
+    };
+  }
+
+  override calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
+    const singletargetHit = this.calculateChildHitDamage(
+      WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL,
+      rng,
+      isComboStrike,
+    );
+    const aoeHits = Array.from({ length: 3 }, () => (
+      this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike)
+    ));
+
+    return {
+      damage: singletargetHit.damage + aoeHits.reduce((sum, hit) => sum + hit.damage, 0),
+      isCrit: singletargetHit.isCrit || aoeHits.some((hit) => hit.isCrit),
+    };
+  }
+
+  override preCastFailReason(): 'wdp_constraint' | undefined {
+    return this.p.isBuffActive('whirling_dragon_punch') ? undefined : 'wdp_constraint';
+  }
+
+  override cooldownDuration(baseDuration: number, hasteScalesCooldown: boolean): number {
+    let adjusted = baseDuration;
+    if (this.p.hasTalent('communion_with_wind')) {
+      adjusted = Math.max(0, adjusted - 5);
+    }
+    if (this.p.hasTalent('midnight_season_1_4pc')) {
+      adjusted = Math.max(0, adjusted - 5);
+    }
+    return super.cooldownDuration(adjusted, hasteScalesCooldown);
+  }
+
+  // WDP does not call super.execute() / Action.calculateDamage().
+  // Damage is computed exclusively via calculateChildHitDamage() → free calculateDamage().
+  // WDP-specific talent bonuses (KotBT, CWW, midnight_season_1_2pc) are applied there
+  // as spellSpecificMultiplier.  composite_da_multiplier() is never reached from this
+  // execute path and must NOT be overridden here — doing so would double-apply those
+  // bonuses if the execution path ever changes.
+  override execute(
+    _queue: SimEventQueue,
+    rng: RngInstance,
+    isComboStrike: boolean,
+  ): ActionResult {
+    this.comboStrikesTrigger(isComboStrike);
+    const singletargetHit = this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL, rng, isComboStrike);
+    const aoeHits = Array.from({ length: 3 }, () => this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike));
+
+    // WDP has no direct damage — all damage comes from child actions (ST + AOE).
+    // Children are recorded via addDamage + recordPendingSpellStat under their
+    // own names, matching SimC's add_child reporting.  result.damage must be 0
+    // to avoid double-counting (the executor calls addDamage(result.damage)).
+    this.p.addDamage(singletargetHit.damage);
+    this.p.recordPendingSpellStat(
+      WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL.name,
+      singletargetHit.damage,
+      1,
+      singletargetHit.isCrit,
+    );
+    for (const aoeHit of aoeHits) {
+      this.p.addDamage(aoeHit.damage);
+      this.p.recordPendingSpellStat(
+        WHIRLING_DRAGON_PUNCH_AOE_SPELL.name,
+        aoeHit.damage,
+        1,
+        aoeHit.isCrit,
+      );
+    }
+
+    const result: ActionResult = {
+      damage: 0,
+      isCrit: singletargetHit.isCrit || aoeHits.some((hit) => hit.isCrit),
+      newEvents: [],
+      buffsApplied: [],
+      cooldownAdjustments: [],
+    };
+
+    // knowledge_of_the_broken_temple: +effectN(1) teachings_of_the_monastery stacks (cap at maxStacks)
+    if (this.p.hasTalent('knowledge_of_the_broken_temple')) {
+      const stacksAdded = KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL.effectN(1).base_value();
+      const maxStacks = TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS + stacksAdded;
+      const nextStacks = Math.min(maxStacks, this.p.getBuffStacks('teachings_of_the_monastery') + stacksAdded);
+      this.p.applyBuff('teachings_of_the_monastery', TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS, nextStacks);
+      result.buffsApplied.push({
+        id: 'teachings_of_the_monastery',
+        duration: TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS,
+        stacks: nextStacks,
+      });
+    }
+
+    // echo_technique: +1 blackout_reinforcement stack (cap at 2)
+    if (this.p.hasTalent('echo_technique')) {
+      const stacksBefore = this.p.getBuffStacks('blackout_reinforcement');
+      const stacksAfter = Math.min(BLACKOUT_REINFORCEMENT_MAX_STACKS, Math.max(1, stacksBefore + 1));
+      this.p.applyBuff('blackout_reinforcement', BLACKOUT_REINFORCEMENT_DURATION_SECONDS, stacksAfter);
+      if (stacksBefore > 0) {
+        result.newEvents.push({
+          type: EventType.BUFF_STACK_CHANGE,
+          time: this.p.currentTime,
+          buffId: 'blackout_reinforcement',
+          stacks: stacksAfter,
+          prevStacks: stacksBefore,
+        });
+      } else {
+        result.newEvents.push({
+          type: EventType.BUFF_APPLY,
+          time: this.p.currentTime,
+          buffId: 'blackout_reinforcement',
+        });
+      }
+    }
+
+    // revolving_whirl: 33% chance to proc dance_of_chi_ji
+    if (this.p.hasTalent('revolving_whirl') && rollChance(rng, REVOLVING_WHIRL_SPELL.effectN(1).base_value())) {
+      const stacksBefore = this.p.getBuffStacks('dance_of_chi_ji');
+      const stacksAfter = Math.min(2, Math.max(1, stacksBefore + 1));
+      this.p.applyBuff('dance_of_chi_ji', 15, stacksAfter);
+      if (stacksBefore > 0) {
+        result.newEvents.push({
+          type: EventType.BUFF_STACK_CHANGE,
+          time: this.p.currentTime,
+          buffId: 'dance_of_chi_ji',
+          stacks: stacksAfter,
+          prevStacks: stacksBefore,
+        });
+      } else {
+        result.newEvents.push({ type: EventType.BUFF_APPLY, time: this.p.currentTime, buffId: 'dance_of_chi_ji' });
+      }
+    }
+
+    // thunderfist: effectN(1) stacks on primary target + 1 per additional enemy (capped by buff max stacks).
+    // SimC: WDP first-hit grants base_value stacks + extras (execute(bool first) where first==true).
+    if (this.p.hasTalent('thunderfist')) {
+      const stacksGranted = THUNDERFIST_BASE_STACKS + Math.max(0, this.p.activeEnemies - 1);
+      const currentStacks = this.p.getBuffStacks('thunderfist');
+      const newTotal = Math.min(THUNDERFIST_MAX_STACKS, currentStacks + stacksGranted);
+      const stacksBefore = currentStacks;
+      this.p.applyBuff('thunderfist', THUNDERFIST_DURATION_SECONDS, newTotal);
+      if (stacksBefore > 0) {
+        result.newEvents.push({
+          type: EventType.BUFF_STACK_CHANGE,
+          time: this.p.currentTime,
+          buffId: 'thunderfist',
+          stacks: newTotal,
+          prevStacks: stacksBefore,
+        });
+      } else {
+        result.newEvents.push({ type: EventType.BUFF_APPLY, time: this.p.currentTime, buffId: 'thunderfist' });
+      }
+    }
+
+    return result;
+  }
+}

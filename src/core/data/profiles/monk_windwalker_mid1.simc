@@ -1,0 +1,55 @@
+# Source: https://github.com/simulationcraft/simc/blob/midnight/profiles/MID1/MID1_Monk_Windwalker.simc
+monk="MID1_Monk_Windwalker"
+source=default
+spec=windwalker
+level=90
+race=troll
+role=attack
+position=back
+talents=C0QAAAAAAAAAAAAAAAAAAAAAAMzYw2wwsMzMLzAAAAAAAAAAAAsMMCzYbYAzYYmZmhZZYGmlZCAYzMbzMMmZGAAbAoZZWamZmFAMwMDAsMGwAG
+
+# Default consumables
+potion=potion_of_recklessness_2
+flask=flask_of_the_blood_knights_2
+food=harandar_celebration
+augmentation=void_touched
+temporary_enchant=main_hand:thalassian_phoenix_oil_2/off_hand:thalassian_phoenix_oil_2
+
+head=fearsome_visage_of_radens_chosen,id=250015,bonus_id=1808/6652/12667/12676/12806/13335/13338/13575,gem_id=240983,enchant_id=8017
+neck=amulet_of_the_abyssal_hymn,id=250247,bonus_id=3170/4786/4800/12806/13668,gem_id=240892/240892
+shoulders=aurastones_of_radens_chosen,id=250013,bonus_id=6652/12675/12806/13335/13340/13574,enchant_id=8001
+back=windwrap_of_radens_chosen,id=250010,bonus_id=6652/12806/13335
+chest=battle_garb_of_radens_chosen,id=250018,bonus_id=6652/12676/12806/13335/13336/13575,enchant_id=7987
+wrists=voidskinned_bracers,id=249327,bonus_id=3157/4786/4800/11307/12802/12806,gem_id=240892
+hands=vaelgors_fearsome_grasp,id=249321,bonus_id=12806/13577
+waist=snapvine_cinch,id=251082,bonus_id=3190/4786/11307/12806,gem_id=240892
+legs=swiftsweepers_of_radens_chosen,id=250014,bonus_id=6652/12676/12806/13335/13339/13575,enchant_id=8159
+feet=storm_crashers_of_radens_chosen,id=250017,bonus_id=6652/12806/13335,enchant_id=7963
+finger1=loa_worshipers_band,id=251513,bonus_id=8960/12066/12214/13622/12497,gem_id=240892,enchant_id=7967
+finger2=eye_of_midnight,id=249920,bonus_id=6652/12806/13335/13534,gem_id=240892/240892,enchant_id=7967
+trinket1=gaze_of_the_alnseer,id=249343,bonus_id=6652/12806/13335
+trinket2=algethar_puzzle_box,id=193701,bonus_id=6652/12699/12801/12806/13440
+main_hand=shadowslash_slicer,id=251122,bonus_id=3190/4786/12806,enchant_id=7981
+off_hand=bloomforged_claw,id=237845,bonus_id=8960/12066/12214/12693/13622/12497,enchant_id=7981,crafted_stats=36/49
+# main_hand_speed=2.60
+# main_hand_min=137
+# main_hand_max=229
+# off_hand_speed=2.60
+# off_hand_min=145
+# off_hand_max=207
+
+# Gear Summary
+# gear_ilvl=288.50
+# gear_agility=1247
+# gear_stamina=17609
+# gear_crit_rating=697
+# gear_haste_rating=1039
+# gear_mastery_rating=841
+# gear_avoidance_rating=167
+# gear_armor=876
+# target_armor=1470
+# target_level=93
+# hit_percent=7.5
+# expertise_percent=7.5
+set_bonus=midnight_season_1_2pc=1
+set_bonus=midnight_season_1_4pc=1
