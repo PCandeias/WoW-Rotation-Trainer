@@ -77,6 +77,11 @@ export interface CooldownTimelineRow {
   trainerTimes: number[];
 }
 
+export interface SpellTimelineChart {
+  player: RunCastRecord[];
+  trainer: RunCastRecord[];
+}
+
 export interface FindingEvidence {
   time: number;
   actualSpellId?: string;
@@ -176,6 +181,7 @@ export interface RunAnalysisReport {
   charts: {
     damageOverTime: AnalysisChartPoint[];
     cumulativeDamage: AnalysisChartPoint[];
+    spellTimeline: SpellTimelineChart;
     cooldownUsage: CooldownTimelineRow[];
     resourceWaste: ResourceWasteChartPoint[];
   };

@@ -10,6 +10,7 @@ import type {
   RawRunTrace,
   ResourceWasteChartPoint,
   RunAnalysisReport,
+  SpellTimelineChart,
   SpecAnalysisProfile,
 } from './types';
 import { MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
@@ -94,6 +95,13 @@ function buildCooldownRows(profile: SpecAnalysisProfile, player: RawRunTrace, tr
     playerTimes: player.casts.filter((entry) => entry.spellId === spellId).map((entry) => entry.time),
     trainerTimes: trainer.casts.filter((entry) => entry.spellId === spellId).map((entry) => entry.time),
   }));
+}
+
+function buildSpellTimelineChart(player: RawRunTrace, trainer: RawRunTrace): SpellTimelineChart {
+  return {
+    player: [...player.casts].sort((left, right) => left.time - right.time),
+    trainer: [...trainer.casts].sort((left, right) => left.time - right.time),
+  };
 }
 
 function buildAplFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
@@ -545,6 +553,7 @@ export function buildRunAnalysisReport(
     charts: {
       damageOverTime: buildDamageSeries(player, trainer),
       cumulativeDamage: buildCumulativeSeries(player, trainer),
+      spellTimeline: buildSpellTimelineChart(player, trainer),
       cooldownUsage: buildCooldownRows(profile, player, trainer),
       resourceWaste: buildResourceWasteSeries(player, trainer),
     },

@@ -40,9 +40,6 @@ export function ChallengeHud({
 
   return (
     <div style={root} data-testid="challenge-hud">
-      <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-        Challenge {difficulty === 'hard' ? 'Hard' : 'Easy'}
-      </div>
       {showStats && (
         <div style={statRow}>
           <div>Hits: {stats.hits}</div>

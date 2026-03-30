@@ -571,7 +571,6 @@ export function EncounterScreen({
         analysisReport={postRunAnalysis.report}
         analysisError={postRunAnalysis.error}
         endReason={endReason}
-        challengeSummary={challengeEnabled ? challenge.challenge : null}
         onRestart={restart}
         onExit={onExit}
       />
@@ -1083,7 +1082,6 @@ interface EndScreenProps {
   analysisReport: RunAnalysisReport | null;
   analysisError: string | null;
   endReason: string | null;
-  challengeSummary: ReturnType<typeof useChallengeMode>['challenge'] | null;
   onRestart: () => void;
   onExit: () => void;
 }
@@ -1122,7 +1120,6 @@ function EndScreen({
   analysisReport,
   analysisError,
   endReason,
-  challengeSummary,
   onRestart,
   onExit,
 }: EndScreenProps): React.ReactElement {
@@ -1145,7 +1142,7 @@ function EndScreen({
   };
 
   const shell: CSSProperties = {
-    width: 'min(1480px, 100%)',
+    width: 'min(1680px, 100%)',
     height: '100%',
     minHeight: 0,
     margin: '0 auto',
@@ -1204,25 +1201,11 @@ function EndScreen({
 
   const reportGrid: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1.65fr) minmax(320px, 0.95fr)',
+    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 0.95fr)',
+    gridTemplateRows: 'minmax(250px, 0.9fr) minmax(300px, 1.05fr) minmax(300px, 1.05fr)',
     gap: 16,
     minHeight: 0,
     overflow: 'hidden',
-  };
-
-  const chartGrid: CSSProperties = {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-    gap: 16,
-    minHeight: 0,
-  };
-
-  const sideColumn: CSSProperties = {
-    display: 'grid',
-    gridTemplateRows: challengeSummary ? 'auto auto minmax(0, 1fr) minmax(0, 1fr)' : 'auto minmax(0, 1fr) minmax(0, 1fr)',
-    gap: 16,
-    minHeight: 0,
   };
 
   const btnBase: CSSProperties = {
@@ -1296,102 +1279,99 @@ function EndScreen({
         </div>
 
         <div style={reportGrid}>
-          <div style={chartGrid}>
-            <ReportCard
-              title="Damage Over Time"
-              subtitle="See where your live DPS pace drifted away from the trainer."
-              bodyOverflow="hidden"
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport ? <AnalysisLineChart data={analysisReport.charts.damageOverTime} yFormatter={formatCompactNumber} /> : null,
-                'Loading trainer comparison...',
-              )}
-            />
-            <ReportCard
-              title="Cumulative Damage"
-              subtitle="The total gap makes missed burst windows easier to spot."
-              bodyOverflow="hidden"
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport
-                  ? (
-                    <AnalysisLineChart
-                      data={analysisReport.charts.cumulativeDamage}
-                      yFormatter={formatCompactNumber}
-                      lineType="linear"
-                    />
-                  )
-                  : null,
-                'Loading trainer comparison...',
-              )}
-            />
-            <ReportCard
-              title="Cooldown Usage"
-              subtitle="Compare each major cast timing against the same-build trainer run."
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport ? <CooldownTimeline rows={analysisReport.charts.cooldownUsage} encounterDuration={duration} /> : null,
-                'Loading cooldown timeline...',
-              )}
-            />
-            <ReportCard
-              title="Resource Waste"
-              subtitle="Waste spikes usually mean delayed spenders or filler drift."
-              bodyOverflow="hidden"
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport ? <ResourceWasteChart data={analysisReport.charts.resourceWaste} /> : null,
-                'Loading resource comparison...',
-              )}
-            />
-          </div>
-
-          <div style={sideColumn}>
-            <ReportCard
-              title="Comparison"
-              subtitle="Player and trainer traces stay visually distinct in every panel."
-              bodyOverflow="hidden"
-              body={(
-                <AnalysisOverview
-                  analysisStatus={analysisStatus}
-                  analysisError={analysisError}
-                  analysisReport={analysisReport}
-                />
-              )}
-            />
-            {challengeSummary && (
-              <ReportCard
-                title="Challenge Summary"
-                body={`Health ${challengeSummary.health}/${challengeSummary.maxHealth} • Hits ${challengeSummary.stats.hits} • Misses ${challengeSummary.stats.misses} • Best streak ${challengeSummary.stats.maxStreak}`}
+          <ReportCard
+            title="Damage Over Time"
+            subtitle="See where your live DPS pace drifted away from the trainer."
+            bodyOverflow="hidden"
+            style={{ gridColumn: '1', gridRow: '1' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport ? <AnalysisLineChart data={analysisReport.charts.damageOverTime} yFormatter={formatCompactNumber} /> : null,
+              'Loading trainer comparison...',
+            )}
+          />
+          <ReportCard
+            title="Cumulative Damage"
+            subtitle="The total gap makes missed burst windows easier to spot."
+            bodyOverflow="hidden"
+            style={{ gridColumn: '2', gridRow: '1' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport
+                ? (
+                  <AnalysisLineChart
+                    data={analysisReport.charts.cumulativeDamage}
+                    yFormatter={formatCompactNumber}
+                    lineType="linear"
+                  />
+                )
+                : null,
+              'Loading trainer comparison...',
+            )}
+          />
+          <ReportCard
+            title="Comparison"
+            subtitle="Quick benchmark summary for your run versus the trainer."
+            bodyOverflow="hidden"
+            style={{ gridColumn: '3', gridRow: '1' }}
+            body={(
+              <AnalysisOverview
+                analysisStatus={analysisStatus}
+                analysisError={analysisError}
+                analysisReport={analysisReport}
               />
             )}
-            <ReportCard
-              title="Exact Mistakes"
-              subtitle="Check what your state was, what you pressed, what the trainer/APL would have pressed in that same spot, and why."
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport ? <ExactMistakesPanel mistakes={analysisReport.exactMistakes} /> : null,
-                'Loading precise decision review...',
-              )}
-            />
-            <ReportCard
-              title="Improvement Notes"
-              subtitle="Start with the biggest damage losses first."
-              body={renderAnalysisState(
-                analysisStatus,
-                analysisError,
-                analysisReport ? <ImprovementNotes findings={analysisReport.findings} /> : null,
-                usesCompetitiveTrainerRules(mode)
-                  ? 'Loading trainer-backed coaching...'
-                  : 'Loading practice coaching...',
-              )}
-            />
-          </div>
+          />
+          <ReportCard
+            title="Spell Timeline"
+            subtitle="Cast-by-cast comparison across the encounter, using the same timeline style as the validation report."
+            bodyOverflow="hidden"
+            style={{ gridColumn: '1 / span 2', gridRow: '2' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport ? <SpellTimeline data={analysisReport.charts.spellTimeline} encounterDuration={duration} /> : null,
+              'Loading spell timeline...',
+            )}
+          />
+          <ReportCard
+            title="Exact Mistakes"
+            subtitle="Check what your state was, what you pressed, what the trainer/APL would have pressed in that same spot, and why."
+            style={{ gridColumn: '3', gridRow: '2' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport ? <ExactMistakesPanel mistakes={analysisReport.exactMistakes} /> : null,
+              'Loading precise decision review...',
+            )}
+          />
+          <ReportCard
+            title="Resource Waste"
+            subtitle="Track Chi and Energy waste separately so overcaps are easier to spot."
+            bodyOverflow="hidden"
+            style={{ gridColumn: '1 / span 2', gridRow: '3' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport ? <ResourceWasteChart data={analysisReport.charts.resourceWaste} /> : null,
+              'Loading resource comparison...',
+            )}
+          />
+          <ReportCard
+            title="Improvement Notes"
+            subtitle="Start with the biggest damage losses first."
+            style={{ gridColumn: '3', gridRow: '3' }}
+            body={renderAnalysisState(
+              analysisStatus,
+              analysisError,
+              analysisReport ? <ImprovementNotes findings={analysisReport.findings} /> : null,
+              usesCompetitiveTrainerRules(mode)
+                ? 'Loading trainer-backed coaching...'
+                : 'Loading practice coaching...',
+            )}
+          />
         </div>
 
         <div style={btnRow}>
@@ -1412,11 +1392,13 @@ function ReportCard({
   subtitle,
   body,
   bodyOverflow = 'auto',
+  style,
 }: {
   title: string;
   subtitle?: string;
   body: React.ReactNode;
   bodyOverflow?: CSSProperties['overflow'];
+  style?: CSSProperties;
 }): React.ReactElement {
   return (
     <div
@@ -1428,6 +1410,7 @@ function ReportCard({
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        ...style,
       }}
     >
       <div
@@ -1517,6 +1500,52 @@ function AnalysisLineChart({
 }
 
 function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resourceWaste'] }): React.ReactElement {
+  return (
+    <div
+      style={{
+        width: '100%',
+        height: '100%',
+        minHeight: 260,
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: 14,
+      }}
+    >
+      <ResourceWastePanel
+        title="Chi Waste"
+        data={data}
+        playerKey="playerChi"
+        trainerKey="trainerChi"
+        playerColor={ANALYSIS_SERIES.playerChi}
+        trainerColor={ANALYSIS_SERIES.trainerChi}
+      />
+      <ResourceWastePanel
+        title="Energy Waste"
+        data={data}
+        playerKey="playerEnergy"
+        trainerKey="trainerEnergy"
+        playerColor={ANALYSIS_SERIES.playerEnergy}
+        trainerColor={ANALYSIS_SERIES.trainerEnergy}
+      />
+    </div>
+  );
+}
+
+function ResourceWastePanel({
+  title,
+  data,
+  playerKey,
+  trainerKey,
+  playerColor,
+  trainerColor,
+}: {
+  title: string;
+  data: RunAnalysisReport['charts']['resourceWaste'];
+  playerKey: 'playerChi' | 'playerEnergy';
+  trainerKey: 'trainerChi' | 'trainerEnergy';
+  playerColor: string;
+  trainerColor: string;
+}): React.ReactElement {
   const chartTooltipStyle = {
     backgroundColor: T.bgPanelRaised,
     borderColor: T.borderBright,
@@ -1525,92 +1554,73 @@ function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resou
     boxShadow: T.shadow,
   };
   const chart = (
-    <LineChart data={data} width={520} height={260}>
+    <LineChart data={data} width={260} height={220}>
       <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="2 6" vertical={false} />
       <XAxis dataKey="time" stroke={T.textMuted} tick={{ fill: T.textDim, fontSize: 11, fontFamily: FONTS.body }} tickLine={false} axisLine={false} />
-      <YAxis
-        yAxisId="chi"
-        stroke={ANALYSIS_SERIES.playerChi}
-        tick={{ fill: ANALYSIS_SERIES.playerChi, fontSize: 11, fontFamily: FONTS.body }}
-        width={44}
-        label={{ value: 'Chi', angle: -90, position: 'insideLeft', fill: ANALYSIS_SERIES.playerChi, fontSize: 11 }}
-        tickLine={false}
-        axisLine={false}
-      />
-      <YAxis
-        yAxisId="energy"
-        orientation="right"
-        stroke={ANALYSIS_SERIES.playerEnergy}
-        tick={{ fill: ANALYSIS_SERIES.playerEnergy, fontSize: 11, fontFamily: FONTS.body }}
-        width={50}
-        label={{ value: 'Energy', angle: 90, position: 'insideRight', fill: ANALYSIS_SERIES.playerEnergy, fontSize: 11 }}
-        tickLine={false}
-        axisLine={false}
-      />
-      <Tooltip
-        labelFormatter={(value) => `${value}s`}
-        contentStyle={chartTooltipStyle}
-      />
+      <YAxis stroke={playerColor} tick={{ fill: playerColor, fontSize: 11, fontFamily: FONTS.body }} width={40} tickLine={false} axisLine={false} />
+      <Tooltip labelFormatter={(value) => `${value}s`} contentStyle={chartTooltipStyle} />
       <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
-      <Line yAxisId="chi" type="monotone" dataKey="playerChi" name="Your Chi waste" stroke={ANALYSIS_SERIES.playerChi} dot={false} strokeWidth={2.5} />
-      <Line yAxisId="chi" type="monotone" dataKey="trainerChi" name="Trainer Chi waste" stroke={ANALYSIS_SERIES.trainerChi} strokeDasharray="7 4" dot={false} strokeWidth={2} />
-      <Line yAxisId="energy" type="monotone" dataKey="playerEnergy" name="Your Energy waste" stroke={ANALYSIS_SERIES.playerEnergy} dot={false} strokeWidth={2.5} />
-      <Line yAxisId="energy" type="monotone" dataKey="trainerEnergy" name="Trainer Energy waste" stroke={ANALYSIS_SERIES.trainerEnergy} strokeDasharray="7 4" dot={false} strokeWidth={2} />
+      <Line type="monotone" dataKey={playerKey} name="You" stroke={playerColor} dot={false} strokeWidth={2.5} />
+      <Line type="monotone" dataKey={trainerKey} name="Trainer" stroke={trainerColor} strokeDasharray="7 4" dot={false} strokeWidth={2} />
     </LineChart>
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: 260 }}>
-      {typeof ResizeObserver === 'undefined'
-        ? chart
-        : (
-          <ResponsiveContainer width="100%" height="100%">
-            {chart}
-          </ResponsiveContainer>
-        )}
+    <div style={{ minWidth: 0, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 10 }}>
+      <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{title}</div>
+      <div style={{ width: '100%', height: '100%', minHeight: 220 }}>
+        {typeof ResizeObserver === 'undefined'
+          ? chart
+          : (
+            <ResponsiveContainer width="100%" height="100%">
+              {chart}
+            </ResponsiveContainer>
+          )}
+      </div>
     </div>
   );
 }
 
-function CooldownTimeline({
-  rows,
+function SpellTimeline({
+  data,
   encounterDuration,
 }: {
-  rows: RunAnalysisReport['charts']['cooldownUsage'];
+  data: RunAnalysisReport['charts']['spellTimeline'];
   encounterDuration: number;
 }): React.ReactElement {
-  if (rows.length === 0) {
-    return <div>No tracked cooldowns are available for this build.</div>;
+  if (data.player.length === 0 && data.trainer.length === 0) {
+    return <div>No cast timeline is available for this encounter.</div>;
   }
 
+  const tickStep = encounterDuration <= 30 ? 5 : encounterDuration <= 90 ? 10 : 15;
+  const tickTimes = Array.from({ length: Math.floor(encounterDuration / tickStep) + 1 }, (_, index) => Math.min(encounterDuration, index * tickStep));
+  const playerLane = buildSpellTimelineLane(data.player, encounterDuration);
+  const trainerLane = buildSpellTimelineLane(data.trainer, encounterDuration);
+
   return (
-    <div style={{ display: 'grid', gap: 8 }}>
-      {rows.map((row) => (
-        <div key={row.spellId}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
-            <SpellBadge spellId={row.spellId} />
-            <div style={{ color: T.textDim, fontSize: '0.74rem' }}>
-              You {row.playerTimes.length} • Trainer {row.trainerTimes.length}
+    <div style={{ display: 'grid', gap: 12, height: '100%', minHeight: 300 }}>
+      <SpellTimelineLane label="You" lane={playerLane} encounterDuration={encounterDuration} accent={ANALYSIS_SERIES.player} />
+      <SpellTimelineLane label="Trainer" lane={trainerLane} encounterDuration={encounterDuration} accent={ANALYSIS_SERIES.trainer} />
+      <div style={{ display: 'grid', gridTemplateColumns: '68px minmax(0, 1fr)', gap: 12 }}>
+        <div />
+        <div style={{ position: 'relative', height: 18 }}>
+          {tickTimes.map((time) => (
+            <div
+              key={`tick-${time}`}
+              style={{
+                position: 'absolute',
+                left: `${Math.max(0, Math.min(100, (time / Math.max(1, encounterDuration)) * 100))}%`,
+                transform: 'translateX(-50%)',
+                color: T.textDim,
+                fontSize: '0.7rem',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {time}s
             </div>
-          </div>
-          <div style={{ position: 'relative', height: 26, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.04)' }}>
-            {row.trainerTimes.map((time, index) => (
-              <div
-                key={`trainer-${row.spellId}-${index}`}
-                title={`Trainer ${time.toFixed(1)}s`}
-                style={buildTimelineMarker(time, encounterDuration, ANALYSIS_SERIES.trainer, 4, 18, 6)}
-              />
-            ))}
-            {row.playerTimes.map((time, index) => (
-              <div
-                key={`player-${row.spellId}-${index}`}
-                title={`You ${time.toFixed(1)}s`}
-                style={buildTimelineMarker(time, encounterDuration, ANALYSIS_SERIES.player, 11, 12, 4)}
-              />
-            ))}
-          </div>
+          ))}
         </div>
-      ))}
+      </div>
     </div>
   );
 }
@@ -1742,54 +1752,137 @@ function AnalysisOverview({
   const gap = analysisReport.score.trainerDps - analysisReport.score.playerDps;
 
   return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div style={{ display: 'grid', gap: 8 }}>
-        <LegendChip label="You" color={ANALYSIS_SERIES.player} />
-        <LegendChip label="Trainer" color={ANALYSIS_SERIES.trainer} dashed />
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Your DPS</span>
+        <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.playerDps).toLocaleString()}</span>
       </div>
-      <div style={{ display: 'grid', gap: 8 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span>Your DPS</span>
-          <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.playerDps).toLocaleString()}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span>Trainer DPS</span>
-          <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.trainerDps).toLocaleString()}</span>
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-          <span>Current gap</span>
-          <span style={{ color: gap > 0 ? T.gold : T.textBright }}>
-            {gap > 0 ? `${Math.round(gap).toLocaleString()} DPS behind` : 'At or above benchmark'}
-          </span>
-        </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Trainer DPS</span>
+        <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.trainerDps).toLocaleString()}</span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+        <span>Current gap</span>
+        <span style={{ color: gap > 0 ? T.gold : T.textBright }}>
+          {gap > 0 ? `${Math.round(gap).toLocaleString()} DPS behind` : 'At or above benchmark'}
+        </span>
       </div>
     </div>
   );
 }
 
-function LegendChip({
+function SpellTimelineLane({
   label,
-  color,
-  dashed = false,
+  lane,
+  encounterDuration,
+  accent,
 }: {
   label: string;
-  color: string;
-  dashed?: boolean;
+  lane: { placements: { spellId: string; time: number; level: number }[]; levelCount: number; count: number };
+  encounterDuration: number;
+  accent: string;
 }): React.ReactElement {
+  const trackHeight = Math.max(52, lane.levelCount * 34 + 18);
+  const tickStep = encounterDuration <= 30 ? 5 : encounterDuration <= 90 ? 10 : 15;
+  const tickTimes = Array.from({ length: Math.floor(encounterDuration / tickStep) + 1 }, (_, index) => Math.min(encounterDuration, index * tickStep));
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span
-        aria-hidden="true"
+    <div style={{ display: 'grid', gridTemplateColumns: '68px minmax(0, 1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gap: 4, alignContent: 'start', paddingTop: 6 }}>
+        <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.9rem' }}>{label}</div>
+        <div style={{ color: T.textDim, fontSize: '0.72rem' }}>{lane.count} casts</div>
+      </div>
+      <div
         style={{
-          width: 28,
-          height: 0,
-          borderTop: `3px ${dashed ? 'dashed' : 'solid'} ${color}`,
-          borderRadius: 999,
+          position: 'relative',
+          height: trackHeight,
+          borderRadius: 12,
+          border: `1px solid ${T.border}`,
+          backgroundColor: 'rgba(255,255,255,0.03)',
+          overflow: 'hidden',
         }}
-      />
-      <span>{label}</span>
+      >
+        {tickTimes.map((time) => (
+          <div
+            key={`${label}-grid-${time}`}
+            style={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              left: `${Math.max(0, Math.min(100, (time / Math.max(1, encounterDuration)) * 100))}%`,
+              width: 1,
+              backgroundColor: 'rgba(255,255,255,0.06)',
+            }}
+          />
+        ))}
+        {lane.placements.map((entry, index) => {
+          const presentation = getSpellPresentation(entry.spellId);
+          return (
+            <div
+              key={`${label}-${entry.spellId}-${entry.time.toFixed(2)}-${index}`}
+              title={`${presentation.label} • ${entry.time.toFixed(1)}s`}
+              style={{
+                position: 'absolute',
+                left: `${Math.max(0, Math.min(100, (entry.time / Math.max(1, encounterDuration)) * 100))}%`,
+                top: 8 + entry.level * 34,
+                transform: 'translateX(-50%)',
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                border: `1px solid ${accent}66`,
+                backgroundColor: 'rgba(10, 16, 30, 0.92)',
+                boxShadow: `0 0 12px ${accent}44`,
+                display: 'grid',
+                placeItems: 'center',
+              }}
+            >
+              <AbilityIcon
+                iconName={presentation.iconName}
+                emoji={presentation.emoji}
+                size={22}
+                alt={presentation.label}
+                style={{ borderRadius: 6 }}
+              />
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+function buildSpellTimelineLane(
+  casts: RunAnalysisReport['charts']['spellTimeline']['player'],
+  encounterDuration: number,
+): {
+  placements: { spellId: string; time: number; level: number }[];
+  levelCount: number;
+  count: number;
+} {
+  const sortedCasts = [...casts].sort((left, right) => left.time - right.time);
+  const levelLastTimes: number[] = [];
+  const minimumGap = Math.max(0.9, Math.min(2, encounterDuration / 55));
+  const placements = sortedCasts.map((cast) => {
+    let level = levelLastTimes.findIndex((lastTime) => cast.time - lastTime >= minimumGap);
+    if (level === -1) {
+      level = levelLastTimes.length;
+      levelLastTimes.push(cast.time);
+    } else {
+      levelLastTimes[level] = cast.time;
+    }
+
+    return {
+      spellId: cast.spellId,
+      time: cast.time,
+      level,
+    };
+  });
+
+  return {
+    placements,
+    levelCount: Math.max(1, levelLastTimes.length),
+    count: sortedCasts.length,
+  };
 }
 
 function ImpactBadge({
@@ -2009,28 +2102,6 @@ function BuffBadge({ buffId, stacks }: { buffId: string; stacks: number }): Reac
       </span>
     </div>
   );
-}
-
-function buildTimelineMarker(
-  time: number,
-  encounterDuration: number,
-  color: string,
-  top: number,
-  height: number,
-  width: number,
-): CSSProperties {
-  const left = `${Math.max(0, Math.min(100, (time / Math.max(1, encounterDuration)) * 100))}%`;
-  return {
-    position: 'absolute',
-    left,
-    top,
-    width,
-    height,
-    borderRadius: 999,
-    backgroundColor: color,
-    transform: 'translateX(-50%)',
-    boxShadow: `0 0 10px ${color}88`,
-  };
 }
 
 function titleCaseSpellId(spellId: string): string {
