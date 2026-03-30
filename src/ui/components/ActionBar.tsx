@@ -7,7 +7,7 @@ import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import type { SpellInputStatus } from '@core/engine/spell_input';
 import type { SpellDef } from '@core/data/spells';
-import { normalizeKey, normalizeMouseButton } from '@ui/utils/keyUtils';
+import { normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 
 // ---------------------------------------------------------------------------
 // Slot definition
@@ -273,7 +273,6 @@ export function ActionBar({
     }
 
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.metaKey) return; // allow browser shortcuts (Cmd+R, etc.)
       const chord = normalizeKey(e);
       const spellIds = keyMapRef.current[chord] ?? [];
       if (spellIds.length === 0) return;
@@ -290,11 +289,22 @@ export function ActionBar({
       dispatchSpellIds(spellIds);
     };
 
+    const handleWheel = (e: WheelEvent): void => {
+      const chord = normalizeMouseWheel(e);
+      if (chord === null) return;
+      const spellIds = keyMapRef.current[chord] ?? [];
+      if (spellIds.length === 0) return;
+      e.preventDefault();
+      dispatchSpellIds(spellIds);
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('wheel', handleWheel, { passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('wheel', handleWheel);
     };
   }, [dispatchSpellIds, enableGlobalKeybinds]);
 

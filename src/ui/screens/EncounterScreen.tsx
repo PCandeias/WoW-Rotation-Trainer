@@ -51,7 +51,7 @@ import {
 } from '@ui/state/trainerSettings';
 import { TRACKED_BUFF_SPELL_IDS, buildTrackerBlacklist } from '@ui/components/trackerSpellIds';
 import { LoadoutPanel } from './LoadoutPanel';
-import { normalizeKey, normalizeMouseButton } from '@ui/utils/keyUtils';
+import { normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 import { useChallengeMode } from '@ui/challenge/useChallengeMode';
 import type { RunAnalysisReport } from '@core/analysis';
 import { usePostRunAnalysis } from '@ui/analysis/usePostRunAnalysis';
@@ -235,18 +235,6 @@ export function EncounterScreen({
         return;
       }
 
-      if (event.key === 'F5') {
-        event.preventDefault();
-        restart();
-        return;
-      }
-
-      if (event.key === 'F1') {
-        event.preventDefault();
-        skipToNextTrack();
-        return;
-      }
-
       if (event.key === 'Escape' && !loadoutOpen) {
         event.preventDefault();
         cancelChannel();
@@ -261,14 +249,25 @@ export function EncounterScreen({
       }
 
       const spellIds = encounterInputMap[chord] ?? [];
-      if (spellIds.length === 0) {
+      if (spellIds.length > 0) {
+        event.preventDefault();
+        spellIds.forEach((spellId) => {
+          injectInput(spellId);
+        });
         return;
       }
 
-      event.preventDefault();
-      spellIds.forEach((spellId) => {
-        injectInput(spellId);
-      });
+      const loweredKey = event.key.toLowerCase();
+      if (loweredKey === 'f5') {
+        event.preventDefault();
+        restart();
+        return;
+      }
+
+      if (loweredKey === 'f1') {
+        event.preventDefault();
+        skipToNextTrack();
+      }
     };
 
     const handleMouseDown = (event: MouseEvent): void => {
@@ -292,11 +291,34 @@ export function EncounterScreen({
       });
     };
 
+    const handleWheel = (event: WheelEvent): void => {
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      const chord = normalizeMouseWheel(event);
+      if (chord === null) {
+        return;
+      }
+
+      const spellIds = encounterInputMap[chord] ?? [];
+      if (spellIds.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      spellIds.forEach((spellId) => {
+        injectInput(spellId);
+      });
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('wheel', handleWheel, { passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('wheel', handleWheel);
     };
   }, [
     cancelChannel,

@@ -32,7 +32,7 @@ import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import { createEmptyChallengeStats, type ChallengeNoteRuntime, type ChallengePlayfield } from '@ui/challenge/noteTypes';
 import { TRACKED_BUFF_SPELL_IDS, buildTrackerBlacklist } from './trackerSpellIds';
-import { SYSTEM_KEYS, normalizeKey, normalizeMouseButton } from '@ui/utils/keyUtils';
+import { MODIFIER_ONLY_KEYS, SYSTEM_KEYS, normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 import { FIXED_SCENE_HEIGHT, FIXED_SCENE_WIDTH, useFixedSceneScale } from '@ui/utils/layoutScaling';
 
 type HudLayoutGroupKey = keyof HudLayoutSettings;
@@ -550,7 +550,7 @@ export function HudLayoutPreview({
         return;
       }
 
-      if (SYSTEM_KEYS.has(event.key.toLowerCase()) || ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) {
+      if (SYSTEM_KEYS.has(event.key.toLowerCase()) || MODIFIER_ONLY_KEYS.has(event.key.toLowerCase())) {
         return;
       }
 
@@ -560,18 +560,19 @@ export function HudLayoutPreview({
     };
 
     const handleMouseDown = (event: MouseEvent): void => {
-      if (event.button === 0) {
-        setListeningForKeybind(false);
-        return;
-      }
-
-      if (event.button === 1 || event.button === 2) {
-        event.preventDefault();
-        setListeningForKeybind(false);
-        return;
-      }
-
       const chord = normalizeMouseButton(event);
+      if (chord === null) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      setButtonEditor((current) => current ? { ...current, keybindDraft: chord } : current);
+      setListeningForKeybind(false);
+    };
+
+    const handleWheel = (event: WheelEvent): void => {
+      const chord = normalizeMouseWheel(event);
       if (chord === null) {
         return;
       }
@@ -584,9 +585,11 @@ export function HudLayoutPreview({
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     window.addEventListener('mousedown', handleMouseDown, { capture: true });
+    window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
       window.removeEventListener('mousedown', handleMouseDown, { capture: true });
+      window.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, [buttonEditor, isEditing, listeningForKeybind]);
 
