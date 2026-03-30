@@ -4,7 +4,6 @@ import { AbilityIcon } from './AbilityIcon';
 import { SearchableTextInput, type SearchSuggestion } from './SearchableTextInput';
 import { ActionBar, SPELL_ICONS, WW_ACTION_BAR, type ActionBarButtonAssignment, type ActionBarSlotDef } from './ActionBar';
 import { PlayerFrame } from './PlayerFrame';
-import { TargetFrame } from './TargetFrame';
 import { EnergyChiDisplay } from './EnergyChiDisplay';
 import { CooldownManager } from './CooldownManager';
 import { CastBar } from './CastBar';
@@ -205,6 +204,8 @@ interface CanvasMetrics {
 const FALLBACK_GROUP_BASE_SIZES: Partial<Record<HudLayoutGroupKey, { width: number; height: number }>> = {
   enemyIcon: { width: 72, height: 96 },
   challengePlayfield: { width: PREVIEW_CHALLENGE_PLAYFIELD.width, height: PREVIEW_CHALLENGE_PLAYFIELD.height },
+  targetFrame: { width: 280, height: 34 },
+  consumables: { width: 132, height: 44 },
 };
 const PREVIEW_GAME_STATE: GameStateSnapshot = {
   chi: 4,
@@ -329,7 +330,7 @@ export function HudLayoutPreview({
   const [listeningForKeybind, setListeningForKeybind] = useState(false);
   const canvasRef = useRef<HTMLDivElement>(null);
   const launchNonceRef = useRef<number | null>(launchRequest?.nonce ?? null);
-  const editorSceneScale = useFixedSceneScale({ paddingX: 64, paddingY: 180 });
+  const editorSceneScale = useFixedSceneScale({ paddingX: 20, paddingY: 116 });
   const defaultLayout = useMemo(() => getDefaultHudLayoutSettings(), []);
 
   useEffect(() => {
@@ -452,6 +453,16 @@ export function HudLayoutPreview({
         layout: getDefaultHudLayoutSettings(),
       },
     }));
+  };
+
+  const appendSpellToButtonEditor = (spellId: string): void => {
+    setButtonEditor((current) => current ? {
+      ...current,
+      spellSequenceDraft: current.spellSequenceDraft.includes(spellId)
+        ? current.spellSequenceDraft
+        : [...current.spellSequenceDraft, spellId],
+      addSpellDraft: '',
+    } : current);
   };
 
   const updateDraftPosition = (groupKey: HudLayoutGroupKey, position: HudGroupLayout): void => {
@@ -742,6 +753,16 @@ export function HudLayoutPreview({
                   transformOrigin: 'center center',
                 }}
               >
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    border: `1px solid ${T.borderBright}`,
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04)',
+                    borderRadius: 18,
+                    pointerEvents: 'none',
+                  }}
+                />
                 {showGrid && (
                   <>
                     <div style={buildGuideLineStyle('vertical', CENTER_GUIDE_PCT, 'rgba(255,255,255,0.16)')} />
@@ -1139,6 +1160,12 @@ export function HudLayoutPreview({
                           ...current,
                           addSpellDraft: nextValue,
                         } : current)}
+                        onSuggestionSelect={(suggestion): void => {
+                          const spellId = resolveActionBarSpellId(suggestion.value);
+                          if (spellId) {
+                            appendSpellToButtonEditor(spellId);
+                          }
+                        }}
                         inputStyle={inputStyle}
                       />
                       <button
@@ -1151,13 +1178,7 @@ export function HudLayoutPreview({
                             return;
                           }
 
-                          setButtonEditor((current) => current ? {
-                            ...current,
-                            spellSequenceDraft: current.spellSequenceDraft.includes(spellId)
-                              ? current.spellSequenceDraft
-                              : [...current.spellSequenceDraft, spellId],
-                            addSpellDraft: '',
-                          } : current);
+                          appendSpellToButtonEditor(spellId);
                         }}
                       >
                         +
@@ -1400,6 +1421,58 @@ function MockEncounterBackdrop(): React.ReactElement {
   );
 }
 
+function MockTargetFrame(): React.ReactElement {
+  return (
+    <div
+      style={{
+        width: 280,
+        padding: '6px 8px',
+        borderRadius: 12,
+        border: `1px solid ${T.borderBright}`,
+        background: 'linear-gradient(180deg, rgba(12, 16, 24, 0.96), rgba(8, 11, 18, 0.94))',
+        boxShadow: '0 10px 24px rgba(0,0,0,0.24)',
+      }}
+    >
+      <div
+        style={{
+          position: 'relative',
+          height: 18,
+          borderRadius: 999,
+          overflow: 'hidden',
+          background: 'rgba(22, 27, 34, 0.95)',
+          border: `1px solid ${T.border}`,
+        }}
+      >
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            width: '68%',
+            background: 'linear-gradient(90deg, rgba(175, 36, 36, 0.92), rgba(233, 93, 93, 0.88))',
+          }}
+        />
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '0 8px',
+            color: T.textBright,
+            fontFamily: FONTS.ui,
+            fontSize: '0.66rem',
+            letterSpacing: '0.03em',
+          }}
+        >
+          <span>Raider&apos;s Training Dummy</span>
+          <span>68%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MockGroupContent({
   groupKey,
   actionBars,
@@ -1449,14 +1522,7 @@ function MockGroupContent({
   if (groupKey === 'targetFrame') {
     return (
       <div style={previewShellStyle}>
-        <TargetFrame
-          gameState={PREVIEW_GAME_STATE}
-          totalDamage={PREVIEW_GAME_STATE.totalDamage}
-          encounterDuration={PREVIEW_GAME_STATE.encounterDuration}
-          currentTime={PREVIEW_CURRENT_TIME}
-          showTargetDebuffs
-          debuffBlacklistSpellIds={buffTracking?.targetDebuffs.blacklistSpellIds ?? []}
-        />
+        <MockTargetFrame />
       </div>
     );
   }
@@ -1621,7 +1687,7 @@ function MockGroupContent({
 
   if (groupKey === 'consumables') {
     return (
-      <div style={previewShellStyle}>
+      <div style={{ ...previewShellStyle, transform: 'scale(0.78)', transformOrigin: 'center center' }}>
         <ConsumableTracker
           gameState={PREVIEW_GAME_STATE}
           currentTime={PREVIEW_CURRENT_TIME}
@@ -1780,7 +1846,7 @@ function clampPct(value: number): number {
     return CENTER_GUIDE_PCT;
   }
 
-  return Math.min(95, Math.max(5, value));
+  return Math.min(100, Math.max(0, value));
 }
 
 function getCanvasMetrics(canvas: HTMLDivElement | null): CanvasMetrics {
@@ -1965,10 +2031,10 @@ const editorModalStyle: CSSProperties = {
   border: 'none',
   background: 'linear-gradient(180deg, rgba(13,16,24,0.99), rgba(6,8,12,0.98))',
   boxShadow: 'none',
-  padding: '12px 12px calc(12px + env(safe-area-inset-bottom, 0px))',
+  padding: '8px 8px calc(8px + env(safe-area-inset-bottom, 0px))',
   display: 'grid',
   gridTemplateRows: 'auto minmax(0, 1fr) auto',
-  gap: 12,
+  gap: 8,
 };
 
 const editorHeaderStyle: CSSProperties = {

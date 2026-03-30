@@ -16,6 +16,7 @@ export interface SearchableTextInputProps {
   placeholder?: string;
   suggestions: readonly SearchSuggestion[];
   onChange: (value: string) => void;
+  onSuggestionSelect?: (suggestion: SearchSuggestion) => void;
   onSuggestionApply?: (currentValue: string, suggestion: SearchSuggestion) => string;
   queryExtractor?: (value: string) => string;
   inputStyle?: CSSProperties;
@@ -30,6 +31,7 @@ export function SearchableTextInput({
   placeholder,
   suggestions,
   onChange,
+  onSuggestionSelect,
   onSuggestionApply,
   queryExtractor,
   inputStyle,
@@ -115,8 +117,12 @@ export function SearchableTextInput({
               type="button"
               onMouseDown={(event): void => {
                 event.preventDefault();
-                const nextValue = onSuggestionApply ? onSuggestionApply(value, suggestion) : suggestion.value;
-                onChange(nextValue);
+                if (onSuggestionSelect) {
+                  onSuggestionSelect(suggestion);
+                } else {
+                  const nextValue = onSuggestionApply ? onSuggestionApply(value, suggestion) : suggestion.value;
+                  onChange(nextValue);
+                }
                 setIsFocused(false);
               }}
               style={{
