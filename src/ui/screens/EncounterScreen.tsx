@@ -1218,9 +1218,8 @@ function EndScreen({
   const reportGrid: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(420px, 1.05fr)',
-    gridTemplateRows: 'minmax(280px, auto) minmax(380px, auto) minmax(320px, auto)',
+    gridTemplateRows: '280px 380px 320px',
     gap: 16,
-    alignItems: 'start',
   };
 
   const btnBase: CSSProperties = {
@@ -1361,6 +1360,7 @@ function EndScreen({
           <ReportCard
             title="Exact Mistakes"
             subtitle="Check what your state was, what you pressed, what the trainer/APL would have pressed in that same spot, and why."
+            bodyOverflow="auto"
             style={{ gridColumn: '3', gridRow: '1 / span 2' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1384,6 +1384,7 @@ function EndScreen({
           <ReportCard
             title="Improvement Notes"
             subtitle="Start with the biggest damage losses first."
+            bodyOverflow="auto"
             style={{ gridColumn: '3', gridRow: '3' }}
             body={renderAnalysisState(
               analysisStatus,
