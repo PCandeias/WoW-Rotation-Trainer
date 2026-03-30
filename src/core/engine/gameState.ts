@@ -380,6 +380,20 @@ export class GameState implements IGameState {
     this.updateTargetHealthPct();
   }
 
+  /**
+   * Set target health directly as a percentage of max health.
+   * Used for encounter models that define health progression externally.
+   */
+  setTargetHealthPct(pct: number): void {
+    if (this.targetMaxHealth <= 0) {
+      return;
+    }
+
+    const clampedPct = Math.max(0, Math.min(100, pct));
+    this.targetCurrentHealth = (this.targetMaxHealth * clampedPct) / 100;
+    this.updateTargetHealthPct();
+  }
+
   /** Recalculate targetHealthPct from current and max health. */
   private updateTargetHealthPct(): void {
     if (this.targetMaxHealth <= 0) {

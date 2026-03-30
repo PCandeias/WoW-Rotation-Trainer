@@ -1142,7 +1142,7 @@ function EndScreen({
   };
 
   const shell: CSSProperties = {
-    width: 'min(1680px, 100%)',
+    width: 'min(1880px, 100%)',
     height: '100%',
     minHeight: 0,
     margin: '0 auto',
@@ -1153,7 +1153,7 @@ function EndScreen({
 
   const hero: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'auto auto minmax(0, 1fr)',
+    gridTemplateColumns: 'auto minmax(280px, 0.9fr) minmax(0, 1.5fr)',
     gap: 18,
     alignItems: 'center',
   };
@@ -1173,6 +1173,23 @@ function EndScreen({
     fontFamily: FONTS.ui,
     fontSize: '0.9rem',
     color: T.text,
+  };
+
+  const benchmarkStrip: CSSProperties = {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+    gap: 12,
+    alignItems: 'stretch',
+  };
+
+  const benchmarkItem: CSSProperties = {
+    border: `1px solid ${T.border}`,
+    borderRadius: 12,
+    padding: '10px 12px',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    display: 'grid',
+    gap: 6,
+    minWidth: 0,
   };
 
   const statItem: CSSProperties = {
@@ -1201,8 +1218,8 @@ function EndScreen({
 
   const reportGrid: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(340px, 0.95fr)',
-    gridTemplateRows: 'minmax(250px, 0.9fr) minmax(300px, 1.05fr) minmax(300px, 1.05fr)',
+    gridTemplateColumns: 'minmax(0, 1.15fr) minmax(0, 1.15fr) minmax(420px, 1.05fr)',
+    gridTemplateRows: 'minmax(250px, 0.9fr) minmax(360px, 1.2fr) minmax(300px, 1fr)',
     gap: 16,
     minHeight: 0,
     overflow: 'hidden',
@@ -1256,24 +1273,44 @@ function EndScreen({
                 : 'Preparing trainer comparison'}
             </div>
           </div>
-          <div style={stats}>
-            <div style={statItem}>
-              <span style={statValue}>{Math.round(summaryDps).toLocaleString()}</span>
-              <span style={statLbl}>DPS</span>
+          <div style={{ display: 'grid', gap: 14 }}>
+            <div style={benchmarkStrip}>
+              <div style={benchmarkItem}>
+                <span style={statLbl}>Your DPS</span>
+                <span style={{ ...statValue, marginBottom: 0 }}>{Math.round(summaryDps).toLocaleString()}</span>
+              </div>
+              <div style={benchmarkItem}>
+                <span style={statLbl}>Trainer DPS</span>
+                <span style={{ ...statValue, marginBottom: 0 }}>
+                  {analysisStatus === 'ready' && analysisReport
+                    ? Math.round(analysisReport.score.trainerDps).toLocaleString()
+                    : '...'}
+                </span>
+              </div>
+              <div style={benchmarkItem}>
+                <span style={statLbl}>Current Gap</span>
+                <span style={{ ...statValue, marginBottom: 0, fontSize: '1.25rem' }}>
+                  {analysisStatus === 'ready' && analysisReport
+                    ? formatDpsGap(analysisReport.score.trainerDps, analysisReport.score.playerDps)
+                    : 'Preparing benchmark'}
+                </span>
+              </div>
             </div>
-            <div style={statItem}>
-              <span style={statValue}>{(summaryTotalDamage / 1_000_000).toFixed(2)}M</span>
-              <span style={statLbl}>Total Damage</span>
-            </div>
-            <div style={statItem}>
-              <span style={statValue}>{duration}s</span>
-              <span style={statLbl}>Duration</span>
-            </div>
-            <div style={statItem}>
-              <span style={statValue}>
-                {analysisStatus === 'ready' ? `${Math.round(trainerRatio * 100)}%` : '...'}
-              </span>
-              <span style={statLbl}>Vs Trainer</span>
+            <div style={stats}>
+              <div style={statItem}>
+                <span style={statValue}>{(summaryTotalDamage / 1_000_000).toFixed(2)}M</span>
+                <span style={statLbl}>Total Damage</span>
+              </div>
+              <div style={statItem}>
+                <span style={statValue}>{duration}s</span>
+                <span style={statLbl}>Duration</span>
+              </div>
+              <div style={statItem}>
+                <span style={statValue}>
+                  {analysisStatus === 'ready' ? `${Math.round(trainerRatio * 100)}%` : '...'}
+                </span>
+                <span style={statLbl}>Vs Trainer</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1312,19 +1349,6 @@ function EndScreen({
             )}
           />
           <ReportCard
-            title="Comparison"
-            subtitle="Quick benchmark summary for your run versus the trainer."
-            bodyOverflow="hidden"
-            style={{ gridColumn: '3', gridRow: '1' }}
-            body={(
-              <AnalysisOverview
-                analysisStatus={analysisStatus}
-                analysisError={analysisError}
-                analysisReport={analysisReport}
-              />
-            )}
-          />
-          <ReportCard
             title="Spell Timeline"
             subtitle="Cast-by-cast comparison across the encounter, using the same timeline style as the validation report."
             bodyOverflow="hidden"
@@ -1339,7 +1363,7 @@ function EndScreen({
           <ReportCard
             title="Exact Mistakes"
             subtitle="Check what your state was, what you pressed, what the trainer/APL would have pressed in that same spot, and why."
-            style={{ gridColumn: '3', gridRow: '2' }}
+            style={{ gridColumn: '3', gridRow: '1 / span 2' }}
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
@@ -1596,29 +1620,52 @@ function SpellTimeline({
   const tickTimes = Array.from({ length: Math.floor(encounterDuration / tickStep) + 1 }, (_, index) => Math.min(encounterDuration, index * tickStep));
   const playerLane = buildSpellTimelineLane(data.player, encounterDuration);
   const trainerLane = buildSpellTimelineLane(data.trainer, encounterDuration);
+  const timelineWidth = Math.max(960, Math.round(encounterDuration * 28));
+  const labelColumnWidth = 68;
 
   return (
     <div style={{ display: 'grid', gap: 12, height: '100%', minHeight: 300 }}>
-      <SpellTimelineLane label="You" lane={playerLane} encounterDuration={encounterDuration} accent={ANALYSIS_SERIES.player} />
-      <SpellTimelineLane label="Trainer" lane={trainerLane} encounterDuration={encounterDuration} accent={ANALYSIS_SERIES.trainer} />
-      <div style={{ display: 'grid', gridTemplateColumns: '68px minmax(0, 1fr)', gap: 12 }}>
-        <div />
-        <div style={{ position: 'relative', height: 18 }}>
-          {tickTimes.map((time) => (
-            <div
-              key={`tick-${time}`}
-              style={{
-                position: 'absolute',
-                left: `${Math.max(0, Math.min(100, (time / Math.max(1, encounterDuration)) * 100))}%`,
-                transform: 'translateX(-50%)',
-                color: T.textDim,
-                fontSize: '0.7rem',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {time}s
+      <div style={{ color: T.textDim, fontSize: '0.76rem' }}>
+        Scroll horizontally to inspect the full encounter timeline.
+      </div>
+      <div style={{ overflowX: 'auto', overflowY: 'hidden', paddingBottom: 4 }}>
+        <div style={{ display: 'grid', gap: 12, minWidth: labelColumnWidth + 12 + timelineWidth }}>
+          <SpellTimelineLane
+            label="You"
+            lane={playerLane}
+            encounterDuration={encounterDuration}
+            accent={ANALYSIS_SERIES.player}
+            timelineWidth={timelineWidth}
+            labelColumnWidth={labelColumnWidth}
+          />
+          <SpellTimelineLane
+            label="Trainer"
+            lane={trainerLane}
+            encounterDuration={encounterDuration}
+            accent={ANALYSIS_SERIES.trainer}
+            timelineWidth={timelineWidth}
+            labelColumnWidth={labelColumnWidth}
+          />
+          <div style={{ display: 'grid', gridTemplateColumns: `${labelColumnWidth}px ${timelineWidth}px`, gap: 12 }}>
+            <div />
+            <div style={{ position: 'relative', height: 18 }}>
+              {tickTimes.map((time) => (
+                <div
+                  key={`tick-${time}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${Math.max(0, Math.min(100, (time / Math.max(1, encounterDuration)) * 100))}%`,
+                    transform: 'translateX(-50%)',
+                    color: T.textDim,
+                    fontSize: '0.7rem',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {time}s
+                </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </div>
     </div>
@@ -1732,62 +1779,27 @@ function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMi
   );
 }
 
-function AnalysisOverview({
-  analysisStatus,
-  analysisError,
-  analysisReport,
-}: {
-  analysisStatus: EndScreenProps['analysisStatus'];
-  analysisError: string | null;
-  analysisReport: RunAnalysisReport | null;
-}): React.ReactElement {
-  if (analysisStatus === 'error') {
-    return <div>{analysisError ?? 'Analysis could not be generated.'}</div>;
-  }
-
-  if (analysisStatus !== 'ready' || !analysisReport) {
-    return <div>Loading side-by-side trainer benchmark...</div>;
-  }
-
-  const gap = analysisReport.score.trainerDps - analysisReport.score.playerDps;
-
-  return (
-    <div style={{ display: 'grid', gap: 10 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span>Your DPS</span>
-        <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.playerDps).toLocaleString()}</span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span>Trainer DPS</span>
-        <span style={{ color: T.textBright }}>{Math.round(analysisReport.score.trainerDps).toLocaleString()}</span>
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-        <span>Current gap</span>
-        <span style={{ color: gap > 0 ? T.gold : T.textBright }}>
-          {gap > 0 ? `${Math.round(gap).toLocaleString()} DPS behind` : 'At or above benchmark'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 function SpellTimelineLane({
   label,
   lane,
   encounterDuration,
   accent,
+  timelineWidth,
+  labelColumnWidth,
 }: {
   label: string;
   lane: { placements: { spellId: string; time: number; level: number }[]; levelCount: number; count: number };
   encounterDuration: number;
   accent: string;
+  timelineWidth: number;
+  labelColumnWidth: number;
 }): React.ReactElement {
   const trackHeight = Math.max(52, lane.levelCount * 34 + 18);
   const tickStep = encounterDuration <= 30 ? 5 : encounterDuration <= 90 ? 10 : 15;
   const tickTimes = Array.from({ length: Math.floor(encounterDuration / tickStep) + 1 }, (_, index) => Math.min(encounterDuration, index * tickStep));
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '68px minmax(0, 1fr)', gap: 12 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: `${labelColumnWidth}px ${timelineWidth}px`, gap: 12 }}>
       <div style={{ display: 'grid', gap: 4, alignContent: 'start', paddingTop: 6 }}>
         <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.9rem' }}>{label}</div>
         <div style={{ color: T.textDim, fontSize: '0.72rem' }}>{lane.count} casts</div>
@@ -2119,6 +2131,11 @@ function formatCompactNumber(value: number): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return Math.round(value).toString();
+}
+
+function formatDpsGap(trainerDps: number, playerDps: number): string {
+  const gap = trainerDps - playerDps;
+  return gap > 0 ? `${Math.round(gap).toLocaleString()} behind` : 'At benchmark';
 }
 
 function severityColor(severity: RunAnalysisReport['findings'][number]['severity']): string {

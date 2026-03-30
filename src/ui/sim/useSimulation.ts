@@ -128,6 +128,7 @@ const MAX_DAMAGE_EVENTS = 10;
 const DAMAGE_EVENT_LIFETIME_MS = 1500;
 const PRE_PULL_COUNTDOWN_SECONDS = 3;
 const PRE_PULL_GO_DISPLAY_MS = 700;
+const TARGET_KILL_RANGE_PCT = 15;
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -240,6 +241,11 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       duration: encounterDuration,
       activeEnemies: 1,
     });
+    const derivedTargetMaxHealth = Math.max(
+      state.getMaxHealth() / (TARGET_KILL_RANGE_PCT / 100),
+      state.getMaxHealth(),
+    );
+    state.initializeTargetHealth(derivedTargetMaxHealth);
     const queue = new SimEventQueue();
     const rng = createRng(Date.now());
 
@@ -295,8 +301,9 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       onFrame: (_frameState, events): void => {
         processEvents(events);
 
-        const snapshot = state.snapshot();
         const simTime = loop.currentSimTime;
+        state.setTargetHealthPct(100 * (1 - Math.min(1, simTime / encounterDuration)));
+        const snapshot = state.snapshot();
         const dps = snapshot.totalDamage / Math.max(0.1, simTime);
 
         const analysisRecommendations = getTopNRecommendations(state, 4);
@@ -357,8 +364,9 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
         });
       },
       onEncounterEnd: (): void => {
-        const snapshot = state.snapshot();
         const simTime = loop.currentSimTime;
+        state.setTargetHealthPct(0);
+        const snapshot = state.snapshot();
         const analysisTrace = analysisCollectorRef.current?.finalize(snapshot, simTime) ?? null;
 
         setSimState((prev) => ({
@@ -522,20 +530,21 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     endReasonRef.current = reason;
     loop.stop();
 
-    const snapshot = state.snapshot();
     const simTime = loop.currentSimTime;
-    const analysisTrace = analysisCollectorRef.current?.finalize(snapshot, simTime) ?? null;
+    state.setTargetHealthPct(100 * (1 - Math.min(1, simTime / encounterDuration)));
+    const finalSnapshot = state.snapshot();
+    const analysisTrace = analysisCollectorRef.current?.finalize(finalSnapshot, simTime) ?? null;
 
     setSimState((prev) => ({
       ...prev,
-      snapshot,
+      snapshot: finalSnapshot,
       analysisTrace,
       spellInputStatus: buildSpellInputStatusMap(state, [
         ...MONK_WW_SPELLS.values(),
         ...SHARED_PLAYER_SPELLS.values(),
       ]),
       simTime,
-      dps: snapshot.totalDamage / Math.max(0.1, simTime),
+      dps: finalSnapshot.totalDamage / Math.max(0.1, simTime),
       countdownValue: null,
       hasStarted: true,
       isRunning: false,
@@ -545,7 +554,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       endReason: reason,
       finalDuration: simTime,
     }));
-  }, [countdownValue, simState.hasStarted, simState.isEnded]);
+  }, [countdownValue, encounterDuration, simState.hasStarted, simState.isEnded]);
 
   return {
     simState,

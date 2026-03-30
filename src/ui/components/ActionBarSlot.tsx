@@ -179,7 +179,6 @@ export function ActionBarSlot({
           ? 'brightness(1.06) saturate(1.08)'
         : 'none',
     opacity: !onCooldown && !usable ? 0.65 : 1,
-    transition: 'filter 0.15s, opacity 0.15s',
   };
 
   // CD sweep overlay style using conic-gradient

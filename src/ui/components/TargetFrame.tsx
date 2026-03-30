@@ -9,7 +9,7 @@ import { TargetDebuffTracker } from './TargetDebuffTracker';
 export interface TargetFrameProps {
   /** Current snapshot, used to derive visible target debuffs. */
   gameState?: GameStateSnapshot;
-  /** Total damage dealt so far (from gameState.totalDamage) */
+  /** Total damage dealt so far (retained for compatibility with existing callers). */
   totalDamage: number;
   /** Encounter duration in seconds */
   encounterDuration: number;
@@ -26,18 +26,21 @@ export interface TargetFrameProps {
 /**
  * TargetFrame — displays the training dummy target frame.
  *
- * Shows the target's remaining HP as a percentage, reduced by total damage dealt.
+ * Shows the target's remaining HP as a percentage.
  */
 export function TargetFrame({
   gameState,
-  totalDamage,
+  totalDamage: _totalDamage,
+  encounterDuration,
   currentTime,
   showTargetDebuffs = true,
   debuffBlacklistSpellIds = [],
   targetMaxHp = 100_000_000,
 }: TargetFrameProps): React.ReactElement {
-  // Target HP drains based on damage dealt
-  const hpPct = Math.max(0, 100 - (totalDamage / targetMaxHp) * 100);
+  const fallbackHpPct = encounterDuration > 0
+    ? Math.max(0, 100 * (1 - Math.min(1, currentTime / encounterDuration)))
+    : 100;
+  const hpPct = gameState?.targetHealthPct ?? (targetMaxHp > 0 ? fallbackHpPct : 100);
   const hpDisplay = Math.round(hpPct);
 
   const panelStyle: CSSProperties = {
