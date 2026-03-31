@@ -93,6 +93,27 @@ export interface FindingEvidence {
 export interface AnalysisActiveBuffState {
   buffId: string;
   stacks: number;
+  remaining?: number;
+}
+
+export interface AbilityDamageBreakdownSource {
+  spellId: string;
+  casts: number;
+  damage: number;
+  crits: number;
+}
+
+export interface AbilityDamageBreakdownSide {
+  totalDamage: number;
+  casts: number;
+  crits: number;
+  sources: AbilityDamageBreakdownSource[];
+}
+
+export interface AbilityDamageBreakdownRow {
+  spellId: string;
+  player: AbilityDamageBreakdownSide;
+  trainer: AbilityDamageBreakdownSide;
 }
 
 export interface AnalysisActiveCooldownState {
@@ -188,6 +209,7 @@ export interface RunAnalysisReport {
     cooldownUsage: CooldownTimelineRow[];
     resourceWaste: ResourceWasteChartPoint[];
   };
+  damageBreakdown?: AbilityDamageBreakdownRow[];
   exactMistakes: ExactMistakeEntry[];
   findings: AnalysisFinding[];
 }

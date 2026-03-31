@@ -213,6 +213,7 @@ export class LiveTraceCollector {
       .map(([buffId, buff]) => ({
         buffId,
         stacks: Math.max(1, buff.stacks ?? 1),
+        remaining: buff.expiresAt > 0 ? Math.max(0, buff.expiresAt - time) : undefined,
       }))
       .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId));
 

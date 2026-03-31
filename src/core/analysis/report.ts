@@ -1,6 +1,8 @@
 import type {
   AnalysisActiveBuffState,
   AnalysisActiveCooldownState,
+  AbilityDamageBreakdownRow,
+  AbilityDamageBreakdownSide,
   AnalysisChartPoint,
   AnalysisDecisionState,
   AnalysisFinding,
@@ -13,8 +15,13 @@ import type {
   SpellTimelineChart,
   SpecAnalysisProfile,
 } from './types';
-import { MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
+import { MONK_WW_BUFFS, MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
+
+const DAMAGE_BREAKDOWN_SOURCE_ALIASES: Readonly<Record<string, string>> = {
+  blackout_kick_free: 'blackout_kick',
+  rushing_wind_kick: 'rising_sun_kick',
+};
 
 function titleCaseSpellId(spellId: string): string {
   return spellId
@@ -64,6 +71,87 @@ function buildCumulativeSeries(player: RawRunTrace, trainer: RawRunTrace): Analy
     });
   }
   return points;
+}
+
+function buildCastCountsBySpell(trace: RawRunTrace): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const cast of trace.casts) {
+    counts.set(cast.spellId, (counts.get(cast.spellId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function resolveDamageBreakdownSpellId(sourceSpellId: string): string | null {
+  const spellId = DAMAGE_BREAKDOWN_SOURCE_ALIASES[sourceSpellId] ?? sourceSpellId;
+  const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
+  return spell ? spell.name : null;
+}
+
+function createEmptyDamageSide(): AbilityDamageBreakdownSide {
+  return {
+    totalDamage: 0,
+    casts: 0,
+    crits: 0,
+    sources: [],
+  };
+}
+
+function buildDamageBreakdownSide(trace: RawRunTrace): Map<string, AbilityDamageBreakdownSide> {
+  const sideBySpellId = new Map<string, AbilityDamageBreakdownSide>();
+  const castCounts = buildCastCountsBySpell(trace);
+
+  for (const [sourceSpellId, stats] of Object.entries(trace.damageBySpell)) {
+    if (!Number.isFinite(stats.damage) || stats.damage <= 0) {
+      continue;
+    }
+
+    const displaySpellId = resolveDamageBreakdownSpellId(sourceSpellId);
+    if (!displaySpellId) {
+      continue;
+    }
+
+    const side = sideBySpellId.get(displaySpellId) ?? createEmptyDamageSide();
+    const casts = Math.max(castCounts.get(sourceSpellId) ?? 0, stats.casts ?? 0);
+    side.totalDamage += stats.damage;
+    side.casts += casts;
+    side.crits += stats.crits;
+    side.sources.push({
+      spellId: sourceSpellId,
+      casts,
+      damage: stats.damage,
+      crits: stats.crits,
+    });
+    sideBySpellId.set(displaySpellId, side);
+  }
+
+  for (const side of sideBySpellId.values()) {
+    side.sources.sort((left, right) => right.damage - left.damage || left.spellId.localeCompare(right.spellId));
+  }
+
+  return sideBySpellId;
+}
+
+function buildDamageBreakdown(player: RawRunTrace, trainer: RawRunTrace): AbilityDamageBreakdownRow[] {
+  const playerBreakdown = buildDamageBreakdownSide(player);
+  const trainerBreakdown = buildDamageBreakdownSide(trainer);
+  const spellIds = new Set<string>([
+    ...playerBreakdown.keys(),
+    ...trainerBreakdown.keys(),
+  ]);
+
+  return [...spellIds]
+    .map((spellId) => ({
+      spellId,
+      player: playerBreakdown.get(spellId) ?? createEmptyDamageSide(),
+      trainer: trainerBreakdown.get(spellId) ?? createEmptyDamageSide(),
+    }))
+    .filter((row) => row.player.totalDamage > 0 || row.trainer.totalDamage > 0)
+    .sort(
+      (left, right) => (
+        (right.player.totalDamage + right.trainer.totalDamage)
+        - (left.player.totalDamage + left.trainer.totalDamage)
+      ) || left.spellId.localeCompare(right.spellId),
+    );
 }
 
 function buildResourceWasteSeries(player: RawRunTrace, trainer: RawRunTrace): ResourceWasteChartPoint[] {
@@ -278,10 +366,29 @@ function buffStateAtTime(trace: RawRunTrace, time: number, relevantBuffIds: read
   const relevantBuffSet = new Set(relevantBuffIds);
   return Object.entries(trace.buffStacksTimelineBySecond)
     .filter(([buffId]) => relevantBuffSet.has(buffId))
-    .map(([buffId, timeline]) => ({
-      buffId,
-      stacks: Math.max(0, Math.round(valueAtTime(timeline, time))),
-    }))
+    .map(([buffId, timeline]) => {
+      const stacks = Math.max(0, Math.round(valueAtTime(timeline, time)));
+      if (stacks <= 0) {
+        return { buffId, stacks };
+      }
+
+      const buffDef = MONK_WW_BUFFS.get(buffId);
+      const timelineIndex = Math.max(0, Math.min(timeline.length - 1, Math.floor(time)));
+      let activeSinceIndex = timelineIndex;
+      while (activeSinceIndex > 0 && (timeline[activeSinceIndex - 1] ?? 0) > 0) {
+        activeSinceIndex -= 1;
+      }
+      const elapsed = Math.max(0, time - activeSinceIndex);
+      const remaining = buffDef && buffDef.duration > 0
+        ? Math.max(0, buffDef.duration - elapsed)
+        : undefined;
+
+      return {
+        buffId,
+        stacks,
+        remaining,
+      };
+    })
     .filter((buff) => buff.stacks > 0)
     .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
     .slice(0, 6);
@@ -648,6 +755,7 @@ export function buildRunAnalysisReport(
       cooldownUsage: buildCooldownRows(profile, player, trainer),
       resourceWaste: buildResourceWasteSeries(player, trainer),
     },
+    damageBreakdown: buildDamageBreakdown(player, trainer),
     exactMistakes,
     findings,
   };

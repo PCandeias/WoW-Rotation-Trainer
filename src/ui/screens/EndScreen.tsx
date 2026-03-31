@@ -279,33 +279,34 @@ export default function EndScreen({
 
         <div data-testid="analysis-report-grid" style={reportGrid}>
           <ReportCard
-            title="Damage Over Time"
-            subtitle="See where your live DPS pace drifted away from the trainer."
+            title="Damage Review"
+            subtitle="Flip between live DPS pace and cumulative damage to compare the full encounter."
             bodyOverflow="hidden"
             style={{ gridColumn: '1', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
-              analysisReport ? <AnalysisLineChart data={analysisReport.charts.damageOverTime} yFormatter={formatCompactNumber} /> : null,
+              analysisReport
+                ? (
+                  <DamageChartPanel
+                    damageOverTime={analysisReport.charts.damageOverTime}
+                    cumulativeDamage={analysisReport.charts.cumulativeDamage}
+                  />
+                )
+                : null,
               'Loading trainer comparison...',
             )}
           />
           <ReportCard
-            title="Cumulative Damage"
-            subtitle="The total gap makes missed burst windows easier to spot."
-            bodyOverflow="hidden"
+            title="Ability Damage"
+            subtitle="Recount-style damage breakdown for castable abilities, with proc detail on hover."
+            bodyOverflow="auto"
             style={{ gridColumn: '2', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
               analysisReport
-                ? (
-                  <AnalysisLineChart
-                    data={analysisReport.charts.cumulativeDamage}
-                    yFormatter={formatCompactNumber}
-                    lineType="linear"
-                  />
-                )
+                ? <AbilityDamageBreakdownPanel rows={analysisReport.damageBreakdown ?? []} />
                 : null,
               'Loading trainer comparison...',
             )}
@@ -483,6 +484,112 @@ function AnalysisLineChart({
             {chart()}
           </ResponsiveContainer>
         )}
+    </div>
+  );
+}
+
+function PanelPaginationControls({
+  previousLabel,
+  nextLabel,
+  canGoPrevious,
+  canGoNext,
+  onPrevious,
+  onNext,
+}: {
+  previousLabel: string;
+  nextLabel: string;
+  canGoPrevious: boolean;
+  canGoNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'inline-flex', gap: 8 }}>
+      <button
+        type="button"
+        aria-label={previousLabel}
+        disabled={!canGoPrevious}
+        onClick={onPrevious}
+        style={{
+          ...buildControlStyle({ tone: 'ghost' }),
+          width: 32,
+          height: 32,
+          padding: 0,
+          opacity: canGoPrevious ? 1 : 0.45,
+        }}
+      >
+        ←
+      </button>
+      <button
+        type="button"
+        aria-label={nextLabel}
+        disabled={!canGoNext}
+        onClick={onNext}
+        style={{
+          ...buildControlStyle({ tone: 'ghost' }),
+          width: 32,
+          height: 32,
+          padding: 0,
+          opacity: canGoNext ? 1 : 0.45,
+        }}
+      >
+        →
+      </button>
+    </div>
+  );
+}
+
+function DamageChartPanel({
+  damageOverTime,
+  cumulativeDamage,
+}: {
+  damageOverTime: RunAnalysisReport['charts']['damageOverTime'];
+  cumulativeDamage: RunAnalysisReport['charts']['cumulativeDamage'];
+}): React.ReactElement {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const pages = [
+    {
+      key: 'damage-over-time',
+      title: 'Damage Over Time',
+      subtitle: 'See where your live DPS pace drifted away from the trainer.',
+      chart: <AnalysisLineChart data={damageOverTime} yFormatter={formatCompactNumber} />,
+    },
+    {
+      key: 'cumulative-damage',
+      title: 'Cumulative Damage',
+      subtitle: 'The total gap makes missed burst windows easier to spot.',
+      chart: <AnalysisLineChart data={cumulativeDamage} yFormatter={formatCompactNumber} lineType="linear" />,
+    },
+  ] as const;
+
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [damageOverTime, cumulativeDamage]);
+
+  const page = pages[Math.max(0, Math.min(currentIndex, pages.length - 1))]!;
+  const canGoPrevious = currentIndex > 0;
+  const canGoNext = currentIndex < pages.length - 1;
+
+  return (
+    <div style={{ display: 'grid', gap: 12, height: '100%', minHeight: 0, gridTemplateRows: 'auto auto minmax(0, 1fr)' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <div style={{ color: T.textDim, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          View {currentIndex + 1} of {pages.length}
+        </div>
+        <PanelPaginationControls
+          previousLabel="Previous damage chart"
+          nextLabel="Next damage chart"
+          canGoPrevious={canGoPrevious}
+          canGoNext={canGoNext}
+          onPrevious={() => setCurrentIndex((index) => Math.max(0, index - 1))}
+          onNext={() => setCurrentIndex((index) => Math.min(pages.length - 1, index + 1))}
+        />
+      </div>
+      <div style={{ display: 'grid', gap: 4 }}>
+        <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.94rem' }}>{page.title}</div>
+        <div style={{ color: T.textDim, fontSize: '0.76rem' }}>{page.subtitle}</div>
+      </div>
+      <div style={{ minHeight: 0 }}>{page.chart}</div>
     </div>
   );
 }
@@ -721,38 +828,14 @@ function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMi
         >
           Mistake {clampedIndex + 1} of {mistakes.length}
         </div>
-        <div style={{ display: 'inline-flex', gap: 8 }}>
-          <button
-            type="button"
-            aria-label="Previous exact mistake"
-            disabled={!canGoPrevious}
-            onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}
-            style={{
-              ...buildControlStyle({ tone: 'ghost' }),
-              width: 32,
-              height: 32,
-              padding: 0,
-              opacity: canGoPrevious ? 1 : 0.45,
-            }}
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            aria-label="Next exact mistake"
-            disabled={!canGoNext}
-            onClick={() => setCurrentIndex((index) => Math.min(mistakes.length - 1, index + 1))}
-            style={{
-              ...buildControlStyle({ tone: 'ghost' }),
-              width: 32,
-              height: 32,
-              padding: 0,
-              opacity: canGoNext ? 1 : 0.45,
-            }}
-          >
-            →
-          </button>
-        </div>
+        <PanelPaginationControls
+          previousLabel="Previous exact mistake"
+          nextLabel="Next exact mistake"
+          canGoPrevious={canGoPrevious}
+          canGoNext={canGoNext}
+          onPrevious={() => setCurrentIndex((index) => Math.max(0, index - 1))}
+          onNext={() => setCurrentIndex((index) => Math.min(mistakes.length - 1, index + 1))}
+        />
       </div>
       <div
         key={mistake.id}
@@ -1053,13 +1136,20 @@ function DecisionStatePanel({
         </div>
       </div>
       <div style={{ display: 'grid', gap: 6 }}>
-        <div style={{ color: T.textDim, fontSize: '0.74rem' }}>Tracked buffs</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {state.activeBuffs.length > 0
-            ? state.activeBuffs.map((buff) => <BuffBadge key={buff.buffId} buffId={buff.buffId} stacks={buff.stacks} />)
-            : <div style={{ color: T.textDim, fontSize: '0.76rem' }}>No tracked buffs active.</div>}
+          <div style={{ color: T.textDim, fontSize: '0.74rem' }}>Tracked buffs</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {state.activeBuffs.length > 0
+              ? state.activeBuffs.map((buff) => (
+                <BuffBadge
+                  key={buff.buffId}
+                  buffId={buff.buffId}
+                  stacks={buff.stacks}
+                  remaining={buff.remaining}
+                />
+              ))
+              : <div style={{ color: T.textDim, fontSize: '0.76rem' }}>No tracked buffs active.</div>}
+          </div>
         </div>
-      </div>
       <div style={{ display: 'grid', gap: 6 }}>
         <div style={{ color: T.textDim, fontSize: '0.74rem' }}>Essential cooldowns</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1131,9 +1221,21 @@ function CooldownStateBadge({
   );
 }
 
-function BuffBadge({ buffId, stacks }: { buffId: string; stacks: number }): React.ReactElement {
+function BuffBadge({
+  buffId,
+  stacks,
+  remaining,
+}: {
+  buffId: string;
+  stacks: number;
+  remaining?: number;
+}): React.ReactElement {
   const label = MONK_BUFF_REGISTRY[buffId]?.displayName ?? titleCaseSpellId(buffId);
   const iconName = MONK_BUFF_REGISTRY[buffId]?.iconName ?? 'inv_misc_questionmark';
+  const hideTimer = MONK_BUFF_REGISTRY[buffId]?.hideTimer === true;
+  const timerLabel = !hideTimer && typeof remaining === 'number' && remaining > 0
+    ? (remaining >= 10 ? `${Math.ceil(remaining)}s` : `${remaining.toFixed(1)}s`)
+    : null;
   return (
     <div
       style={{
@@ -1151,6 +1253,169 @@ function BuffBadge({ buffId, stacks }: { buffId: string; stacks: number }): Reac
         {label}
         {stacks > 1 ? ` x${stacks}` : ''}
       </span>
+      {timerLabel && <span style={{ color: T.textDim, fontSize: '0.72rem' }}>{timerLabel}</span>}
+    </div>
+  );
+}
+
+function AbilityDamageBreakdownPanel({
+  rows,
+}: {
+  rows: RunAnalysisReport['damageBreakdown'];
+}): React.ReactElement {
+  const breakdownRows = rows ?? [];
+  if (breakdownRows.length === 0) {
+    return <div>No damaging castable abilities were recorded for this encounter.</div>;
+  }
+
+  const maxPlayerDamage = Math.max(1, ...breakdownRows.map((row) => row.player.totalDamage));
+  const maxTrainerDamage = Math.max(1, ...breakdownRows.map((row) => row.trainer.totalDamage));
+  const playerTotalDamage = breakdownRows.reduce((total, row) => total + row.player.totalDamage, 0);
+  const trainerTotalDamage = breakdownRows.reduce((total, row) => total + row.trainer.totalDamage, 0);
+
+  return (
+    <div style={{ display: 'grid', gap: 10, minHeight: 0 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+          gap: 12,
+          alignItems: 'end',
+        }}
+      >
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>You</div>
+          <div style={{ color: T.textBright, fontSize: '0.86rem' }}>{formatCompactNumber(playerTotalDamage)}</div>
+        </div>
+        <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          Ability
+        </div>
+        <div>
+          <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Trainer</div>
+          <div style={{ color: T.textBright, fontSize: '0.86rem' }}>{formatCompactNumber(trainerTotalDamage)}</div>
+        </div>
+      </div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {breakdownRows.map((row) => (
+          <AbilityDamageBreakdownRowView
+            key={row.spellId}
+            row={row}
+            maxPlayerDamage={maxPlayerDamage}
+            maxTrainerDamage={maxTrainerDamage}
+            playerTotalDamage={playerTotalDamage}
+            trainerTotalDamage={trainerTotalDamage}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AbilityDamageBreakdownRowView({
+  row,
+  maxPlayerDamage,
+  maxTrainerDamage,
+  playerTotalDamage,
+  trainerTotalDamage,
+}: {
+  row: NonNullable<RunAnalysisReport['damageBreakdown']>[number];
+  maxPlayerDamage: number;
+  maxTrainerDamage: number;
+  playerTotalDamage: number;
+  trainerTotalDamage: number;
+}): React.ReactElement {
+  const tooltip = formatAbilityBreakdownTooltip(row, playerTotalDamage, trainerTotalDamage);
+
+  return (
+    <div
+      title={tooltip}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 1fr) auto minmax(0, 1fr)',
+        gap: 12,
+        alignItems: 'center',
+        border: `1px solid ${T.border}`,
+        borderRadius: 12,
+        padding: '8px 10px',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+      }}
+    >
+      <AbilityDamageBreakdownSideView
+        side={row.player}
+        maxDamage={maxPlayerDamage}
+        totalDamage={playerTotalDamage}
+        color={ANALYSIS_SERIES.player}
+        align="right"
+      />
+      <div style={{ minWidth: 180, display: 'grid', justifyItems: 'center', gap: 4 }}>
+        <SpellBadge spellId={row.spellId} compact />
+      </div>
+      <AbilityDamageBreakdownSideView
+        side={row.trainer}
+        maxDamage={maxTrainerDamage}
+        totalDamage={trainerTotalDamage}
+        color={ANALYSIS_SERIES.trainer}
+        align="left"
+      />
+    </div>
+  );
+}
+
+function AbilityDamageBreakdownSideView({
+  side,
+  maxDamage,
+  totalDamage,
+  color,
+  align,
+}: {
+  side: NonNullable<RunAnalysisReport['damageBreakdown']>[number]['player'];
+  maxDamage: number;
+  totalDamage: number;
+  color: string;
+  align: 'left' | 'right';
+}): React.ReactElement {
+  const percentage = totalDamage > 0 ? (side.totalDamage / totalDamage) * 100 : 0;
+  const width = side.totalDamage > 0 ? Math.max(6, (side.totalDamage / Math.max(1, maxDamage)) * 100) : 0;
+
+  return (
+    <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span style={{ color: T.textBright, fontSize: '0.8rem' }}>{formatCompactNumber(side.totalDamage)}</span>
+        <span style={{ color: T.textDim, fontSize: '0.74rem' }}>
+          {percentage > 0 ? `${percentage.toFixed(1)}%` : '0.0%'} • {side.casts} cast{side.casts === 1 ? '' : 's'}
+        </span>
+      </div>
+      <div style={{ display: 'flex', justifyContent: align === 'right' ? 'flex-end' : 'flex-start' }}>
+        <div
+          style={{
+            width: '100%',
+            maxWidth: 220,
+            height: 14,
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.06)',
+            overflow: 'hidden',
+            display: 'flex',
+            justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
+          }}
+        >
+          <div
+            style={{
+              width: `${width}%`,
+              minWidth: width > 0 ? 6 : 0,
+              height: '100%',
+              background: `linear-gradient(90deg, ${color}aa, ${color})`,
+              boxShadow: `0 0 12px ${color}55`,
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -1170,6 +1435,45 @@ function formatCompactNumber(value: number): string {
     return `${Math.round(value / 1_000)}k`;
   }
   return Math.round(value).toString();
+}
+
+function formatAbilityBreakdownTooltip(
+  row: NonNullable<RunAnalysisReport['damageBreakdown']>[number],
+  playerTotalDamage: number,
+  trainerTotalDamage: number,
+): string {
+  const spellLabel = getSpellPresentation(row.spellId).label;
+  return [
+    spellLabel,
+    formatAbilityBreakdownTooltipSection('You', row.player, playerTotalDamage),
+    formatAbilityBreakdownTooltipSection('Trainer', row.trainer, trainerTotalDamage),
+  ].join('\n\n');
+}
+
+function formatAbilityBreakdownTooltipSection(
+  label: string,
+  side: NonNullable<RunAnalysisReport['damageBreakdown']>[number]['player'],
+  totalDamage: number,
+): string {
+  const share = totalDamage > 0 ? (side.totalDamage / totalDamage) * 100 : 0;
+  const lines = [
+    `${label}: ${formatCompactNumber(side.totalDamage)} total (${share.toFixed(1)}%) • ${side.casts} cast${side.casts === 1 ? '' : 's'}`,
+  ];
+
+  if (side.sources.length === 0) {
+    lines.push('  No damage recorded.');
+    return lines.join('\n');
+  }
+
+  for (const source of side.sources) {
+    lines.push(
+      `  ${getSpellPresentation(source.spellId).label}: ${formatCompactNumber(source.damage)}`
+      + ` • ${source.casts} cast${source.casts === 1 ? '' : 's'}`
+      + ` • ${source.crits} crit${source.crits === 1 ? '' : 's'}`,
+    );
+  }
+
+  return lines.join('\n');
 }
 
 function formatDpsGap(trainerDps: number, playerDps: number): string {
