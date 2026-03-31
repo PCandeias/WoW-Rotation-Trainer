@@ -331,7 +331,17 @@ export default function EndScreen({
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
-              analysisReport ? <ExactMistakesPanel mistakes={analysisReport.exactMistakes} /> : null,
+              analysisReport
+                ? (
+                  analysisReport.score.duration <= 30
+                    ? (
+                      <div>
+                        Exact mistakes are disabled for 30-second opener runs because this view is meant for full-fight decision review, not opener-only snapshots.
+                      </div>
+                    )
+                    : <ExactMistakesPanel mistakes={analysisReport.exactMistakes} />
+                )
+                : null,
               'Loading precise decision review...',
             )}
           />

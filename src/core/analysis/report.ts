@@ -176,6 +176,10 @@ function titleCaseBuffId(buffId: string): string {
     .join(' ');
 }
 
+function hasTrackedBuff(state: AnalysisDecisionState, buffId: string): boolean {
+  return state.activeBuffs.some((buff) => buff.buffId === buffId && buff.stacks > 0);
+}
+
 function buildCooldownRows(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): CooldownTimelineRow[] {
   return profile.importantCooldowns.map((spellId) => ({
     spellId,
@@ -190,6 +194,10 @@ function buildSpellTimelineChart(player: RawRunTrace, trainer: RawRunTrace): Spe
     player: [...player.casts].sort((left, right) => left.time - right.time),
     trainer: [...trainer.casts].sort((left, right) => left.time - right.time),
   };
+}
+
+function buildCastCount(trace: RawRunTrace, spellId: string): number {
+  return trace.casts.filter((entry) => entry.spellId === spellId).length;
 }
 
 function buildAplFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
@@ -270,18 +278,46 @@ function buildUnderuseFinding(
   };
 }
 
+function buildOveruseFinding(
+  spellId: string,
+  playerCount: number,
+  trainerCount: number,
+  trainer: RawRunTrace,
+): AnalysisFinding | null {
+  const excessCasts = playerCount - trainerCount;
+  if (excessCasts <= 0.35) {
+    return null;
+  }
+
+  const avgDamage = Math.max(0, getAverageSpellDamage(trainer, spellId));
+  const estimatedDpsLoss = Math.round((avgDamage * excessCasts * 0.18) / Math.max(1, trainer.encounterDuration));
+  const roundedTrainerCount = Math.round(trainerCount * 10) / 10;
+  return {
+    id: `overuse-${spellId}`,
+    category: 'ability',
+    title: `${titleCaseSpellId(spellId)} was overused`,
+    summary: `You cast \`${titleCaseSpellId(spellId)}\` ${playerCount} time${playerCount === 1 ? '' : 's'}, while the trainer benchmark averaged ${roundedTrainerCount} cast${roundedTrainerCount === 1 ? '' : 's'}. Those extra globals likely replaced stronger buttons.`,
+    fix: `Trim extra \`${titleCaseSpellId(spellId)}\` casts when higher-priority spenders, cooldowns, or proc windows are available.`,
+    focusSpellId: spellId,
+    estimatedDpsLoss,
+    occurrences: Math.max(1, Math.round(excessCasts)),
+    severity: excessCasts >= 2 ? 'major' : 'medium',
+    evidence: [],
+  };
+}
+
 function buildCooldownAndAbilityFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
   const findings: AnalysisFinding[] = [];
   const cooldownSet = new Set(profile.importantCooldowns);
 
   for (const spellId of profile.importantCooldowns) {
     const finding = buildUnderuseFinding(
-      'cooldown',
-      spellId,
-      player.casts.filter((entry) => entry.spellId === spellId).length,
-      trainer.damageBySpell[spellId]?.casts ?? 0,
-      trainer,
-    );
+        'cooldown',
+        spellId,
+        buildCastCount(player, spellId),
+        trainer.damageBySpell[spellId]?.casts ?? 0,
+        trainer,
+      );
     if (finding) {
       findings.push(finding);
     }
@@ -292,10 +328,22 @@ function buildCooldownAndAbilityFindings(profile: SpecAnalysisProfile, player: R
       continue;
     }
     const finding = buildUnderuseFinding(
-      'ability',
+        'ability',
+        spellId,
+        buildCastCount(player, spellId),
+        trainer.damageBySpell[spellId]?.casts ?? 0,
+        trainer,
+      );
+    if (finding) {
+      findings.push(finding);
+    }
+  }
+
+  for (const spellId of profile.overuseSpellIds ?? []) {
+    const finding = buildOveruseFinding(
       spellId,
-      player.casts.filter((entry) => entry.spellId === spellId).length,
-      trainer.damageBySpell[spellId]?.casts ?? 0,
+      buildCastCount(player, spellId),
+      trainer.damageBySpell[spellId]?.casts ?? buildCastCount(trainer, spellId),
       trainer,
     );
     if (finding) {
@@ -304,6 +352,111 @@ function buildCooldownAndAbilityFindings(profile: SpecAnalysisProfile, player: R
   }
 
   return findings;
+}
+
+function buildProcFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
+  return (profile.procAnalysisRules ?? []).flatMap((rule) => {
+    const findings: AnalysisFinding[] = [];
+    const timeline = player.buffStacksTimelineBySecond[rule.buffId];
+    if (timeline && timeline.length > 1) {
+      const expiredTimes: number[] = [];
+      for (let index = 1; index < timeline.length; index += 1) {
+        const previousStacks = timeline[index - 1] ?? 0;
+        const currentStacks = timeline[index] ?? 0;
+        if (previousStacks <= 0 || currentStacks > 0) {
+          continue;
+        }
+
+        const expiryTime = index;
+        const recommended = recommendationAtTime(player, Math.max(0, expiryTime - 0.05));
+        if (recommended !== rule.expectedSpellId) {
+          continue;
+        }
+        if (hasCastNearTime(player, rule.expectedSpellId, expiryTime, 1.25)) {
+          continue;
+        }
+        expiredTimes.push(expiryTime);
+      }
+
+      if (expiredTimes.length > 0) {
+        const avgDamage = Math.max(0, getAverageSpellDamage(trainer, rule.expectedSpellId));
+        findings.push({
+          id: `missed-proc-${rule.buffId}`,
+          category: 'apl',
+          title: rule.expireTitle,
+          summary: `${rule.expireSummary} This happened ${expiredTimes.length} time${expiredTimes.length === 1 ? '' : 's'} in spots where the APL still wanted \`${titleCaseSpellId(rule.expectedSpellId)}\`.`,
+          fix: rule.expireFix,
+          focusSpellId: rule.expectedSpellId,
+          estimatedDpsLoss: Math.round((avgDamage * expiredTimes.length * 0.35) / Math.max(1, trainer.encounterDuration)),
+          occurrences: expiredTimes.length,
+          severity: expiredTimes.length >= 2 ? 'major' : 'medium',
+          evidence: expiredTimes.slice(0, 3).map((time) => ({
+            time,
+            expectedSpellId: rule.expectedSpellId,
+            note: `${titleCaseBuffId(rule.buffId)} expired without the recommended spender.`,
+          })),
+        });
+      }
+    }
+
+    if (rule.misuseSpellId && rule.misuseTitle && rule.misuseSummary && rule.misuseFix) {
+      const misuseSpellId = rule.misuseSpellId;
+      const misuseTimes = player.casts
+        .filter((cast) => cast.spellId === misuseSpellId)
+        .filter((cast) => !hasTrackedBuff(buildDecisionStateForCast(profile, player, cast), rule.buffId))
+        .filter((cast) => cast.recommendedSpellId !== misuseSpellId)
+        .map((cast) => cast.time);
+
+      if (misuseTimes.length > 0) {
+        const avgDamage = Math.max(0, getAverageSpellDamage(trainer, misuseSpellId));
+        findings.push({
+          id: `misuse-${misuseSpellId}-without-${rule.buffId}`,
+          category: 'apl',
+          title: rule.misuseTitle,
+          summary: `${rule.misuseSummary} This happened ${misuseTimes.length} time${misuseTimes.length === 1 ? '' : 's'} when the APL wanted something else.`,
+          fix: rule.misuseFix,
+          focusSpellId: misuseSpellId,
+          comparisonSpellId: rule.expectedSpellId,
+          estimatedDpsLoss: Math.round((avgDamage * misuseTimes.length * 0.22) / Math.max(1, trainer.encounterDuration)),
+          occurrences: misuseTimes.length,
+          severity: misuseTimes.length >= 3 ? 'major' : 'medium',
+          evidence: misuseTimes.slice(0, 3).map((time) => ({
+            time,
+            actualSpellId: misuseSpellId,
+            expectedSpellId: recommendationAtTime(player, Math.max(0, time - 0.05)) ?? undefined,
+            note: `${titleCaseSpellId(misuseSpellId)} was used without ${titleCaseBuffId(rule.buffId)}.`,
+          })),
+        });
+      }
+    }
+
+    return findings;
+  });
+}
+
+function buildFinisherFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
+  return (profile.finisherSpellIds ?? []).flatMap((spellId) => {
+    const playerCount = buildCastCount(player, spellId);
+    const trainerCount = Math.max(trainer.damageBySpell[spellId]?.casts ?? 0, buildCastCount(trainer, spellId));
+    const missingCasts = trainerCount - playerCount;
+    if (missingCasts <= 0.35) {
+      return [];
+    }
+
+    const avgDamage = Math.max(0, getAverageSpellDamage(trainer, spellId));
+    return [{
+      id: `missed-finisher-${spellId}`,
+      category: 'ability' as const,
+      title: `Missed ${titleCaseSpellId(spellId)} finish window`,
+      summary: `The trainer fit ${Math.round(trainerCount * 10) / 10} cast${trainerCount === 1 ? '' : 's'} of \`${titleCaseSpellId(spellId)}\` before the target died, while your run fit ${playerCount}.`,
+      fix: `Watch the target's final health window and press \`${titleCaseSpellId(spellId)}\` before the encounter ends when it becomes legal.`,
+      focusSpellId: spellId,
+      estimatedDpsLoss: Math.round((avgDamage * missingCasts) / Math.max(1, trainer.encounterDuration)),
+      occurrences: Math.max(1, Math.round(missingCasts)),
+      severity: missingCasts >= 2 ? 'major' : 'medium',
+      evidence: [],
+    }];
+  });
 }
 
 function buildResourceFinding(player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
@@ -726,10 +879,12 @@ export function buildRunAnalysisReport(
   const playerDps = playerTotalDamage / scoreDuration;
   const trainerDps = trainerTotalDamage / scoreDuration;
   const ratio = trainerDps > 0 ? playerDps / trainerDps : 0;
-  const exactMistakes = buildExactMistakes(profile, player, trainer);
+  const exactMistakes = scoreDuration <= 30 ? [] : buildExactMistakes(profile, player, trainer);
   const findings = [
     ...buildCooldownAndAbilityFindings(profile, player, trainer),
     ...buildAplFindings(profile, player, trainer),
+    ...buildProcFindings(profile, player, trainer),
+    ...buildFinisherFindings(profile, player, trainer),
     ...buildResourceFinding(player, trainer),
     ...profile.analyzeSetup(player, trainer),
     ...buildDowntimeFinding(profile, player),

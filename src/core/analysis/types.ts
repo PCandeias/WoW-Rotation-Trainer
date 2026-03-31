@@ -174,10 +174,25 @@ export interface DowntimeContext {
   energyWasteDelta: number;
 }
 
+export interface ProcAnalysisRule {
+  buffId: string;
+  expectedSpellId: string;
+  misuseSpellId?: string;
+  expireTitle: string;
+  expireSummary: string;
+  expireFix: string;
+  misuseTitle?: string;
+  misuseSummary?: string;
+  misuseFix?: string;
+}
+
 export interface SpecAnalysisProfile {
   specId: string;
   importantCooldowns: string[];
   importantAbilities: string[];
+  overuseSpellIds?: string[];
+  procAnalysisRules?: ProcAnalysisRule[];
+  finisherSpellIds?: string[];
   exactMistakeSpellIds: string[];
   explainRecommendedSpell(spellId: string): AplRuleExplanation | null;
   explainExactDecision?(

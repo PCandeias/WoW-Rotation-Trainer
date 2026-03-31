@@ -22,6 +22,37 @@ const IMPORTANT_ABILITIES = [
   'whirling_dragon_punch',
 ] as const;
 
+const OVERUSE_ABILITIES = [
+  'tiger_palm',
+  'blackout_kick',
+  'spinning_crane_kick',
+] as const;
+
+const PROC_ANALYSIS_RULES = [
+  {
+    buffId: 'dance_of_chi_ji',
+    expectedSpellId: 'spinning_crane_kick',
+    misuseSpellId: 'spinning_crane_kick',
+    expireTitle: 'Dance of Chi-Ji procs were missed',
+    expireSummary: 'You let `Dance of Chi-Ji` expire without turning it into `Spinning Crane Kick`.',
+    expireFix: 'Spend `Dance of Chi-Ji` before it expires when the proc spender is still the recommended button.',
+    misuseTitle: 'Spinning Crane Kick was forced without the proc',
+    misuseSummary: 'You cast `Spinning Crane Kick` without `Dance of Chi-Ji` in spots where the proc-free version was not the recommended play.',
+    misuseFix: 'Save `Spinning Crane Kick` for proc windows unless the APL explicitly wants it for the current state.',
+  },
+  {
+    buffId: 'blackout_reinforcement',
+    expectedSpellId: 'blackout_kick',
+    expireTitle: 'Blackout Kick! procs were missed',
+    expireSummary: 'You let `Blackout Kick!` expire instead of spending the free `Blackout Kick` window.',
+    expireFix: 'Spend `Blackout Kick!` before it expires when the APL still prefers using that free cast.',
+  },
+] as const;
+
+const FINISHER_SPELLS = [
+  'touch_of_death',
+] as const;
+
 const EXACT_MISTAKE_BASE_SPELLS = [
   'tiger_palm',
   'blackout_kick',
@@ -339,6 +370,9 @@ export function buildMonkWindwalkerAnalysisProfile(talents: ReadonlySet<string>)
     specId: 'monk_windwalker',
     importantCooldowns: IMPORTANT_COOLDOWNS.filter((spellId) => isSpellAvailable(spellId, talents)),
     importantAbilities: IMPORTANT_ABILITIES.filter((spellId) => isSpellAvailable(spellId, talents)),
+    overuseSpellIds: OVERUSE_ABILITIES.filter((spellId) => isSpellAvailable(spellId, talents)),
+    procAnalysisRules: PROC_ANALYSIS_RULES.filter((rule) => isSpellAvailable(rule.expectedSpellId, talents)),
+    finisherSpellIds: FINISHER_SPELLS.filter((spellId) => isSpellAvailable(spellId, talents)),
     exactMistakeSpellIds: getExactMistakeSpellIds(talents),
     explainRecommendedSpell,
     explainExactDecision,
