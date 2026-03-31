@@ -280,8 +280,7 @@ export default function EndScreen({
         <div data-testid="analysis-report-grid" style={reportGrid}>
           <ReportCard
             title="Damage Review"
-            subtitle="Compare pacing and total damage against the trainer."
-            bodyOverflow="hidden"
+            bodyOverflow="auto"
             style={{ gridColumn: '1', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -479,20 +478,20 @@ function AnalysisLineChart({
     <LineChart data={data} width={width} height={height}>
       <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="2 6" vertical={false} />
       <XAxis dataKey="time" stroke={T.textMuted} tick={axisTick} tickLine={false} axisLine={false} />
-      <YAxis stroke={T.textMuted} tick={axisTick} tickFormatter={yFormatter} width={52} tickLine={false} axisLine={false} />
+      <YAxis stroke={T.textMuted} tick={axisTick} tickFormatter={yFormatter} width={48} tickLine={false} axisLine={false} />
       <Tooltip
         formatter={(value: number) => yFormatter(value)}
         labelFormatter={(value) => `${value}s`}
         contentStyle={chartTooltipStyle}
       />
-      <Legend wrapperStyle={{ fontSize: 11, paddingTop: 10 }} />
+      <Legend wrapperStyle={{ fontSize: 10, paddingTop: 6 }} />
       <Line type={lineType} dataKey="player" name="You" stroke={ANALYSIS_SERIES.player} dot={false} strokeWidth={2.75} />
       <Line type={lineType} dataKey="trainer" name="Trainer" stroke={ANALYSIS_SERIES.trainer} strokeDasharray="7 4" dot={false} strokeWidth={2.5} />
     </LineChart>
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>
+    <div style={{ width: '100%', height: '100%', minHeight: 200, minWidth: 0, overflow: 'hidden' }}>
       {typeof ResizeObserver === 'undefined'
         ? chart(520, 220)
         : (
@@ -566,14 +565,12 @@ function DamageChartPanel({
   const pages = [
     {
       key: 'damage-over-time',
-      title: 'Damage Over Time',
-      subtitle: 'See where your pace drifted away from the trainer.',
+      title: 'DPS Pace',
       chart: <AnalysisLineChart data={damageOverTime} yFormatter={formatCompactNumber} />,
     },
     {
       key: 'cumulative-damage',
-      title: 'Cumulative Damage',
-      subtitle: 'Spot missed burst windows in the total-damage gap.',
+      title: 'Cumulative',
       chart: <AnalysisLineChart data={cumulativeDamage} yFormatter={formatCompactNumber} lineType="linear" />,
     },
   ] as const;
@@ -587,10 +584,13 @@ function DamageChartPanel({
   const canGoNext = currentIndex < pages.length - 1;
 
   return (
-    <div style={{ display: 'grid', gap: 8, height: '100%', minHeight: 0, gridTemplateRows: 'auto auto minmax(0, 1fr)' }}>
+    <div style={{ display: 'grid', gap: 6, height: '100%', minHeight: 0, gridTemplateRows: 'auto minmax(0, 1fr)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-        <div style={{ color: T.textDim, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-          View {currentIndex + 1} of {pages.length}
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.88rem' }}>{page.title}</div>
+          <div style={{ color: T.textDim, fontSize: '0.68rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            {currentIndex + 1} / {pages.length}
+          </div>
         </div>
         <PanelPaginationControls
           previousLabel="Previous damage chart"
@@ -601,11 +601,7 @@ function DamageChartPanel({
           onNext={() => setCurrentIndex((index) => Math.min(pages.length - 1, index + 1))}
         />
       </div>
-      <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{page.title}</div>
-        <div style={{ color: T.textDim, fontSize: '0.74rem', lineHeight: 1.25 }}>{page.subtitle}</div>
-      </div>
-      <div style={{ minHeight: 0 }}>{page.chart}</div>
+      <div style={{ minHeight: 0, overflow: 'auto', paddingBottom: 4 }}>{page.chart}</div>
     </div>
   );
 }
