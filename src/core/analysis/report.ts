@@ -299,6 +299,53 @@ function cooldownStateAtTime(trace: RawRunTrace, time: number, relevantSpellIds:
     }));
 }
 
+function normalizeCooldownDisplayStates(
+  relevantSpellIds: readonly string[],
+  activeBuffs: AnalysisDecisionState['activeBuffs'],
+  activeCooldowns: readonly AnalysisActiveCooldownState[],
+): AnalysisActiveCooldownState[] {
+  const cooldownBySpellId = new Map(activeCooldowns.map((cooldown) => [cooldown.spellId, cooldown]));
+  const hasWhirlingDragonPunchWindow = activeBuffs.some((buff) => buff.buffId === 'whirling_dragon_punch' && buff.stacks > 0);
+
+  return [...new Set(relevantSpellIds)]
+    .map((spellId) => {
+      const existing = cooldownBySpellId.get(spellId);
+      const remaining = Math.max(0, existing?.remaining ?? 0);
+
+      if (spellId !== 'whirling_dragon_punch') {
+        return {
+          spellId,
+          remaining,
+          isReady: existing?.isReady ?? remaining <= 0,
+          ...(existing?.label ? { label: existing.label } : {}),
+        };
+      }
+
+      if (remaining > 0) {
+        return {
+          spellId,
+          remaining,
+          isReady: false,
+        };
+      }
+
+      return hasWhirlingDragonPunchWindow
+        ? {
+          spellId,
+          remaining: 0,
+          isReady: true,
+          label: 'Ready',
+        }
+        : {
+          spellId,
+          remaining: 0,
+          isReady: false,
+          label: 'Needs FoF + RSK',
+        };
+    })
+    .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId));
+}
+
 function previousAbilityAtTime(trace: RawRunTrace, time: number): string | null {
   let previousAbility: string | null = null;
   for (const cast of trace.casts) {
@@ -317,13 +364,20 @@ function buildDecisionState(
 ): AnalysisDecisionState {
   const snapshotTime = Math.max(0, time - 0.001);
   const topRecommendations = recommendationsAtTime(trace, snapshotTime).slice(0, 3);
+  const activeBuffs = buffStateAtTime(trace, snapshotTime, profile.getTrackedBuffIds());
+  const activeCooldowns = normalizeCooldownDisplayStates(
+    profile.getEssentialCooldownSpellIds(),
+    activeBuffs,
+    cooldownStateAtTime(trace, snapshotTime, profile.getEssentialCooldownSpellIds()),
+  );
+
   return {
     chi: valueAtTime(trace.resourceTimelineBySecond.chi, snapshotTime),
     energy: valueAtTime(trace.resourceTimelineBySecond.energy, snapshotTime),
     previousAbility: previousAbilityAtTime(trace, snapshotTime),
     topRecommendations,
-    activeBuffs: buffStateAtTime(trace, snapshotTime, profile.getTrackedBuffIds()),
-    activeCooldowns: cooldownStateAtTime(trace, snapshotTime, profile.getEssentialCooldownSpellIds()),
+    activeBuffs,
+    activeCooldowns,
   };
 }
 
@@ -332,20 +386,23 @@ function filterRecordedDecisionState(
   state: AnalysisDecisionState,
 ): AnalysisDecisionState {
   const relevantBuffIds = new Set(profile.getTrackedBuffIds());
-  const relevantCooldownIds = new Set(profile.getEssentialCooldownSpellIds());
+  const relevantCooldownIds = profile.getEssentialCooldownSpellIds();
+  const filteredBuffs = state.activeBuffs
+    .filter((buff) => relevantBuffIds.has(buff.buffId) && buff.stacks > 0)
+    .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
+    .slice(0, 6);
 
   return {
     chi: state.chi,
     energy: state.energy,
     previousAbility: state.previousAbility,
     topRecommendations: state.topRecommendations.slice(0, 3),
-    activeBuffs: state.activeBuffs
-      .filter((buff) => relevantBuffIds.has(buff.buffId) && buff.stacks > 0)
-      .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
-      .slice(0, 6),
-    activeCooldowns: state.activeCooldowns
-      .filter((cooldown) => relevantCooldownIds.has(cooldown.spellId))
-      .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId)),
+    activeBuffs: filteredBuffs,
+    activeCooldowns: normalizeCooldownDisplayStates(
+      relevantCooldownIds,
+      filteredBuffs,
+      state.activeCooldowns.filter((cooldown) => relevantCooldownIds.includes(cooldown.spellId)),
+    ),
   };
 }
 
@@ -604,7 +661,7 @@ export function formatDecisionStateLabel(state: AnalysisDecisionState): string {
     ? state.activeBuffs.map((buff) => `${titleCaseBuffId(buff.buffId)}${buff.stacks > 1 ? ` x${buff.stacks}` : ''}`).join(', ')
     : 'None';
   const cooldowns = state.activeCooldowns.length > 0
-    ? state.activeCooldowns.map((cooldown) => `${titleCaseSpellId(cooldown.spellId)} ${cooldown.remaining > 0 ? `${cooldown.remaining.toFixed(1)}s` : 'Ready'}`).join(', ')
+    ? state.activeCooldowns.map((cooldown) => `${titleCaseSpellId(cooldown.spellId)} ${cooldown.label ?? (cooldown.remaining > 0 ? `${cooldown.remaining.toFixed(1)}s` : 'Ready')}`).join(', ')
     : 'None';
 
   return `Energy ${Math.round(state.energy)} • Chi ${Math.round(state.chi)} • Prev ${state.previousAbility ? titleCaseSpellId(state.previousAbility) : 'None'} • Top ${recommendations} • Buffs ${buffs} • CDs ${cooldowns}`;

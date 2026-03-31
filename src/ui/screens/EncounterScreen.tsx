@@ -2225,6 +2225,8 @@ function DecisionStatePanel({
                 key={cooldown.spellId}
                 spellId={cooldown.spellId}
                 remaining={cooldown.remaining}
+                isReady={cooldown.isReady}
+                label={cooldown.label}
               />
             ))
             : <div style={{ color: T.textDim, fontSize: '0.76rem' }}>No essential cooldowns recorded.</div>}
@@ -2251,7 +2253,20 @@ function StateValue({ label, value }: { label: string; value: string }): React.R
   );
 }
 
-function CooldownStateBadge({ spellId, remaining }: { spellId: string; remaining: number }): React.ReactElement {
+function CooldownStateBadge({
+  spellId,
+  remaining,
+  isReady,
+  label,
+}: {
+  spellId: string;
+  remaining: number;
+  isReady?: boolean;
+  label?: string;
+}): React.ReactElement {
+  const displayLabel = label ?? (remaining > 0 ? `${remaining.toFixed(1)}s` : 'Ready');
+  const ready = isReady ?? remaining <= 0;
+
   return (
     <div
       style={{
@@ -2265,8 +2280,8 @@ function CooldownStateBadge({ spellId, remaining }: { spellId: string; remaining
       }}
     >
       <SpellBadge spellId={spellId} compact />
-      <span style={{ color: remaining > 0 ? T.textDim : T.accent, fontSize: '0.76rem' }}>
-        {remaining > 0 ? `${remaining.toFixed(1)}s` : 'Ready'}
+      <span style={{ color: ready ? T.accent : T.textDim, fontSize: '0.76rem' }}>
+        {displayLabel}
       </span>
     </div>
   );

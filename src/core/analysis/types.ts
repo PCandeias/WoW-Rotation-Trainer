@@ -98,6 +98,8 @@ export interface AnalysisActiveBuffState {
 export interface AnalysisActiveCooldownState {
   spellId: string;
   remaining: number;
+  isReady?: boolean;
+  label?: string;
 }
 
 export interface AnalysisDecisionState {
