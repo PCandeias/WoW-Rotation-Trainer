@@ -84,7 +84,7 @@ function buildCastCountsBySpell(trace: RawRunTrace): Map<string, number> {
 function resolveDamageBreakdownSpellId(sourceSpellId: string): string | null {
   const spellId = DAMAGE_BREAKDOWN_SOURCE_ALIASES[sourceSpellId] ?? sourceSpellId;
   const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
-  return spell ? spell.name : null;
+  return spell ? spellId : null;
 }
 
 function createEmptyDamageSide(): AbilityDamageBreakdownSide {

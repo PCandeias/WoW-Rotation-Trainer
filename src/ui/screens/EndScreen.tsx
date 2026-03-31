@@ -177,7 +177,7 @@ export default function EndScreen({
   const reportGrid: CSSProperties = {
     display: 'grid',
     gridTemplateColumns: 'minmax(420px, 1fr) minmax(420px, 1fr) minmax(380px, 0.92fr)',
-    gridTemplateRows: 'minmax(300px, 0.82fr) minmax(360px, 1.08fr) minmax(300px, 0.9fr)',
+    gridTemplateRows: 'minmax(286px, 0.82fr) minmax(340px, 1.08fr) minmax(286px, 0.9fr)',
     gap: 12,
     minHeight: 0,
     overflow: 'auto',
@@ -280,7 +280,7 @@ export default function EndScreen({
         <div data-testid="analysis-report-grid" style={reportGrid}>
           <ReportCard
             title="Damage Review"
-            subtitle="Flip between live DPS pace and cumulative damage to compare the full encounter."
+            subtitle="Compare pacing and total damage against the trainer."
             bodyOverflow="hidden"
             style={{ gridColumn: '1', gridRow: '1' }}
             body={renderAnalysisState(
@@ -299,21 +299,27 @@ export default function EndScreen({
           />
           <ReportCard
             title="Ability Damage"
-            subtitle="Recount-style damage breakdown for castable abilities, with proc detail on hover."
+            subtitle="Castable ability breakdown, with proc detail on hover."
             bodyOverflow="auto"
             style={{ gridColumn: '2', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
               analysisReport
-                ? <AbilityDamageBreakdownPanel rows={analysisReport.damageBreakdown ?? []} />
+                ? (
+                  <AbilityDamageBreakdownPanel
+                    rows={analysisReport.damageBreakdown ?? []}
+                    playerTotalDamage={analysisReport.score.playerTotalDamage}
+                    trainerTotalDamage={analysisReport.score.trainerTotalDamage}
+                  />
+                )
                 : null,
               'Loading trainer comparison...',
             )}
           />
           <ReportCard
             title="Spell Timeline"
-            subtitle="Cast-by-cast comparison across the encounter, using the same timeline style as the validation report."
+            subtitle="Cast-by-cast comparison across the encounter."
             bodyOverflow="auto"
             style={{ gridColumn: '1 / span 2', gridRow: '2' }}
             body={renderAnalysisState(
@@ -325,7 +331,7 @@ export default function EndScreen({
           />
           <ReportCard
             title="Exact Mistakes"
-            subtitle="Check what your state was, what you pressed, what the trainer/APL would have pressed in that same spot, and why."
+            subtitle="Compare your choice against the trainer's call in the same spot."
             bodyOverflow="auto"
             style={{ gridColumn: '3', gridRow: '1 / span 2' }}
             body={renderAnalysisState(
@@ -404,7 +410,7 @@ function ReportCard({
       style={{
         ...buildPanelStyle({ elevated: true, density: 'compact' }),
         borderRadius: 18,
-        padding: '16px 18px',
+        padding: '14px 16px',
         minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
@@ -417,13 +423,13 @@ function ReportCard({
           color: T.textBright,
           fontFamily: FONTS.display,
           fontSize: '1.05rem',
-          marginBottom: 12,
+          marginBottom: 8,
         }}
       >
         {title}
       </div>
       {subtitle && (
-        <div style={{ color: T.textDim, fontSize: '0.78rem', lineHeight: 1.4, marginBottom: 12 }}>
+        <div style={{ color: T.textDim, fontSize: '0.74rem', lineHeight: 1.3, marginBottom: 8 }}>
           {subtitle}
         </div>
       )}
@@ -561,13 +567,13 @@ function DamageChartPanel({
     {
       key: 'damage-over-time',
       title: 'Damage Over Time',
-      subtitle: 'See where your live DPS pace drifted away from the trainer.',
+      subtitle: 'See where your pace drifted away from the trainer.',
       chart: <AnalysisLineChart data={damageOverTime} yFormatter={formatCompactNumber} />,
     },
     {
       key: 'cumulative-damage',
       title: 'Cumulative Damage',
-      subtitle: 'The total gap makes missed burst windows easier to spot.',
+      subtitle: 'Spot missed burst windows in the total-damage gap.',
       chart: <AnalysisLineChart data={cumulativeDamage} yFormatter={formatCompactNumber} lineType="linear" />,
     },
   ] as const;
@@ -581,7 +587,7 @@ function DamageChartPanel({
   const canGoNext = currentIndex < pages.length - 1;
 
   return (
-    <div style={{ display: 'grid', gap: 12, height: '100%', minHeight: 0, gridTemplateRows: 'auto auto minmax(0, 1fr)' }}>
+    <div style={{ display: 'grid', gap: 8, height: '100%', minHeight: 0, gridTemplateRows: 'auto auto minmax(0, 1fr)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
         <div style={{ color: T.textDim, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
           View {currentIndex + 1} of {pages.length}
@@ -596,8 +602,8 @@ function DamageChartPanel({
         />
       </div>
       <div style={{ display: 'grid', gap: 4 }}>
-        <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.94rem' }}>{page.title}</div>
-        <div style={{ color: T.textDim, fontSize: '0.76rem' }}>{page.subtitle}</div>
+        <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{page.title}</div>
+        <div style={{ color: T.textDim, fontSize: '0.74rem', lineHeight: 1.25 }}>{page.subtitle}</div>
       </div>
       <div style={{ minHeight: 0 }}>{page.chart}</div>
     </div>
@@ -1270,8 +1276,12 @@ function BuffBadge({
 
 function AbilityDamageBreakdownPanel({
   rows,
+  playerTotalDamage,
+  trainerTotalDamage,
 }: {
   rows: RunAnalysisReport['damageBreakdown'];
+  playerTotalDamage: number;
+  trainerTotalDamage: number;
 }): React.ReactElement {
   const breakdownRows = rows ?? [];
   if (breakdownRows.length === 0) {
@@ -1280,8 +1290,6 @@ function AbilityDamageBreakdownPanel({
 
   const maxPlayerDamage = Math.max(1, ...breakdownRows.map((row) => row.player.totalDamage));
   const maxTrainerDamage = Math.max(1, ...breakdownRows.map((row) => row.trainer.totalDamage));
-  const playerTotalDamage = breakdownRows.reduce((total, row) => total + row.player.totalDamage, 0);
-  const trainerTotalDamage = breakdownRows.reduce((total, row) => total + row.trainer.totalDamage, 0);
 
   return (
     <div style={{ display: 'grid', gap: 10, minHeight: 0 }}>
