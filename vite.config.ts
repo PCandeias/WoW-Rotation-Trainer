@@ -13,7 +13,7 @@ export default defineConfig({
       '@data': resolve(__dirname, 'src/core/data'),
     },
   },
-  base: '/wow_trainer/',
+  base: './',
   build: {
     rollupOptions: {
       output: {
