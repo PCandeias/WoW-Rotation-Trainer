@@ -220,12 +220,6 @@ export function buildTrainerBenchmarkTrace(
 
   return {
     ...averagedTrace,
-    damageBySpell: Object.fromEntries(
-      Object.entries(representativeTrace.damageBySpell).map(([spellId, stats]) => [
-        spellId,
-        { ...stats },
-      ]),
-    ),
     casts: representativeTrace.casts.map((cast) => ({ ...cast })),
   };
 }
