@@ -1,4 +1,5 @@
 import type { BuffDef, SpellDef } from '../data/spells';
+import { applyStatDR } from '../data/profileParser';
 import type { GameState } from '../engine/gameState';
 import type { IGameState } from '../engine/i_game_state';
 
@@ -8,7 +9,25 @@ const MASTERY_RATING_PER_PCT = 35;
 const VERSATILITY_RATING_PER_PCT = 40;
 const RECKLESSNESS_POTION_HASTE_PCT = 934.5676 / 33;
 const RECKLESSNESS_POTION_VERS_PENALTY_PCT = 125.6926 / 40;
-const ALGETHAR_PUZZLE_MASTERY_PCT = 480.5574 / 35;
+/**
+ * Algeth'ar Puzzle Box mastery bonus computed dynamically via
+ * {@link computePuzzleMasteryDelta}. This legacy constant is the fallback when
+ * the profile's base mastery rating is unavailable.
+ */
+const ALGETHAR_PUZZLE_MASTERY_PCT_FALLBACK = 480.5574 / 35;
+/** Mastery rating granted by Algeth'ar Puzzle Box at ilevel 289 (SimC debug verified). */
+const ALGETHAR_PUZZLE_MASTERY_RATING = 861;
+/**
+ * WW Monk Combo Strikes mastery coefficient (spell 115636 effectN(1)).
+ * mastery_value = composite_mastery_points × coefficient.
+ * Derived: 65.863125 / (8 + 841/35 + 2) ≈ 1.9355.
+ * Only used as a fallback when the coefficient can't be derived from seed stats.
+ */
+const WW_MASTERY_COEFFICIENT = 1.9355;
+/** WW Monk base mastery points (8 mastery points before rating and buffs). */
+const WW_MASTERY_BASE_POINTS = 8;
+/** Skyfury adds 2 mastery points (included in SimC buffed_stats seed). */
+const SKYFURY_MASTERY_POINTS = 2;
 const BLOODLUST_HASTE_PCT = 30;
 const MARK_OF_THE_WILD_VERS_PCT = 3;
 const BATTLE_SHOUT_AP_MULTIPLIER = 1.05;
@@ -17,8 +36,11 @@ const SKYFURY_MASTERY_PCT = 2;
 const MYSTIC_TOUCH_PHYSICAL_TAKEN_PCT = 5;
 const CHAOS_BRAND_MAGIC_TAKEN_PCT = 3;
 const HUNTERS_MARK_DAMAGE_TAKEN_PCT = 3;
-/** Gaze of the Alnseer: DBC spell 1256896, coefficient 0.144396, ~19 Agility per Alnscorned Essence stack. */
-const GAZE_ALNSEER_AGI_PER_STACK = 19;
+/**
+ * Gaze of the Alnseer: DBC spell 1256896, coefficient 0.144396.
+ * At ilevel 289: ~34 Agility per Alnscorned Essence stack (SimC debug verified).
+ */
+const GAZE_ALNSEER_AGI_PER_STACK = 34;
 const LOA_CAPYBARA_PRIMARY_STAT = 31.60888;
 const AKILZONS_CRY_OF_VICTORY_HASTE_PCT = 74.62438 / HASTE_RATING_PER_PCT;
 const HUNT_EMBELLISHMENT_STAT_PCT = 198.7753 / HASTE_RATING_PER_PCT;
@@ -331,13 +353,44 @@ export function getSharedPlayerVersatilityBonus(state: IGameState): number {
   return versatility - RECKLESSNESS_POTION_VERS_PENALTY_PCT;
 }
 
+/**
+ * Compute the mastery_VALUE delta from Algeth'ar Puzzle Box using the DR-aware
+ * rating conversion.
+ *
+ * SimC chain: composite_mastery_value = (base + DR(rating/35) + skyfury) × coefficient.
+ * The delta is computed as the difference in mastery_value with and without the
+ * puzzle box's +861 mastery rating, accounting for diminishing returns at the
+ * combined rating level.
+ *
+ * When the base mastery rating is unknown, falls back to the legacy constant.
+ */
+function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: number): number {
+  if (baseMasteryRating <= 0) {
+    return ALGETHAR_PUZZLE_MASTERY_PCT_FALLBACK;
+  }
+
+  const baseRaw = baseMasteryRating / MASTERY_RATING_PER_PCT;
+  const totalRaw = (baseMasteryRating + ALGETHAR_PUZZLE_MASTERY_RATING) / MASTERY_RATING_PER_PCT;
+  const baseDR = applyStatDR(baseRaw);
+  const totalDR = applyStatDR(totalRaw);
+
+  // Derive the mastery coefficient from the seeded mastery value.
+  // mastery_value = (base_points + DR(rating) + skyfury) × coefficient
+  const baseComposite = WW_MASTERY_BASE_POINTS + baseDR + SKYFURY_MASTERY_POINTS;
+  const coefficient = (baseComposite > 0 && baseMasteryPct > 0) ? baseMasteryPct / baseComposite : WW_MASTERY_COEFFICIENT;
+
+  const deltaPoints = totalDR - baseDR;
+  return deltaPoints * coefficient;
+}
+
 export function getSharedPlayerMasteryBonus(state: IGameState): number {
   let mastery = 0;
   const statsSeedIncludesPassiveBonuses = (state as { profileStatsSource?: string }).profileStatsSource === 'simc_buffed_snapshot';
-  if (!state.isBuffActive('algethar_puzzle')) {
-    mastery = 0;
-  } else {
-    mastery += ALGETHAR_PUZZLE_MASTERY_PCT;
+  if (state.isBuffActive('algethar_puzzle')) {
+    const stateWithStats = state as { stats?: { masteryRating?: number; masteryPercent?: number } };
+    const baseMasteryRating = stateWithStats.stats?.masteryRating ?? 0;
+    const baseMasteryPct = stateWithStats.stats?.masteryPercent ?? 0;
+    mastery += computePuzzleMasteryDelta(baseMasteryRating, baseMasteryPct);
   }
   if (state.isBuffActive('skyfury') && !statsSeedIncludesPassiveBonuses) {
     mastery += SKYFURY_MASTERY_PCT;
@@ -360,7 +413,7 @@ export function getSharedPlayerAttackPowerMultiplier(state: IGameState): number 
 
 /**
  * Gaze of the Alnseer: Alnscorned Essence stacks grant primary stat (Agility).
- * DBC: spell 1256896, coefficient 0.144396, scaled value ~19 per stack.
+ * DBC: spell 1256896, coefficient 0.144396. At ilevel 289: 34 per stack (SimC debug verified).
  * In WoW, 1 Agility = 1 Attack Power for monks.
  */
 export function getSharedPlayerAttackPowerBonus(state: IGameState): number {

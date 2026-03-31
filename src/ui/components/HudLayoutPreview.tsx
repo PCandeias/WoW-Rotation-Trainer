@@ -154,6 +154,8 @@ const PREVIEW_CHALLENGE_NOTES: ChallengeNoteRuntime[] = [
     progress: 0.3,
     clickCount: 0,
     pointerActive: false,
+    pointerAngle: null,
+    hitGrade: null,
   },
   {
     note: {
@@ -165,16 +167,18 @@ const PREVIEW_CHALLENGE_NOTES: ChallengeNoteRuntime[] = [
       radius: 24,
       damageOnMiss: 6,
       travelDuration: 1.1,
-      path: [
-        { x: 232, y: 206 },
-        { x: 352, y: 206 },
-        { x: 448, y: 160 },
-      ],
+      sliderPath: {
+        kind: 'line',
+        start: { x: 232, y: 206 },
+        end: { x: 448, y: 160 },
+      },
     },
     status: 'active',
     progress: 0.55,
     clickCount: 0,
     pointerActive: true,
+    pointerAngle: null,
+    hitGrade: null,
   },
   {
     note: {
@@ -191,6 +195,8 @@ const PREVIEW_CHALLENGE_NOTES: ChallengeNoteRuntime[] = [
     progress: 0,
     clickCount: 0,
     pointerActive: false,
+    pointerAngle: null,
+    hitGrade: null,
   },
 ];
 
@@ -1581,6 +1587,7 @@ function MockGroupContent({
           playfield={PREVIEW_CHALLENGE_PLAYFIELD}
           currentTime={PREVIEW_CURRENT_TIME}
           notes={PREVIEW_CHALLENGE_NOTES}
+          feedbackBursts={[]}
           onPointerMove={noopPointerHandler}
           onPointerDown={noopPointerHandler}
           onPointerUp={noopPointerHandler}

@@ -187,3 +187,39 @@ export function buildAverageTrainerTrace(
     benchmarkSignature,
   };
 }
+
+/**
+ * Selects the single trainer trace that best represents the averaged benchmark output.
+ */
+export function selectRepresentativeTrainerTrace(traces: RawRunTrace[]): RawRunTrace {
+  if (traces.length === 0) {
+    throw new Error('Cannot select a representative trainer trace from zero traces.');
+  }
+
+  const [firstTrace, ...remainingTraces] = traces;
+  const averageDps = traces.reduce((sum, trace) => sum + trace.dps, 0) / traces.length;
+  const averageTotalDamage = traces.reduce((sum, trace) => sum + trace.totalDamage, 0) / traces.length;
+
+  return remainingTraces.reduce((best, candidate) => {
+    const bestScore = Math.abs(best.dps - averageDps) + (Math.abs(best.totalDamage - averageTotalDamage) / Math.max(1, averageTotalDamage));
+    const candidateScore = Math.abs(candidate.dps - averageDps)
+      + (Math.abs(candidate.totalDamage - averageTotalDamage) / Math.max(1, averageTotalDamage));
+    return candidateScore < bestScore ? candidate : best;
+  }, firstTrace);
+}
+
+/**
+ * Builds the trainer benchmark trace while preserving casts from a single real trainer run.
+ */
+export function buildTrainerBenchmarkTrace(
+  traces: RawRunTrace[],
+  benchmarkSignature: BenchmarkSignature,
+): RawRunTrace {
+  const averagedTrace = buildAverageTrainerTrace(traces, benchmarkSignature);
+  const representativeTrace = selectRepresentativeTrainerTrace(traces);
+
+  return {
+    ...averagedTrace,
+    casts: representativeTrace.casts.map((cast) => ({ ...cast })),
+  };
+}

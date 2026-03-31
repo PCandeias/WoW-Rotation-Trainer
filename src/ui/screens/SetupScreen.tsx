@@ -473,7 +473,7 @@ export function SetupScreen({
                 )}
                 {settings.mode === 'challenge' && (
                   <div style={{ ...summaryCard, padding: '8px 12px' }}>
-                    Element Speed x{settings.challenge.disappearSpeedMultiplier}
+                    Challenge Tempo x{settings.challenge.spawnCadenceMultiplier}
                   </div>
                 )}
               </div>
@@ -516,7 +516,7 @@ export function SetupScreen({
                         },
                       }))}
                     >
-                      Hard - Chains, sliders, holds, repeats, and hover keys
+                      Hard - Chains, curves, sliders, holds, repeats, spinners, and hover keys
                     </button>
                   </div>
                 </div>
@@ -582,7 +582,7 @@ export function SetupScreen({
                       </label>
                       <div style={{ display: 'grid', gap: 6 }}>
                         <span style={{ color: T.textBright, fontFamily: FONTS.ui, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                          Element disappear speed
+                          Element spawn tempo
                         </span>
                         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                           {[0.5, 1, 2, 3].map((multiplier) => (
@@ -591,14 +591,14 @@ export function SetupScreen({
                               type="button"
                               style={{
                                 ...buttonStyle,
-                                borderColor: settings.challenge.disappearSpeedMultiplier === multiplier ? T.red : T.borderBright,
-                                color: settings.challenge.disappearSpeedMultiplier === multiplier ? T.red : T.textBright,
+                                borderColor: settings.challenge.spawnCadenceMultiplier === multiplier ? T.red : T.borderBright,
+                                color: settings.challenge.spawnCadenceMultiplier === multiplier ? T.red : T.textBright,
                               }}
                               onClick={(): void => onChange((current) => ({
                                 ...current,
                                 challenge: {
                                   ...current.challenge,
-                                  disappearSpeedMultiplier: multiplier as 0.5 | 1 | 2 | 3,
+                                  spawnCadenceMultiplier: multiplier as 0.5 | 1 | 2 | 3,
                                 },
                               }))}
                             >
@@ -607,7 +607,7 @@ export function SetupScreen({
                           ))}
                         </div>
                         <span style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem' }}>
-                          This only changes how long Challenge notes stay on screen. Combat simulation remains at x1 speed.
+                          This changes how quickly Challenge elements appear. Individual note lifetimes stay fixed and combat simulation remains at x1 speed.
                         </span>
                       </div>
                     </div>
@@ -1178,8 +1178,8 @@ export function SetupScreen({
               )}
               {settings.mode === 'challenge' && (
                 <div style={summaryCard}>
-                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Element Speed</div>
-                  <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.challenge.disappearSpeedMultiplier}</div>
+                  <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.72rem', textTransform: 'uppercase' }}>Challenge Tempo</div>
+                  <div style={{ color: T.textBright, marginTop: 8 }}>x{settings.challenge.spawnCadenceMultiplier}</div>
                 </div>
               )}
             </div>

@@ -30,7 +30,11 @@ export const monkWindwalkerRuntime: SpecRuntime = {
       state.energyRegenMultiplier = 1.1;
       state.recomputeEnergyRegenRate();
     }
-    state.assumeMysticTouch = _profile.loadout?.externalBuffs.mysticTouch ?? false;
+    // Monks always self-apply Mystic Touch on first hit (SimC:
+    // trigger_mystic_touch in monk_action_t::impact). The external-buff
+    // toggle only controls whether OTHER raid members provide it; a monk
+    // fighting a target inherently applies it.
+    state.assumeMysticTouch = true;
   },
   resolveActionSpell(action: CastAction, state: GameState) {
     const spell = MONK_WW_SPELLS.get(action.ability);

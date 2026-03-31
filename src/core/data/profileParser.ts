@@ -20,6 +20,8 @@ export interface CharacterStats {
   hastePercent: number;
   versatilityPercent: number;
   masteryPercent: number;
+  /** Raw mastery rating from gear (before DR). Used for DR-aware trinket mastery computation. */
+  masteryRating?: number;
   mainHandMinDmg: number;
   mainHandMaxDmg: number;
   mainHandSpeed: number;
@@ -49,6 +51,11 @@ export interface CharacterStats {
    * At level 90 vs a level 93 boss, expertise cap = 7.5% (back), 15% (front).
    */
   expertisePercent?: number;
+  /**
+   * Player-level crit damage multiplier from gear enchants (e.g. Eyes of the Eagle).
+   * Multiplies the crit bonus portion of all abilities. Default 1.0 (no bonus).
+   */
+  playerCritDamageMult?: number;
 }
 
 export type CharacterProfileStatsSource = 'profile' | 'simc_buffed_snapshot';

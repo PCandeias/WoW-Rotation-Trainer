@@ -351,6 +351,13 @@ export function initializeMonkRuntimeState(state: GameState): void {
       if (spell.name === 'jadefire_stomp') {
         mult *= getWindwalkerJadefireStompDirectMultiplier();
       }
+      if (spell.name === 'teachings_of_the_monastery') {
+        // WW aura (137025) eff#14 applies +329% (×4.29) to BOK family including 228649.
+        // WW aura (1258122) eff#20 applies -75% (×0.25) to 228649 only.
+        // BOK action class hardcodes eff#14 in composite_da_multiplier(); teachings
+        // bypasses that path, so we apply the net factor here: 4.29 × 0.25 = 1.0725.
+        mult *= 4.29 * 0.25;
+      }
       if (spell.isPhysical !== false) {
         mult *= getMartialInstinctsPhysicalDamageMultiplier(s);
       } else {
@@ -421,6 +428,14 @@ export function initializeMonkRuntimeState(state: GameState): void {
       ) {
         const bonus = mult - 1.0;
         mult = 1.0 + bonus * (1 + VIGILANT_WATCH_SPELL.effectN(1).percent());
+      }
+      // Eyes of the Eagle ring enchant (DBC 1236701 eff#1): +1.25% crit_damage per rank.
+      // Profile has rank 2 on both rings → multiplicative: (1.0125)^2 = 1.02515625.
+      // SimC applies this as player_crit_damage_multiplier on the crit bonus portion.
+      const playerCritDmgMult = state.stats.playerCritDamageMult ?? 1.0;
+      if (playerCritDmgMult !== 1.0) {
+        const eyesBonus = mult - 1.0;
+        mult = 1.0 + eyesBonus * playerCritDmgMult;
       }
       return mult;
     },

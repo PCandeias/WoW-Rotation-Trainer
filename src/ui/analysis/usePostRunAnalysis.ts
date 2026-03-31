@@ -4,10 +4,10 @@ import { getDefaultMonkWindwalkerProfile } from '@core/data/defaultProfile';
 import type { CharacterProfile } from '@core/data/profileParser';
 import { runHeadless } from '@core/engine/headless';
 import {
-  buildAverageTrainerTrace,
   buildBenchmarkSignature,
   buildMonkWindwalkerAnalysisProfile,
   buildRunAnalysisReport,
+  buildTrainerBenchmarkTrace,
   buildTraceFromSimResult,
   type BenchmarkSignature,
   type RawRunTrace,
@@ -120,7 +120,7 @@ function getOrCreateTrainerTrace(
     });
     return buildTraceFromSimResult(result, profile.spec, benchmarkSignature);
   });
-  const trace = buildAverageTrainerTrace(traces, benchmarkSignature);
+  const trace = buildTrainerBenchmarkTrace(traces, benchmarkSignature);
   trainerTraceCache.set(benchmarkSignature.key, trace);
   return trace;
 }

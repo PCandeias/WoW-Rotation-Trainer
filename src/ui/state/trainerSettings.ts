@@ -6,7 +6,7 @@ export type TrainerSpecId = 'monk-windwalker';
 export type TrainerMode = 'practice' | 'test' | 'tutorial' | 'challenge';
 export type ChallengeDifficulty = 'easy' | 'hard';
 export type PracticeSpeedMultiplier = 0.25 | 0.5 | 0.75 | 1;
-export type ChallengeDisappearSpeedMultiplier = 0.5 | 1 | 2 | 3;
+export type ChallengeSpawnCadenceMultiplier = 0.5 | 1 | 2 | 3;
 export type EncounterPreset = 'fight30' | 'fight90' | 'fight180' | 'fight300' | 'fight600';
 export const ENCOUNTER_PRESET_OPTIONS = [
   { value: 'fight30', label: '30 sec', seconds: 30 },
@@ -22,7 +22,7 @@ export const DEFAULT_CHALLENGE_VALID_KEYS = ['w', 'a', 's', 'd'] as const;
 export interface ChallengeSettings {
   difficulty: ChallengeDifficulty;
   validKeys: string[];
-  disappearSpeedMultiplier: ChallengeDisappearSpeedMultiplier;
+  spawnCadenceMultiplier: ChallengeSpawnCadenceMultiplier;
 }
 
 export interface TrackerEntrySettings {
@@ -268,7 +268,7 @@ export function getDefaultTrainerSettings(): TrainerSettings {
     challenge: {
       difficulty: 'hard',
       validKeys: [...DEFAULT_CHALLENGE_VALID_KEYS],
-      disappearSpeedMultiplier: 0.5,
+      spawnCadenceMultiplier: 0.5,
     },
     encounterPreset: 'fight30',
     audio: {
@@ -1137,9 +1137,9 @@ function normalizeChallengeSettings(value: unknown, fallback: ChallengeSettings)
       ? value.difficulty
       : fallback.difficulty,
     validKeys: validKeys.length > 0 ? validKeys : [...fallback.validKeys],
-    disappearSpeedMultiplier: normalizeChallengeDisappearSpeedMultiplier(
-      value.disappearSpeedMultiplier,
-      fallback.disappearSpeedMultiplier,
+    spawnCadenceMultiplier: normalizeChallengeSpawnCadenceMultiplier(
+      value.spawnCadenceMultiplier ?? value.disappearSpeedMultiplier,
+      fallback.spawnCadenceMultiplier,
     ),
   };
 }
@@ -1148,10 +1148,10 @@ function normalizePracticeSpeedMultiplier(value: unknown, fallback: PracticeSpee
   return value === 0.25 || value === 0.5 || value === 0.75 || value === 1 ? value : fallback;
 }
 
-function normalizeChallengeDisappearSpeedMultiplier(
+function normalizeChallengeSpawnCadenceMultiplier(
   value: unknown,
-  fallback: ChallengeDisappearSpeedMultiplier,
-): ChallengeDisappearSpeedMultiplier {
+  fallback: ChallengeSpawnCadenceMultiplier,
+): ChallengeSpawnCadenceMultiplier {
   return value === 0.5 || value === 1 || value === 2 || value === 3 ? value : fallback;
 }
 

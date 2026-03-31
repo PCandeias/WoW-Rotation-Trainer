@@ -1,20 +1,16 @@
 import type { IGameState } from './i_game_state';
 
 /**
- * SimC armor mitigation constants for level-90 validation profiles:
- * - Base expected_stat armor constant at level 90: 3430
- * - Mythic (difficulty=16) expected_stat_mod entries for armor_constant:
- *     entry 18:  armor_constant=1.000000
- *     entry 395: armor_constant=1.180730
- *     entry 424: armor_constant=1.000000
- *   Product = 1.0 × 1.18073 × 1.0 = 1.18073
+ * SimC armor mitigation constant for level-90 validation profiles.
  *
- * Previous code incorrectly used creature_spell_damage (1.173) from entry 18
- * as a second armor_constant factor, inflating the coefficient from ~4050 to ~4750.
+ * The mitigation formula is: mitigation = armor / (armor + K)
+ * where K = 3430 is the base expected_stat armor constant at level 90.
+ *
+ * The difficulty-specific expected_stat_mod multipliers (e.g. 1.18073 for
+ * Mythic) scale the target creature's ARMOR VALUE, not this constant.
+ * SimC debug confirms: armor=1293.6, K=3430 → factor = 1-1293.6/4723.6 = 0.72614.
  */
-export const ARMOR_COEFF_L90_BASE = 3430;
-export const ARMOR_CONSTANT_MOD_MYTHIC = 1.18073;
-export const ARMOR_COEFF_L90_MYTHIC = ARMOR_COEFF_L90_BASE * ARMOR_CONSTANT_MOD_MYTHIC;
+export const ARMOR_COEFF_L90 = 3430;
 
 /**
  * Physical damage multiplier after target armor and armor penetration.
@@ -28,5 +24,5 @@ export function computePhysicalArmorMultiplier(
     return 1.0;
   }
 
-  return 1 - effectiveArmor / (effectiveArmor + ARMOR_COEFF_L90_MYTHIC);
+  return 1 - effectiveArmor / (effectiveArmor + ARMOR_COEFF_L90);
 }

@@ -12,7 +12,9 @@ import {
 } from './monk_runtime';
 import { requireMonkSpellData } from '../../dbc/monk_spell_data';
 
+const HIT_COMBO_BUFF_SPELL = requireMonkSpellData(196741);
 const WEAPON_OF_WIND_SPELL = requireMonkSpellData(1272678);
+
 const FEROCITY_OF_XUEN_SPELL = requireMonkSpellData(388674);
 const PRIDE_OF_PANDARIA_SPELL = requireMonkSpellData(450979);
 const STAND_READY_SPELL = requireMonkSpellData(1262603);
@@ -59,19 +61,48 @@ abstract class MonkFlurryAction extends Action {
   }
 
   override composite_da_multiplier(): number {
-    let mult = super.composite_da_multiplier() * getWindwalkerBaselineDirectMultiplier();
+    // WW spec aura (137025) eff#1 applies -10% to both physical flurry_strike
+    // (450617) and magic shado_over_the_battlefield (451250) — confirmed via
+    // SimC debug: "modifying Flurry Strike (450617) direct_damage by -10%".
+    let mult = super.composite_da_multiplier();
+    mult *= getWindwalkerBaselineDirectMultiplier();
+
+    // Hit Combo: 1% per stack to da_mul — applied via parse_effects in SimC.
+    // SimC flurry da_mul=0.945 = 0.9×1.05 (5 stacks), confirmed in debug log.
+    if (this.p.hasTalent('hit_combo')) {
+      mult *= 1 + this.p.hitComboStacks * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
+    }
+
+    // Zenith + Weapon of Wind: +10% direct damage when zenith buff is active.
+    // SimC parse_effects(buff.zenith) adds effect #2 (base_value modified by
+    // WoW from 0 to 10) as a 10% da_mul bonus.
+    if (this.p.hasTalent('weapon_of_wind') && this.p.isBuffActive('zenith')) {
+      mult *= 1 + WEAPON_OF_WIND_SPELL.effectN(1).percent();
+    }
+
+    return mult;
+  }
+
+  /**
+   * SimC ply_mul = MI(1.04) × Ferocity(1.04) = 1.0816 for flurry.
+   * Mastery does NOT apply to flurry (ww_mastery=false in SimC constructor).
+   * Hit Combo is in da_mul, not ply_mul.
+   */
+  override composite_player_multiplier(_isComboStrike: boolean): number {
+    let mult = super.composite_player_multiplier(_isComboStrike);
+
+    // MI (physical) / Chi Proficiency (magic) — maps to SimC ply_mul
     if (this.actionIsPhysical()) {
       mult *= getMartialInstinctsPhysicalDamageMultiplier(this.p);
     } else {
       mult *= getChiProficiencyMagicDamageMultiplier(this.p);
     }
-    if (this.p.hasTalent('weapon_of_wind') && this.p.isBuffActive('zenith')) {
-      mult *= 1 + WEAPON_OF_WIND_SPELL.effectN(1).percent();
-    }
+
     if (this.p.hasTalent('ferocity_of_xuen')) {
       const rank = this.p.getTalentRank?.('ferocity_of_xuen') ?? 2;
       mult *= 1 + FEROCITY_OF_XUEN_SPELL.effectN(1).percent() * rank;
     }
+
     return mult;
   }
 }

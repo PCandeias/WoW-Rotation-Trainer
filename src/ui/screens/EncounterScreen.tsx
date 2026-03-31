@@ -207,7 +207,7 @@ export function EncounterScreen({
     enabled: challengeEnabled,
     difficulty: challengeSettings?.difficulty ?? 'easy',
     validKeys: challengeValidKeys,
-    disappearSpeedMultiplier: challengeSettings?.disappearSpeedMultiplier ?? 1,
+    spawnCadenceMultiplier: challengeSettings?.spawnCadenceMultiplier ?? 1,
     duration: encounterDuration,
     simTime,
     countdownValue,
@@ -661,6 +661,7 @@ export function EncounterScreen({
                 playfield={challenge.playfield}
                 currentTime={simTime}
                 notes={challenge.activeNotes}
+                feedbackBursts={challenge.challenge.feedbackBursts}
                 onPointerMove={challenge.handlePointerMove}
                 onPointerDown={challenge.handlePointerDown}
                 onPointerUp={challenge.handlePointerUp}
@@ -1390,7 +1391,7 @@ function EndScreen({
           <ReportCard
             title="Damage Over Time"
             subtitle="See where your live DPS pace drifted away from the trainer."
-            bodyOverflow="auto"
+            bodyOverflow="hidden"
             style={{ gridColumn: '1', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1402,7 +1403,7 @@ function EndScreen({
           <ReportCard
             title="Cumulative Damage"
             subtitle="The total gap makes missed burst windows easier to spot."
-            bodyOverflow="auto"
+            bodyOverflow="hidden"
             style={{ gridColumn: '2', gridRow: '1' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1446,7 +1447,7 @@ function EndScreen({
           <ReportCard
             title="Resource Waste"
             subtitle="Track Chi and Energy waste separately so overcaps are easier to spot."
-            bodyOverflow="auto"
+            bodyOverflow="hidden"
             style={{ gridColumn: '1 / span 2', gridRow: '3' }}
             body={renderAnalysisState(
               analysisStatus,
@@ -1609,8 +1610,8 @@ function AnalysisLineChart({
     boxShadow: T.shadow,
   };
 
-  const chart = (
-    <LineChart data={data} width={520} height={220}>
+  const chart = (width?: number, height?: number): React.ReactElement => (
+    <LineChart data={data} width={width} height={height}>
       <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="2 6" vertical={false} />
       <XAxis dataKey="time" stroke={T.textMuted} tick={axisTick} tickLine={false} axisLine={false} />
       <YAxis stroke={T.textMuted} tick={axisTick} tickFormatter={yFormatter} width={52} tickLine={false} axisLine={false} />
@@ -1626,12 +1627,12 @@ function AnalysisLineChart({
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: 220 }}>
+    <div style={{ width: '100%', height: '100%', minHeight: 220, minWidth: 0, overflow: 'hidden' }}>
       {typeof ResizeObserver === 'undefined'
-        ? chart
+        ? chart(520, 220)
         : (
-          <ResponsiveContainer width="100%" height="100%">
-            {chart}
+          <ResponsiveContainer width="100%" height="100%" debounce={80}>
+            {chart()}
           </ResponsiveContainer>
         )}
     </div>
@@ -1692,8 +1693,8 @@ function ResourceWastePanel({
     borderRadius: 12,
     boxShadow: T.shadow,
   };
-  const chart = (
-    <LineChart data={data} width={260} height={220}>
+  const chart = (width?: number, height?: number): React.ReactElement => (
+    <LineChart data={data} width={width} height={height}>
       <CartesianGrid stroke="rgba(255,255,255,0.08)" strokeDasharray="2 6" vertical={false} />
       <XAxis dataKey="time" stroke={T.textMuted} tick={{ fill: T.textDim, fontSize: 11, fontFamily: FONTS.body }} tickLine={false} axisLine={false} />
       <YAxis stroke={playerColor} tick={{ fill: playerColor, fontSize: 11, fontFamily: FONTS.body }} width={40} tickLine={false} axisLine={false} />
@@ -1707,12 +1708,12 @@ function ResourceWastePanel({
   return (
     <div style={{ minWidth: 0, height: '100%', display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 10 }}>
       <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '0.92rem' }}>{title}</div>
-      <div style={{ width: '100%', height: '100%', minHeight: 210 }}>
+      <div style={{ width: '100%', height: '100%', minHeight: 210, minWidth: 0, overflow: 'hidden' }}>
         {typeof ResizeObserver === 'undefined'
-          ? chart
+          ? chart(260, 220)
           : (
-            <ResponsiveContainer width="100%" height="100%">
-              {chart}
+            <ResponsiveContainer width="100%" height="100%" debounce={80}>
+              {chart()}
             </ResponsiveContainer>
           )}
       </div>
