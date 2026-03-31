@@ -409,8 +409,13 @@ export function ActionBar({
         const inputStatus = spell ? spellInputStatus?.get(effectiveSpellId) : undefined;
         const usable = inputStatus?.visuallyUsable ?? true;
         const canPress = inputStatus?.canPress ?? true;
+        const buttonHasOffGcdOption = effectiveSpellIds.some((buttonSpellId) => {
+          const buttonSpell = getSpellDef(buttonSpellId);
+          const buttonSlot = slotBySpellId.get(buttonSpellId);
+          return buttonSlot?.isOffGcd === true || buttonSpell?.isOnGcd === false;
+        });
 
-        const slotGcdRemaining = slot.isOffGcd ? 0 : (baseSpell?.isOnGcd ? gcdRemaining : 0);
+        const slotGcdRemaining = (slot.isOffGcd || buttonHasOffGcdOption) ? 0 : (baseSpell?.isOnGcd ? gcdRemaining : 0);
 
         // Keep usability ref current for keyboard handler
         usabilityRef.current.set(effectiveSpellId, canPress && cdRemaining === 0);
