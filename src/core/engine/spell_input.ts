@@ -1,6 +1,6 @@
 import type { SpellDef } from '../data/spells';
 import type { GameState } from './gameState';
-import { getAbilityFailReason, type FailReason } from './executor';
+import { getAbilityFailReason, getEffectiveChiCost, type FailReason } from './executor';
 
 export interface SpellInputStatus {
   failReason?: FailReason;
@@ -13,15 +13,22 @@ export function getSpellInputStatus(
   state: GameState,
 ): SpellInputStatus {
   const failReason = getAbilityFailReason(spell, state);
+  const chiCost = getEffectiveChiCost(spell, state);
+  const hasEnoughEnergy = spell.energyCost <= 0 || state.getEnergy() >= spell.energyCost;
+  const hasEnoughChi = chiCost <= 0 || state.chi >= chiCost;
+  const hasEnoughResources = hasEnoughEnergy && hasEnoughChi;
 
   return {
     failReason,
     canPress: failReason === undefined || failReason === 'on_gcd' || failReason === 'channel_locked',
     visuallyUsable:
-      failReason === undefined
-      || failReason === 'on_gcd'
-      || failReason === 'channel_locked'
-      || failReason === 'on_cooldown',
+      hasEnoughResources
+      && (
+        failReason === undefined
+        || failReason === 'on_gcd'
+        || failReason === 'channel_locked'
+        || failReason === 'on_cooldown'
+      ),
   };
 }
 
