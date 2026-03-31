@@ -364,7 +364,7 @@ export function getSharedPlayerVersatilityBonus(state: IGameState): number {
  *
  * When the base mastery rating is unknown, falls back to the legacy constant.
  */
-function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: number): number {
+function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: number, skyfuryPointsInBase: number): number {
   if (baseMasteryRating <= 0) {
     return ALGETHAR_PUZZLE_MASTERY_PCT_FALLBACK;
   }
@@ -375,8 +375,11 @@ function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: nu
   const totalDR = applyStatDR(totalRaw);
 
   // Derive the mastery coefficient from the seeded mastery value.
-  // mastery_value = (base_points + DR(rating) + skyfury) × coefficient
-  const baseComposite = WW_MASTERY_BASE_POINTS + baseDR + SKYFURY_MASTERY_POINTS;
+  // mastery_value = (base_points + DR(rating) + skyfury?) × coefficient
+  // skyfuryPointsInBase should be SKYFURY_MASTERY_POINTS when the seed
+  // already contains skyfury (e.g. simc_buffed_snapshot with skyfury enabled),
+  // or 0 when skyfury is absent from the seed.
+  const baseComposite = WW_MASTERY_BASE_POINTS + baseDR + skyfuryPointsInBase;
   const coefficient = (baseComposite > 0 && baseMasteryPct > 0) ? baseMasteryPct / baseComposite : WW_MASTERY_COEFFICIENT;
 
   const deltaPoints = totalDR - baseDR;
@@ -390,7 +393,11 @@ export function getSharedPlayerMasteryBonus(state: IGameState): number {
     const stateWithStats = state as { stats?: { masteryRating?: number; masteryPercent?: number } };
     const baseMasteryRating = stateWithStats.stats?.masteryRating ?? 0;
     const baseMasteryPct = stateWithStats.stats?.masteryPercent ?? 0;
-    mastery += computePuzzleMasteryDelta(baseMasteryRating, baseMasteryPct);
+    // Skyfury mastery points are baked into the seed when the stats come from
+    // a SimC buffed snapshot that had skyfury enabled.
+    const skyfuryInSeed = statsSeedIncludesPassiveBonuses && state.isBuffActive('skyfury');
+    const skyfuryPoints = skyfuryInSeed ? SKYFURY_MASTERY_POINTS : 0;
+    mastery += computePuzzleMasteryDelta(baseMasteryRating, baseMasteryPct, skyfuryPoints);
   }
   if (state.isBuffActive('skyfury') && !statsSeedIncludesPassiveBonuses) {
     mastery += SKYFURY_MASTERY_PCT;

@@ -27,6 +27,8 @@ import {
 import { initializeSharedPlayerState } from '../shared/player_effect_runtime';
 import type { SpecRuntime } from '../runtime/spec_runtime';
 import { resolveSpecRuntime } from '../runtime/spec_registry';
+import type { Target } from './target';
+import { createTarget } from './target';
 
 const BAKED_BATTLE_SHOUT_AP_MULTIPLIER = 1.05;
 
@@ -59,6 +61,8 @@ export interface GameStateSnapshot {
   assumeMysticTouch: boolean;
   targetHealthPct: number;
   targetMaxHealth: number;
+  /** Per-target state for multi-target encounters. */
+  targets: ReadonlyArray<Target>;
 
   // Ability history
   prevGcdAbility: SpellId | null;
@@ -251,6 +255,8 @@ export class GameState implements IGameState {
   private targetCurrentHealth = 0;
   /** Target maximum health. If 0, health tracking is disabled (targetHealthPct = 100). */
   private targetMaxHealth = 0;
+  /** Individual target instances for multi-target encounters. */
+  targets: Target[] = [];
   assumeMysticTouch = false;
 
   /**
@@ -358,12 +364,20 @@ export class GameState implements IGameState {
       this.targetMaxHealth = 0;
       this.targetCurrentHealth = 0;
       this.targetHealthPct = 100;
+      // Initialize targets without health tracking
+      this.targets = Array.from({ length: this.activeEnemies }, (_, i) =>
+        createTarget(i, 0),
+      );
       return;
     }
 
     this.targetMaxHealth = maxHealth;
     this.targetCurrentHealth = maxHealth;
     this.updateTargetHealthPct();
+    // Initialize per-target health pools
+    this.targets = Array.from({ length: this.activeEnemies }, (_, i) =>
+      createTarget(i, maxHealth),
+    );
   }
 
   /**
@@ -378,6 +392,23 @@ export class GameState implements IGameState {
 
     this.targetCurrentHealth = Math.max(1, this.targetCurrentHealth - damage);
     this.updateTargetHealthPct();
+  }
+
+  /**
+   * Record damage dealt to a specific target by index.
+   * Updates per-target health but does NOT update totalDamage.
+   * Call addDamage() separately for aggregate DPS tracking.
+   */
+  addDamageToTarget(targetId: number, damage: number): void {
+    const target = this.targets[targetId];
+    if (!target || target.maxHealth <= 0) return;
+    target.currentHealth = Math.max(1, target.currentHealth - damage);
+    target.healthPct = (target.currentHealth / target.maxHealth) * 100;
+    // Keep primary target health in sync
+    if (targetId === 0) {
+      this.targetCurrentHealth = target.currentHealth;
+      this.updateTargetHealthPct();
+    }
   }
 
   /**
@@ -400,6 +431,33 @@ export class GameState implements IGameState {
       this.targetHealthPct = 100;
     } else {
       this.targetHealthPct = (this.targetCurrentHealth / this.targetMaxHealth) * 100;
+    }
+  }
+
+  /**
+   * Update target health using SimC's fixed_time linear health model.
+   * Health decreases linearly from 100% to 0% over the encounter duration,
+   * regardless of actual damage dealt.
+   *
+   * SimC reference: player.cpp time_to_percent() — when fixed_time=1:
+   *   time_to_percent = expected_iteration_time * (1 - percent/100) - current_time
+   * This implies: health_pct = 100 * (1 - current_time / expected_iteration_time)
+   *
+   * Call this each time currentTime advances.
+   */
+  updateTimeBasedHealth(): void {
+    if (this.encounterDuration <= 0) return;
+    const pct = Math.max(0, 100 * (1 - this.currentTime / this.encounterDuration));
+    this.targetHealthPct = pct;
+    // Sync per-target health to match
+    if (this.targetMaxHealth > 0) {
+      this.targetCurrentHealth = (this.targetMaxHealth * pct) / 100;
+    }
+    for (const target of this.targets) {
+      if (target.maxHealth > 0) {
+        target.healthPct = pct;
+        target.currentHealth = (target.maxHealth * pct) / 100;
+      }
     }
   }
 
@@ -884,9 +942,13 @@ export class GameState implements IGameState {
   // Damage
   // ---------------------------------------------------------------------------
 
-  addDamage(amount: number): void {
+  addDamage(amount: number, targetIndex = 0): void {
     this.totalDamage += amount;
-    this.dealDamageToTarget(amount);
+    if (this.targets.length > 0) {
+      this.addDamageToTarget(targetIndex, amount);
+    } else {
+      this.dealDamageToTarget(amount);
+    }
   }
 
   recordPendingSpellStat(
@@ -1044,6 +1106,7 @@ export class GameState implements IGameState {
       assumeMysticTouch: this.assumeMysticTouch,
       targetHealthPct: this.targetHealthPct,
       targetMaxHealth: this.targetMaxHealth,
+      targets: this.targets.map(t => ({ ...t })),
 
       prevGcdAbility: this.prevGcdAbility,
       prevGcdAbilities: [...this.prevGcdAbilities],
@@ -1120,6 +1183,7 @@ export class GameState implements IGameState {
     c.targetHealthPct = this.targetHealthPct;
     c.targetCurrentHealth = this.targetCurrentHealth; // copy private field
     c.targetMaxHealth = this.targetMaxHealth;         // copy private field
+    c.targets = this.targets.map(t => ({ ...t }));
     // assumeMysticTouch already set via constructor options above
 
     c.prevGcdAbility = this.prevGcdAbility;
@@ -1222,15 +1286,16 @@ export function createGameState(
   state.profileStatsSource = profile.statsSource ?? 'profile';
   state.battleShoutBaked = profile.battleShoutBaked ?? false;
   state.talentRanks = new Map(profile.talentRanks);
-  initializeSharedPlayerState(state, profile);
-  runtime.initializeState(state, profile);
 
+  // Set encounter fields BEFORE runtime.initializeState so that Action
+  // constructors (e.g. FoF nTargets()) see the correct activeEnemies.
   state.encounterDuration = encounter.duration;
   state.activeEnemies = encounter.activeEnemies ?? 1;
-
-  // Set up target stats
   state.setTargetArmor(encounter.targetArmor ?? state.targetArmor);
   state.initializeTargetHealth(encounter.targetMaxHealth);
+
+  initializeSharedPlayerState(state, profile);
+  runtime.initializeState(state, profile);
 
   // Energy regen rate must reflect loadout passives and any pull-time haste buffs.
   state.recomputeEnergyRegenRate();

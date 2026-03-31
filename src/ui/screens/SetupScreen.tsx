@@ -466,6 +466,11 @@ export function SetupScreen({
                 <div style={{ ...summaryCard, padding: '8px 12px' }}>
                   Encounter: {getEncounterPresetLabel(settings.encounterPreset)}
                 </div>
+                {settings.nTargets > 1 && (
+                  <div style={{ ...summaryCard, padding: '8px 12px' }}>
+                    Targets: {settings.nTargets}
+                  </div>
+                )}
                 {settings.mode === 'practice' && (
                   <div style={{ ...summaryCard, padding: '8px 12px' }}>
                     Practice Speed x{settings.practiceSpeedMultiplier}
@@ -632,6 +637,46 @@ export function SetupScreen({
                           {option.label}
                         </button>
                       ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: 8 }}>
+                    <div style={{ color: T.textBright, fontFamily: FONTS.ui, fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                      Number of targets
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <button
+                        type="button"
+                        aria-label="Decrease target count"
+                        style={{
+                          ...buttonStyle,
+                          width: 32,
+                          opacity: settings.nTargets <= 1 ? 0.4 : 1,
+                        }}
+                        disabled={settings.nTargets <= 1}
+                        onClick={(): void => onChange((current) => ({ ...current, nTargets: Math.max(1, current.nTargets - 1) }))}
+                      >
+                        −
+                      </button>
+                      <span style={{ color: T.textBright, fontFamily: FONTS.ui, fontSize: '1rem', minWidth: 24, textAlign: 'center' }}>
+                        {settings.nTargets}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label="Increase target count"
+                        style={{
+                          ...buttonStyle,
+                          width: 32,
+                          opacity: settings.nTargets >= 8 ? 0.4 : 1,
+                        }}
+                        disabled={settings.nTargets >= 8}
+                        onClick={(): void => onChange((current) => ({ ...current, nTargets: Math.min(8, current.nTargets + 1) }))}
+                      >
+                        +
+                      </button>
+                      <span style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.75rem' }}>
+                        {settings.nTargets === 1 ? 'Single target (patchwerk)' : `${settings.nTargets} targets — AoE APL active`}
+                      </span>
                     </div>
                   </div>
                 </div>

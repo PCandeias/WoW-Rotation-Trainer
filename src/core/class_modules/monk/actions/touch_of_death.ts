@@ -42,10 +42,10 @@ export class TouchOfDeathAction extends MonkAction {
     let damage = maxHealth;
     if (!inKillRange) {
       damage *= IMPROVED_TOUCH_OF_DEATH_DAMAGE_FRACTION;
-      // SimC applies base_dd_multiplier for the 35% branch (while still
-      // ignoring versatility and generic caster modifiers).
-      damage *= this.composite_da_multiplier();
-
+      // SimC debug shows da_mul=1, ply_mul=1, versatility=1, target_armor=0
+      // for Touch of Death.  The only dynamic multiplier is Combo Strikes
+      // mastery, applied manually below.  composite_da_multiplier (Ferocity
+      // of Xuen, Weapon of Wind, etc.) is NOT applied.
       if (this.p.isBuffActive('combo_strikes')) {
         damage *= 1 + this.p.getMasteryPercent() / 100;
       }

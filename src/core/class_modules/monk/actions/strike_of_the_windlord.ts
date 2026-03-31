@@ -25,6 +25,14 @@ export class StrikeOfTheWindlordAction extends MonkMeleeAction {
   readonly name = 'strike_of_the_windlord';
   readonly spellData = requireMonkSpellData(392983);
 
+  // AOE: hits all enemies, no sqrt reduction, damage divided by target count
+  override readonly aoe = -1;
+
+  /** SimC: composite_aoe_multiplier divides damage by n_targets for secondary targets. */
+  override compositeAoeMultiplier(_chainTarget: number, nTargets: number): number {
+    return 1.0 / nTargets;
+  }
+
   override cooldownDuration(baseDuration: number, hasteScalesCooldown: boolean): number {
     let adjusted = baseDuration;
     if (this.p.hasTalent('communion_with_wind')) {
@@ -55,7 +63,56 @@ export class StrikeOfTheWindlordAction extends MonkMeleeAction {
     rng: RngInstance,
     isComboStrike: boolean,
   ): ActionResult {
+    const n = this.nTargets();
+
+    // Single-target fast path: keep original behavior
+    if (n <= 1) {
+      return this.executeSingleTarget(queue, rng, isComboStrike);
+    }
+
+    // Multi-target: handle all damage internally, return damage: 0
+    // to prevent the executor from double-counting.
+    if (this.mayComboStrike()) {
+      this.comboStrikesTrigger(isComboStrike);
+    }
+
+    // Primary target
+    const primary = this.calculateDamage(rng, isComboStrike);
+    this.p.addDamage(primary.damage, 0);
+    this.p.recordPendingSpellStat(this.name, primary.damage, 1, primary.isCrit);
+
+    // Secondary targets — independent crit, AOE multiplier applied
+    for (let t = 1; t < n; t++) {
+      const secondary = this.calculateDamage(rng, isComboStrike);
+      const damage = secondary.damage * this.aoeDamageMultiplier(t, n);
+      this.p.addDamage(damage, t);
+      this.p.recordPendingSpellStat(this.name, damage, 0, secondary.isCrit);
+    }
+
+    const result: ActionResult = {
+      damage: 0,
+      isCrit: primary.isCrit,
+      newEvents: [],
+      buffsApplied: [],
+      cooldownAdjustments: [],
+    };
+
+    this.applyTalentEffects(result);
+    return result;
+  }
+
+  /** Original single-target path: executor handles addDamage via result.damage. */
+  private executeSingleTarget(
+    queue: SimEventQueue,
+    rng: RngInstance,
+    isComboStrike: boolean,
+  ): ActionResult {
     const result = super.execute(queue, rng, isComboStrike);
+    this.applyTalentEffects(result);
+    return result;
+  }
+
+  private applyTalentEffects(result: ActionResult): void {
 
     // knowledge_of_the_broken_temple: +effectN(1) teachings_of_the_monastery stacks
     if (this.p.hasTalent('knowledge_of_the_broken_temple')) {
@@ -112,7 +169,5 @@ export class StrikeOfTheWindlordAction extends MonkMeleeAction {
         result.newEvents.push({ type: EventType.BUFF_APPLY, time: this.p.currentTime, buffId: 'thunderfist' });
       }
     }
-
-    return result;
   }
 }

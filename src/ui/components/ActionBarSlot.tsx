@@ -92,7 +92,7 @@ export interface ActionBarSlotProps {
  * - Green glow + pulse border when recommended
  * - Scale animation when pressed
  */
-export function ActionBarSlot({
+export const ActionBarSlot = React.memo(function ActionBarSlot({
   iconName,
   emoji,
   abilityName,
@@ -391,6 +391,6 @@ export function ActionBarSlot({
       )}
     </button>
   );
-}
+});
 
 export default ActionBarSlot;

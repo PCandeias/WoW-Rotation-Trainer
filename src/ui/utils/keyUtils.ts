@@ -30,8 +30,6 @@ const NAMED_KEY_ALIASES: Record<string, string> = {
   PageDown: 'pgdn',
   Insert: 'ins',
   Delete: 'del',
-  BrowserBack: 'm4',
-  BrowserForward: 'm5',
 };
 
 const CODE_KEY_ALIASES: Record<string, string> = {

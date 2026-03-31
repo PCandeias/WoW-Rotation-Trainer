@@ -23,6 +23,16 @@ export class FistsOfFuryAction extends MonkMeleeAction {
   readonly name = 'fists_of_fury';
   readonly spellData = requireMonkSpellData(113656);
 
+  // AOE: hits all enemies, sqrt reduction beyond 5 targets, only primary gets full damage
+  override readonly aoe = -1;
+  override readonly reducedAoeTargets = 5;
+  override readonly fullAmountTargets = 1;
+
+  /** Secondary targets receive 54% damage (effectN(6).percent()). */
+  override compositeAoeMultiplier(_chainTarget: number, _nTargets: number): number {
+    return 0.54;
+  }
+
   override canBeInterruptedByCastAttempt(nextSpell: SpellDef): boolean {
     void nextSpell;
     return true;
@@ -133,43 +143,65 @@ export class FistsOfFuryAction extends MonkMeleeAction {
     snapshot: DamageSnapshot,
     _tickNum: number,
   ): ActionResult {
-    const { damage: baseTick, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
-    const dynamicCritChancePct = this.composite_crit_chance() * 100;
-    let damage = baseTick;
+    const n = this.nTargets();
+    let totalDamage = 0;
+    let primaryIsCrit = false;
 
-    if (state.hasTalent('momentum_boost')) {
-      // Haste scaling for momentum_boost
-      damage *= 1 + state.getHastePercent() / 100;
+    const hasMomentumBoost = state.hasTalent('momentum_boost');
+    const hasTigereyeBrew = state.hasTalent('tigereye_brew');
 
-      // Apply existing momentum_boost_damage stacks before incrementing
-      const momentumStacks = state.getBuffStacks('momentum_boost_damage');
-      if (momentumStacks > 0) {
-        damage *= 1 + momentumStacks * MOMENTUM_BOOST_BUFF_SPELL.effectN(1).percent();
+    // Read stacks ONCE before the target loop. In SimC, composite_da_multiplier()
+    // is evaluated during snapshot_internal() for ALL targets before any impact()
+    // fires (sc_monk.cpp execute flow: snapshot all → calculate all → impact all).
+    // This means all targets in a tick see the same momentum/tigereye stacks.
+    const momentumStacks = hasMomentumBoost ? state.getBuffStacks('momentum_boost_damage') : 0;
+    const tigereyeStacks = hasTigereyeBrew ? state.getBuffStacks('tigereye_brew_3') : 0;
+
+    // Phase 1: Calculate and record damage for all targets (snapshot phase)
+    for (let t = 0; t < n; t++) {
+      const { damage: baseTick, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
+      let damage = baseTick;
+
+      if (hasMomentumBoost) {
+        damage *= 1 + state.getHastePercent() / 100;
+        if (momentumStacks > 0) {
+          damage *= 1 + momentumStacks * MOMENTUM_BOOST_BUFF_SPELL.effectN(1).percent();
+        }
       }
 
-      // Increment momentum_boost_damage stacks (direct state mutation, no queue event)
-      const nextStacks = Math.min(10, momentumStacks + 1);
-      state.applyBuff('momentum_boost_damage', 10, nextStacks);
-    }
-
-    // Tigereye Brew: independent of momentum_boost (SimC: sc_monk.cpp impact() handler).
-    // Apply existing stacks before rolling for a new one — same tick ordering as SimC.
-    if (state.hasTalent('tigereye_brew')) {
-      const tigereyeStacks = state.getBuffStacks('tigereye_brew_3');
-      if (tigereyeStacks > 0) {
+      if (hasTigereyeBrew && tigereyeStacks > 0) {
         damage *= 1 + tigereyeStacks * TIGEREYE_BREW_FOF_BUFF_SPELL.effectN(1).percent();
       }
-      if (rollChance(rng, dynamicCritChancePct)) {
-        const nextTigereyeStacks = Math.min(10, tigereyeStacks + 1);
-        state.applyBuff('tigereye_brew_3', 10, nextTigereyeStacks);
+
+      if (t > 0) {
+        damage *= this.aoeDamageMultiplier(t, n);
+      }
+
+      state.addDamage(damage, t);
+      totalDamage += damage;
+      if (t === 0) primaryIsCrit = isCrit;
+    }
+
+    // Phase 2: Trigger per-impact buffs AFTER all targets are processed.
+    // Each impact increments stacks; N targets = N increments per tick.
+    if (hasMomentumBoost) {
+      state.applyBuff('momentum_boost_damage', 10, Math.min(10, momentumStacks + n));
+    }
+    if (hasTigereyeBrew) {
+      let newTigereyeStacks = tigereyeStacks;
+      for (let t = 0; t < n; t++) {
+        if (rollChance(rng, this.composite_crit_chance() * 100)) {
+          newTigereyeStacks = Math.min(10, newTigereyeStacks + 1);
+        }
+      }
+      if (newTigereyeStacks > tigereyeStacks) {
+        state.applyBuff('tigereye_brew_3', 10, newTigereyeStacks);
       }
     }
 
-    state.addDamage(damage);
-
     return {
-      damage,
-      isCrit,
+      damage: totalDamage,
+      isCrit: primaryIsCrit,
       newEvents: [],
       buffsApplied: [],
       cooldownAdjustments: [],

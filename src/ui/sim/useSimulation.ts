@@ -69,6 +69,8 @@ export interface UseSimulationOptions {
   mode: TrainerMode;
   speedMultiplier?: number;
   encounterDuration?: number;
+  /** Number of active enemies for multi-target encounters (1–8). Defaults to 1. */
+  nTargets?: number;
   initialTalents?: ReadonlySet<string>;
   initialTalentRanks?: ReadonlyMap<string, number>;
   initialLoadout?: CharacterLoadout;
@@ -135,7 +137,7 @@ const TARGET_KILL_RANGE_PCT = 15;
 // ---------------------------------------------------------------------------
 
 export function useSimulation(options: UseSimulationOptions): UseSimulationResult {
-  const { mode, encounterDuration = 90 } = options;
+  const { mode, encounterDuration = 90, nTargets = 1 } = options;
   const defaultSpeed = options.speedMultiplier ?? (mode === 'practice' ? 0.75 : 1.0);
   const initialTalents = options.initialTalents ?? DEFAULT_PROFILE.talents;
   const initialTalentRanks = options.initialTalentRanks ?? DEFAULT_PROFILE.talentRanks;
@@ -239,7 +241,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
 
     const state = createGameState(profile, {
       duration: encounterDuration,
-      activeEnemies: 1,
+      activeEnemies: nTargets,
     });
     const derivedTargetMaxHealth = Math.max(
       state.getMaxHealth() / (TARGET_KILL_RANGE_PCT / 100),
@@ -410,7 +412,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       analysisCollectorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countdownValue, encounterDuration, loadout, loadoutSignature, mode, restartVersion, speed, talentSignature, talents, talentRanks]);
+  }, [countdownValue, encounterDuration, loadout, loadoutSignature, mode, nTargets, restartVersion, speed, talentSignature, talents, talentRanks]);
 
   // Inject input
   const injectInput = useCallback((spellId: string): void => {

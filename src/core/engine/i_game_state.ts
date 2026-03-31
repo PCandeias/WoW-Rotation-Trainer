@@ -95,7 +95,7 @@ export interface IGameState {
   // Mutation methods (SimC: p()->applyBuff / gainChi / etc.)
   gainChi(amount: number): void;
   spendChi(amount: number): void;
-  addDamage(amount: number): void;
+  addDamage(amount: number, targetIndex?: number): void;
   applyBuff(id: string, duration: number, stacks?: number): void;
   expireBuff(id: string): void;
   removeBuffStack(id: string): void;

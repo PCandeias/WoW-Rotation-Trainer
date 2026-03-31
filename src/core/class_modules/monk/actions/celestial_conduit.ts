@@ -45,13 +45,22 @@ export class CelestialConduitAction extends MonkMeleeAction {
     // benefits from PREVIOUS zenith stacks (weapon_of_wind +10%/stack).
     // The TEB crit bonus is consumed inside buff.zenith->trigger(), so the
     // stomp does NOT get TEB crit from the current cast.
-    const stompResult = calculateDamage(ZENITH_STOMP_SPELL, this.p, rng, false);
-    let stompDamage = stompResult.finalDamage;
-    if (this.p.hasTalent('weapons_of_the_wall')) {
-      stompDamage *= 1 + WEAPONS_OF_THE_WALL_SPELL.effectN(1).percent();
+    // Zenith Stomp: aoe = -1, reduced_aoe_targets = 5 (SimC: zenith_stomp_t)
+    const ZENITH_STOMP_REDUCED_AOE_TARGETS = 5;
+    const n = this.p.activeEnemies;
+    for (let t = 0; t < n; t++) {
+      const stompResult = calculateDamage(ZENITH_STOMP_SPELL, this.p, rng, false);
+      let stompDamage = stompResult.finalDamage;
+      if (this.p.hasTalent('weapons_of_the_wall')) {
+        stompDamage *= 1 + WEAPONS_OF_THE_WALL_SPELL.effectN(1).percent();
+      }
+      // AOE reduction for secondary targets
+      if (t > 0 && n > ZENITH_STOMP_REDUCED_AOE_TARGETS) {
+        stompDamage *= Math.sqrt(ZENITH_STOMP_REDUCED_AOE_TARGETS / Math.min(20, n));
+      }
+      this.p.addDamage(stompDamage, t);
+      this.p.recordPendingSpellStat(ZENITH_STOMP_SPELL.name, stompDamage, t === 0 ? 1 : 0, stompResult.isCrit);
     }
-    this.p.addDamage(stompDamage);
-    this.p.recordPendingSpellStat(ZENITH_STOMP_SPELL.name, stompDamage, 1, stompResult.isCrit);
 
     // Zenith buff: 15s base, extended to 20s by Drinking Horn Cover (spell 391370).
     // Applied AFTER zenith_stomp to match SimC execution order.

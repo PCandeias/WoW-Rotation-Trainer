@@ -88,7 +88,9 @@ export function useEncounterMusic({
       try {
         await audio.play();
       } catch (error) {
-        console.warn('Encounter music playback was blocked by the browser.', error);
+        if (import.meta.env.DEV) {
+          console.warn('Encounter music playback was blocked by the browser.', error);
+        }
       }
     },
     [applyVolume, ensureAudio],
@@ -191,7 +193,9 @@ export function useEncounterMusic({
     if (currentTrackIndexRef.current !== null) {
       if (audio.paused) {
         void audio.play().catch((error) => {
-          console.warn('Encounter music playback was blocked by the browser.', error);
+          if (import.meta.env.DEV) {
+            console.warn('Encounter music playback was blocked by the browser.', error);
+          }
         });
       }
       return;

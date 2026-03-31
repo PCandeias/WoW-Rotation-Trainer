@@ -119,6 +119,8 @@ export interface TrainerSettings {
   practiceSpeedMultiplier: PracticeSpeedMultiplier;
   challenge: ChallengeSettings;
   encounterPreset: EncounterPreset;
+  /** Number of active enemies (1–8). Defaults to 1 (single-target patchwerk). */
+  nTargets: number;
   audio: AudioSettings;
   talents: string[];
   talentRanks: Record<string, number>;
@@ -271,6 +273,7 @@ export function getDefaultTrainerSettings(): TrainerSettings {
       spawnCadenceMultiplier: 0.5,
     },
     encounterPreset: 'fight30',
+    nTargets: 1,
     audio: {
       musicVolume: 1,
     },
@@ -1116,6 +1119,9 @@ export function normalizeTrainerSettings(value: unknown): TrainerSettings {
     practiceSpeedMultiplier: normalizePracticeSpeedMultiplier(value.practiceSpeedMultiplier, fallback.practiceSpeedMultiplier),
     challenge: normalizeChallengeSettings(value.challenge, fallback.challenge),
     encounterPreset: normalizeEncounterPreset(value.encounterPreset, fallback.encounterPreset),
+    nTargets: typeof value.nTargets === 'number' && Number.isInteger(value.nTargets) && value.nTargets >= 1 && value.nTargets <= 8
+      ? value.nTargets
+      : fallback.nTargets,
     audio: sanitizeAudioSettings(value.audio, fallback.audio),
     talents: sanitizeStringArray(value.talents).length > 0 ? sanitizeStringArray(value.talents) : [...fallback.talents],
     talentRanks: sanitizeTalentRanks(value.talentRanks, fallback.talentRanks),

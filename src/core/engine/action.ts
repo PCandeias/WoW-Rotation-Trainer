@@ -34,6 +34,42 @@ export abstract class Action {
   constructor(protected readonly p: IGameState) { }
 
   // ---------------------------------------------------------------------------
+  // AOE fields — mirror SimC's action_t AOE configuration
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Number of targets this action hits.
+   * -1 = all targets, 0 = single target (default), N = exactly N targets.
+   * Mirrors SimC's action_t::aoe.
+   */
+  readonly aoe: number = 0;
+
+  /**
+   * Target count at which sqrt-based damage reduction kicks in.
+   * 0 = no reduction. Mirrors SimC's action_t::reduced_aoe_targets.
+   */
+  readonly reducedAoeTargets: number = 0;
+
+  /**
+   * Number of targets receiving full damage before sqrt reduction applies.
+   * Default 1 (only primary target gets full damage).
+   * Mirrors SimC's action_t::full_amount_targets.
+   */
+  readonly fullAmountTargets: number = 1;
+
+  /**
+   * Whether to split total damage equally among all targets hit.
+   * Mirrors SimC's action_t::split_aoe_damage.
+   */
+  readonly splitAoeDamage: boolean = false;
+
+  /**
+   * Static damage multiplier applied to secondary targets (chain_target > 0).
+   * Mirrors SimC's action_t::base_aoe_multiplier.
+   */
+  readonly baseAoeMultiplier: number = 1.0;
+
+  // ---------------------------------------------------------------------------
   // Virtual method chain (override in subclasses, call super())
   // ---------------------------------------------------------------------------
 
@@ -180,6 +216,71 @@ export abstract class Action {
       { length: channelTicks },
       (_, index) => (channelDuration / channelTicks) * (index + 1),
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // AOE methods — mirror SimC's AOE damage pipeline
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Calculate the number of targets this action hits.
+   * Mirrors SimC's action_t::n_targets().
+   */
+  nTargets(): number {
+    if (this.aoe === 0) return 1;
+    const enemies = this.p.activeEnemies ?? 1;
+    if (this.aoe === -1) return enemies;
+    return Math.min(this.aoe, enemies);
+  }
+
+  /**
+   * Compute AOE damage multiplier for a given chain_target index.
+   * Mirrors the AOE reduction pipeline in SimC's calculate_direct_amount().
+   *
+   * Reduction order (SimC):
+   * 1. base_aoe_multiplier (static for secondary targets)
+   * 2. split_aoe_damage (divide by target count)
+   * 3. sqrt reduction (reduced_aoe_targets formula)
+   * 4. composite_aoe_multiplier (overridable per-action)
+   */
+  aoeDamageMultiplier(chainTarget: number, nTargets: number): number {
+    if (chainTarget === 0) return 1.0;
+
+    let mult = 1.0;
+
+    // Step 1: Static AOE multiplier for secondary targets
+    mult *= this.baseAoeMultiplier;
+
+    // Step 2: Split damage equally among targets
+    if (this.splitAoeDamage) {
+      mult /= nTargets;
+    }
+
+    // Step 3: Sqrt reduction (Shadowlands+ formula)
+    // Applied to targets beyond fullAmountTargets when nTargets exceeds reducedAoeTargets
+    if (
+      chainTarget >= this.fullAmountTargets &&
+      this.reducedAoeTargets > 0 &&
+      nTargets > this.reducedAoeTargets
+    ) {
+      mult *= Math.sqrt(this.reducedAoeTargets / Math.min(20, nTargets));
+    }
+
+    // Step 4: Per-action override
+    mult *= this.compositeAoeMultiplier(chainTarget, nTargets);
+
+    return mult;
+  }
+
+  /**
+   * Override in subclasses for ability-specific AOE modifiers.
+   * Mirrors SimC's action_t::composite_aoe_multiplier().
+   * Examples:
+   * - FoF: secondary targets × effectN(6).percent()
+   * - SotW: secondary targets ÷ n_targets
+   */
+  compositeAoeMultiplier(_chainTarget: number, _nTargets: number): number {
+    return 1.0;
   }
 
   total_multiplier(isComboStrike: boolean): number {

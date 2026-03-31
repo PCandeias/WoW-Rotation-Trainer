@@ -17,10 +17,35 @@ const ENCOUNTER_MUSIC_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
   The_Sovereign_s_Last_Sprint: "The Sovereign's Last Sprint",
 };
 
-const encounterMusicAssetModules = import.meta.glob<string>('../../../assets/*.mp3', {
-  eager: true,
-  import: 'default',
-});
+/**
+ * Static asset map for encounter music tracks.
+ * Files live in public/assets/ so Vite serves them without hashing or
+ * processing through the module transform pipeline.
+ */
+const BASE = import.meta.env.BASE_URL ?? '/wow_trainer/';
+const MP3_FILENAMES = [
+  'Across_the_Ancient_Canopy.mp3',
+  'Apex_of_the_Siege.mp3',
+  'Ascent_of_the_Final_Peak.mp3',
+  'Beneath_the_Heavy_Gate.mp3',
+  'Golden_Horizon_Charge.mp3',
+  'Iron_Against_Scales.mp3',
+  'Leap_Above_the_Canopy.mp3',
+  'Over_the_Ramparts.mp3',
+  'Siege_of_the_High_Peak.mp3',
+  'Storming_the_Great_Hall.mp3',
+  'The_Final_Gatekeeper.mp3',
+  'The_Final_Gauntlet.mp3',
+  'The_Forge_Sovereign.mp3',
+  'The_Last_Corridor.mp3',
+  'The_Last_Platform.mp3',
+  'The_Obsidian_Gate_Remains.mp3',
+  'The_Sovereign_s_Last_Sprint.mp3',
+  'The_Weight_Of_Every_Step.mp3',
+] as const;
+const encounterMusicAssetModules: Record<string, string> = Object.fromEntries(
+  MP3_FILENAMES.map((name) => [`assets/${name}`, `${BASE}assets/${name}`]),
+);
 
 function toTrackId(basename: string): string {
   return basename

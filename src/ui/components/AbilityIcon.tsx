@@ -76,7 +76,7 @@ export function clearIconSourceCache(): void {
  * Caches the current source index per iconName (module-level) so that failed
  * sources are skipped on subsequent mounts of the same icon.
  */
-function AbilityIcon({
+const AbilityIcon = React.memo(function AbilityIcon({
   iconName,
   emoji = '?',
   size = 48,
@@ -166,7 +166,7 @@ function AbilityIcon({
       referrerPolicy="no-referrer"
     />
   );
-}
+});
 
 export { AbilityIcon };
 export default AbilityIcon;

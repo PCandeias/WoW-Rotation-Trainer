@@ -126,14 +126,16 @@ export class RisingSunKickAction extends MonkMeleeAction {
           // splash applies to secondary targets, so remove HM from that portion.
           splashPerTarget /= huntersMarkMult;
         }
+        // SimC applies uniform sqrt reduction when total secondary > reduced_aoe_targets
+        const reduction = secondaryTargets > SKYFIRE_HEEL_REDUCED_AOE_TARGETS
+          ? Math.sqrt(SKYFIRE_HEEL_REDUCED_AOE_TARGETS / Math.min(20, secondaryTargets))
+          : 1.0;
         let totalSplash = 0;
         for (let i = 0; i < secondaryTargets; i++) {
-          const reduction = i < SKYFIRE_HEEL_REDUCED_AOE_TARGETS
-            ? 1.0
-            : Math.sqrt(SKYFIRE_HEEL_REDUCED_AOE_TARGETS / (i + 1));
-          totalSplash += splashPerTarget * reduction;
+          const targetDamage = splashPerTarget * reduction;
+          this.p.addDamage(targetDamage, i + 1);
+          totalSplash += targetDamage;
         }
-        this.p.addDamage(totalSplash);
         this.p.recordPendingSpellStat(`skyfire_heel_${this.name}`, totalSplash, 1);
       }
     }

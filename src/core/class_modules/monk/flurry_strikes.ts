@@ -126,6 +126,9 @@ class FlurryStrikeAction extends MonkFlurryAction {
 class ShadoOverTheBattlefieldAction extends MonkFlurryAction {
   readonly name = 'flurry_strike_shado_over_the_battlefield';
   readonly spellData = SHADO_OVER_THE_BATTLEFIELD_SPELL_DATA;
+  override readonly aoe = -1;
+  override readonly reducedAoeTargets = 8;
+  override readonly fullAmountTargets = 1;
 
   protected override actionIsPhysical(): boolean {
     return false;
@@ -246,9 +249,30 @@ export function processDelayedSpellImpact(
     return undefined;
   }
 
-  const result = action.execute(queue, rng, false);
-  state.addDamage(result.damage);
-  state.recordPendingSpellStat(action.name, result.damage, 1, result.isCrit);
-  applyActionResult(state, queue, [], result);
-  return result;
+  const n = action.nTargets();
+  if (n <= 1) {
+    // Single-target path
+    const result = action.execute(queue, rng, false);
+    state.addDamage(result.damage);
+    state.recordPendingSpellStat(action.name, result.damage, 1, result.isCrit);
+    applyActionResult(state, queue, [], result);
+    return result;
+  }
+
+  // Multi-target AOE path
+  let primaryResult: ActionResult | undefined;
+  for (let t = 0; t < n; t++) {
+    const result = action.execute(queue, rng, false);
+    let damage = result.damage;
+    if (t > 0) {
+      damage *= action.aoeDamageMultiplier(t, n);
+    }
+    state.addDamage(damage, t);
+    state.recordPendingSpellStat(action.name, damage, t === 0 ? 1 : 0, result.isCrit);
+    if (t === 0) {
+      primaryResult = result;
+      applyActionResult(state, queue, [], result);
+    }
+  }
+  return primaryResult;
 }

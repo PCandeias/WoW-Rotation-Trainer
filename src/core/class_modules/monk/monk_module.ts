@@ -12,6 +12,7 @@ import { currentSwingInterval } from '../../engine/autoAttack';
 import { calculateDamage } from '../../engine/damage';
 import { getSharedTargetDebuffMultiplier } from '../../shared/player_effects';
 import { requireMonkSpellData } from '../../dbc/monk_spell_data';
+import type { SpellDef } from '../../data/spells';
 import { DUAL_THREAT_SPELL, THUNDERFIST_SPELL } from './monk_proc_spells';
 import {
   addMonkFlurryCharges,
@@ -284,7 +285,10 @@ export const monk_module: ClassModule = {
       const combined = WW_SPEC_AUTO_ATTACK_MULT * martialInstinctsMult * ferocityMult * weaponOfWindMult * playerMult * versMult * targetMult * armorFactorEffective;
       let finalDamage = baseDamage * combined;
 
-      if (isCrit) { finalDamage *= 2.0; }
+      if (isCrit) {
+        const autoSpell = { name: spellKey } as SpellDef;
+        finalDamage *= state.damageHooks?.getCritDamageMultiplier?.(autoSpell, state) ?? 2.0;
+      }
 
       state.addDamage(finalDamage);
       state.recordPendingSpellStat(spellKey, finalDamage, 1, isCrit);

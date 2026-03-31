@@ -20,6 +20,17 @@ import {
 
 type Screen = 'spec-select' | 'setup' | 'encounter' | 'history-review';
 
+function isBrowserNavigationMouseButton(event: MouseEvent): boolean {
+  return event.button === 3 || event.button === 4;
+}
+
+function isBrowserNavigationKey(event: KeyboardEvent): boolean {
+  return event.key === 'BrowserBack'
+    || event.key === 'BrowserForward'
+    || event.code === 'BrowserBack'
+    || event.code === 'BrowserForward';
+}
+
 /**
  * Root application component.
  *
@@ -108,11 +119,31 @@ export function App(): React.JSX.Element {
       }
     };
 
+    const handleNavigationMouseButton = (event: MouseEvent): void => {
+      if (isBrowserNavigationMouseButton(event)) {
+        event.preventDefault();
+      }
+    };
+
+    const handleNavigationKey = (event: KeyboardEvent): void => {
+      if (isBrowserNavigationKey(event)) {
+        event.preventDefault();
+      }
+    };
+
     window.addEventListener('wheel', handleWheel, { passive: false });
     window.addEventListener('keydown', handleKeyDown, { passive: false });
+    window.addEventListener('keydown', handleNavigationKey, { capture: true });
+    window.addEventListener('mousedown', handleNavigationMouseButton, { capture: true });
+    window.addEventListener('mouseup', handleNavigationMouseButton, { capture: true });
+    window.addEventListener('auxclick', handleNavigationMouseButton, { capture: true });
     return (): void => {
       window.removeEventListener('wheel', handleWheel);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleNavigationKey, { capture: true });
+      window.removeEventListener('mousedown', handleNavigationMouseButton, { capture: true });
+      window.removeEventListener('mouseup', handleNavigationMouseButton, { capture: true });
+      window.removeEventListener('auxclick', handleNavigationMouseButton, { capture: true });
     };
   }, []);
 
@@ -130,6 +161,7 @@ export function App(): React.JSX.Element {
         speedMultiplier={settings.mode === 'practice' ? settings.practiceSpeedMultiplier : 1}
         challengeSettings={settings.challenge}
         encounterDuration={resolveEncounterDuration(settings)}
+        nTargets={settings.nTargets}
         musicVolume={settings.audio.musicVolume}
         initialTalents={toTalentSet(settings)}
         initialTalentRanks={toTalentRankMap(settings)}

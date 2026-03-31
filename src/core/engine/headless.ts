@@ -1092,6 +1092,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   while (!queue.isEmpty()) {
     const event = queue.pop();
     state.currentTime = event.time;
+    state.updateTimeBasedHealth();
     sampleResourceAtCurrentTime();
 
     switch (event.type) {

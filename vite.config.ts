@@ -13,5 +13,26 @@ export default defineConfig({
       '@data': resolve(__dirname, 'src/core/data'),
     },
   },
-  base: './',
+  base: '/wow_trainer/',
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vendor chunk — React ecosystem (rarely changes, highly cacheable)
+          'vendor-react': ['react', 'react-dom'],
+        },
+      },
+    },
+  },
+  server: {
+    watch: {
+      // Prevent chokidar from traversing multi-GB directories that are not
+      // part of the module graph.  Without this, Vite can OOM on startup.
+      ignored: [
+        resolve(__dirname, 'reports') + '/**',
+        resolve(__dirname, 'tools') + '/**',
+        resolve(__dirname, 'coverage') + '/**',
+      ],
+    },
+  },
 });

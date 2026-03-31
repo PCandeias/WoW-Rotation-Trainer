@@ -33,6 +33,11 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
   readonly name = 'spinning_crane_kick';
   readonly spellData = requireMonkSpellData(101546);
 
+  // AOE: hits all enemies, sqrt reduction beyond 5 targets, only primary gets full damage
+  override readonly aoe = -1;
+  override readonly reducedAoeTargets = 5;
+  override readonly fullAmountTargets = 1;
+
   override canBeInterruptedByCastAttempt(nextSpell: SpellDef): boolean {
     void nextSpell;
     return false;
@@ -175,11 +180,24 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
     snapshot: DamageSnapshot,
     _tickNum: number,
   ): ActionResult {
-    const { damage, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
-    state.addDamage(damage);
+    const n = this.nTargets();
+    let totalDamage = 0;
+    let primaryIsCrit = false;
+
+    for (let t = 0; t < n; t++) {
+      const { damage: baseDmg, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
+      let damage = baseDmg;
+      if (t > 0) {
+        damage *= this.aoeDamageMultiplier(t, n);
+      }
+      state.addDamage(damage, t);
+      totalDamage += damage;
+      if (t === 0) primaryIsCrit = isCrit;
+    }
+
     return {
-      damage,
-      isCrit,
+      damage: totalDamage,
+      isCrit: primaryIsCrit,
       newEvents: [],
       buffsApplied: [],
       cooldownAdjustments: [],

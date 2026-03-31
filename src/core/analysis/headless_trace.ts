@@ -38,15 +38,7 @@ export function buildTraceFromSimResult(
     buffStacksTimelineBySecond: Object.fromEntries(
       Object.entries(result.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
     ),
-    buffRemainingTimelineBySecond: Object.fromEntries(
-      Object.entries(result.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, timeline.map(() => 0)]),
-    ),
     cooldownTimelineBySecond: {},
-    channels: [],
-    resourceCaps: {
-      chiMax: result.finalState.chiMax,
-      energyMax: result.finalState.energyMax,
-    },
     resourceTimelineBySecond: {
       energy: [...result.resourceTimelineBySecond.energy],
       chi: [...result.resourceTimelineBySecond.chi],
@@ -126,20 +118,6 @@ function averageBuffTimelines(traces: RawRunTrace[]): RawRunTrace['buffStacksTim
   );
 }
 
-function averageRemainingBuffTimelines(traces: RawRunTrace[]): RawRunTrace['buffRemainingTimelineBySecond'] {
-  const buffIds = new Set(traces.flatMap((trace) => Object.keys(trace.buffRemainingTimelineBySecond)));
-  return Object.fromEntries(
-    [...buffIds].map((buffId) => [
-      buffId,
-      averageSeries(
-        traces
-          .map((trace) => trace.buffRemainingTimelineBySecond[buffId])
-          .filter((series): series is number[] => series !== undefined),
-      ),
-    ]),
-  );
-}
-
 function buildAverageCasts(traces: RawRunTrace[]): RawRunTrace['casts'] {
   const spellIds = new Set(traces.flatMap((trace) => trace.casts.map((cast) => cast.spellId)));
   const averagedCasts: RawRunTrace['casts'] = [];
@@ -196,13 +174,7 @@ export function buildAverageTrainerTrace(
     damageTimelineBySecond: averageSeries(traces.map((trace) => trace.damageTimelineBySecond)),
     cumulativeDamageBySecond: averageSeries(traces.map((trace) => trace.cumulativeDamageBySecond)),
     buffStacksTimelineBySecond: averageBuffTimelines(traces),
-    buffRemainingTimelineBySecond: averageRemainingBuffTimelines(traces),
     cooldownTimelineBySecond: {},
-    channels: [],
-    resourceCaps: {
-      chiMax: traces.reduce((sum, trace) => sum + trace.resourceCaps.chiMax, 0) / traces.length,
-      energyMax: traces.reduce((sum, trace) => sum + trace.resourceCaps.energyMax, 0) / traces.length,
-    },
     resourceTimelineBySecond: {
       energy: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.energy)),
       chi: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.chi)),

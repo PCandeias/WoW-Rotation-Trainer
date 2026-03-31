@@ -64,6 +64,22 @@ export class BlackoutKickAction extends MonkMeleeAction {
     const result = super.execute(queue, rng, isComboStrike);
 
     // -------------------------------------------------------------------------
+    // Shadowboxing Treads cleave (single-target Teachings hits are unaffected)
+    // -------------------------------------------------------------------------
+    if (this.p.hasTalent('shadowboxing_treads') && result.damage > 0) {
+      const maxAdditionalTargets = 2;
+      const secondaryEffectiveness = 0.80;
+      const additionalTargets = Math.min(maxAdditionalTargets, this.p.activeEnemies - 1);
+
+      for (let t = 0; t < additionalTargets; t++) {
+        const secondaryResult = this.calculateDamage(rng, isComboStrike);
+        const secondaryDamage = secondaryResult.damage * secondaryEffectiveness;
+        this.p.addDamage(secondaryDamage, t + 1);
+        this.p.recordPendingSpellStat('blackout_kick', secondaryDamage, 0, secondaryResult.isCrit);
+      }
+    }
+
+    // -------------------------------------------------------------------------
     // Blackout Reinforcement stack consume
     // chiCost() already returns 0 when the buff is active, so the executor
     // spent 0 chi. We just need to consume the BR stack and emit the event.

@@ -98,7 +98,7 @@ function parseSpellBlock(
   const spellRegex = /^SPELL\s+(\d+)\s+(.+)$/;
   const spellMatch = spellRegex.exec(spellLine);
   if (!spellMatch) {
-    console.warn(`Invalid SPELL header format: ${spellLine}`);
+    if (import.meta.env.DEV) console.warn(`Invalid SPELL header format: ${spellLine}`);
     return { record: null, enteredBlock: false };
   }
 
@@ -145,7 +145,7 @@ function parseSpellBlock(
     const fieldRegex = /^([^:]+):\s*(.+)$/;
     const fieldMatch = fieldRegex.exec(line);
     if (!fieldMatch) {
-      console.warn(
+      if (import.meta.env.DEV) console.warn(
         `Malformed field in spell ${id}: ${line} (expected "key: value" format)`
       );
       continue;
@@ -159,12 +159,12 @@ function parseSpellBlock(
     } catch (error) {
       // For certain required fields, mark as fatal error
       if (key === 'base_dd') {
-        console.warn(
+        if (import.meta.env.DEV) console.warn(
           `Failed to parse required field "${key}" for spell ${id}: ${error instanceof Error ? error.message : String(error)}`
         );
         hasFatalError = true;
       } else {
-        console.warn(
+        if (import.meta.env.DEV) console.warn(
           `Failed to parse field "${key}" for spell ${id}: ${error instanceof Error ? error.message : String(error)}`
         );
       }
@@ -172,7 +172,7 @@ function parseSpellBlock(
   }
 
   // If we reach here, we never found END
-  console.warn(`Missing END marker for spell ${id}`);
+  if (import.meta.env.DEV) console.warn(`Missing END marker for spell ${id}`);
   return { record: null, enteredBlock: true };
 }
 
@@ -267,7 +267,7 @@ function parseField(record: SpellRecord, key: string, value: string): void {
 
     default: {
       // Unknown field - log warning and skip
-      console.warn(
+      if (import.meta.env.DEV) console.warn(
         `Unknown field in spell ${record.id}: "${key}" (skipping)`
       );
       break;

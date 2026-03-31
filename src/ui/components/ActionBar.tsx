@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { ActionBarSlot } from './ActionBarSlot';
 import { SIZES, T } from '@ui/theme/elvui';
@@ -163,10 +163,9 @@ export function ActionBar({
     MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId)
   );
 
-  const slotBySpellId = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot]));
+  const slotBySpellId = useMemo(() => new Map((slots ?? WW_ACTION_BAR).map((slot) => [slot.spellId, slot])), [slots]);
   const [pressedSpellId, setPressedSpellId] = useState<string | null>(null);
   const pressedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastMouseDispatchRef = useRef<{ chord: string; time: number } | null>(null);
   // Always-current usability map, readable from keyboard handler closure
   const usabilityRef = useRef<Map<string, boolean>>(new Map());
   // Always-current key→ordered spells map (chord strings), updated each render
@@ -223,7 +222,8 @@ export function ActionBar({
     const effectiveSpellIds = button.spellIds.flatMap((spellId) => {
       const slot = slotBySpellId.get(spellId);
       if (!slot) {
-        return [];
+        // Spell not in slot registry (e.g. consumable/racial) — pass through as-is
+        return [spellId];
       }
 
       const overrideActive = slot.procOverride ? isBuffActive(slot.procOverride.buffId) : false;
@@ -281,23 +281,12 @@ export function ActionBar({
       dispatchSpellIds(spellIds);
     };
 
-    const handleMouseInput = (e: MouseEvent): void => {
+    const handleMouseDown = (e: MouseEvent): void => {
       const chord = normalizeMouseButton(e);
       if (chord === null) return;
       const spellIds = keyMapRef.current[chord] ?? [];
       if (spellIds.length === 0) return;
-
-      const now = performance.now();
-      const lastDispatch = lastMouseDispatchRef.current;
-      if (lastDispatch?.chord === chord && now - lastDispatch.time < 40) {
-        e.preventDefault();
-        e.stopPropagation();
-        return;
-      }
-
-      lastMouseDispatchRef.current = { chord, time: now };
       e.preventDefault();
-      e.stopPropagation();
       dispatchSpellIds(spellIds);
     };
 
@@ -311,13 +300,11 @@ export function ActionBar({
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('mousedown', handleMouseInput);
-    window.addEventListener('auxclick', handleMouseInput);
+    window.addEventListener('mousedown', handleMouseDown);
     window.addEventListener('wheel', handleWheel, { passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('mousedown', handleMouseInput);
-      window.removeEventListener('auxclick', handleMouseInput);
+      window.removeEventListener('mousedown', handleMouseDown);
       window.removeEventListener('wheel', handleWheel);
     };
   }, [dispatchSpellIds, enableGlobalKeybinds]);
@@ -392,7 +379,8 @@ export function ActionBar({
         const effectiveSpellIds = spellIds.flatMap((spellId) => {
           const buttonSlot = slotBySpellId.get(spellId);
           if (!buttonSlot) {
-            return [];
+            // Pass through unrecognized spells (e.g. consumables/racials)
+            return [spellId];
           }
 
           const buttonOverrideActive = buttonSlot.procOverride ? isBuffActive(buttonSlot.procOverride.buffId) : false;

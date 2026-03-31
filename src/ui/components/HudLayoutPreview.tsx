@@ -294,6 +294,7 @@ const PREVIEW_GAME_STATE: GameStateSnapshot = {
   queuedAt: 0,
   queuedWindow: 0.4,
   gcdReady: PREVIEW_CURRENT_TIME + 0.35,
+  targets: [],
 };
 const PREVIEW_SPELL_INPUT_STATUS: ReadonlyMap<string, SpellInputStatus> = new Map([
   ['fists_of_fury', { canPress: false, visuallyUsable: true, failReason: 'on_cooldown' }],
@@ -601,7 +602,7 @@ export function HudLayoutPreview({
       setListeningForKeybind(false);
     };
 
-    const handleMouseInput = (event: MouseEvent): void => {
+    const handleMouseDown = (event: MouseEvent): void => {
       const chord = normalizeMouseButton(event);
       if (chord === null) {
         return;
@@ -626,13 +627,11 @@ export function HudLayoutPreview({
     };
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
-    window.addEventListener('mousedown', handleMouseInput, { capture: true });
-    window.addEventListener('auxclick', handleMouseInput, { capture: true });
+    window.addEventListener('mousedown', handleMouseDown, { capture: true });
     window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
-      window.removeEventListener('mousedown', handleMouseInput, { capture: true });
-      window.removeEventListener('auxclick', handleMouseInput, { capture: true });
+      window.removeEventListener('mousedown', handleMouseDown, { capture: true });
       window.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, [buttonEditor, isEditing, listeningForKeybind]);

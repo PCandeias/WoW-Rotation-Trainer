@@ -181,6 +181,7 @@ export class GameLoop {
     const maxTime = this.state.encounterDuration;
     this.simTime = Math.min(newSimTime, maxTime);
     this.state.currentTime = this.simTime;
+    this.state.updateTimeBasedHealth();
 
     // Process all events with time <= current simTime
     const processedEvents: SimEvent[] = [];

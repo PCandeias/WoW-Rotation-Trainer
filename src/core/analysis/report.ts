@@ -281,10 +281,9 @@ function buffStateAtTime(trace: RawRunTrace, time: number, relevantBuffIds: read
     .map(([buffId, timeline]) => ({
       buffId,
       stacks: Math.max(0, Math.round(valueAtTime(timeline, time))),
-      remaining: Math.max(0, valueAtTime(trace.buffRemainingTimelineBySecond[buffId] ?? [], time)),
     }))
     .filter((buff) => buff.stacks > 0)
-    .sort((left, right) => right.stacks - left.stacks || left.remaining - right.remaining || left.buffId.localeCompare(right.buffId))
+    .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
     .slice(0, 6);
 }
 
@@ -374,9 +373,7 @@ function buildDecisionState(
 
   return {
     chi: valueAtTime(trace.resourceTimelineBySecond.chi, snapshotTime),
-    chiMax: trace.resourceCaps.chiMax,
     energy: valueAtTime(trace.resourceTimelineBySecond.energy, snapshotTime),
-    energyMax: trace.resourceCaps.energyMax,
     previousAbility: previousAbilityAtTime(trace, snapshotTime),
     topRecommendations,
     activeBuffs,
@@ -392,14 +389,12 @@ function filterRecordedDecisionState(
   const relevantCooldownIds = profile.getEssentialCooldownSpellIds();
   const filteredBuffs = state.activeBuffs
     .filter((buff) => relevantBuffIds.has(buff.buffId) && buff.stacks > 0)
-    .sort((left, right) => right.stacks - left.stacks || left.remaining - right.remaining || left.buffId.localeCompare(right.buffId))
+    .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
     .slice(0, 6);
 
   return {
     chi: state.chi,
-    chiMax: state.chiMax,
     energy: state.energy,
-    energyMax: state.energyMax,
     previousAbility: state.previousAbility,
     topRecommendations: state.topRecommendations.slice(0, 3),
     activeBuffs: filteredBuffs,
@@ -607,10 +602,6 @@ function buildDowntimeFinding(profile: SpecAnalysisProfile, player: RawRunTrace)
   ];
 }
 
-function buildSpecFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
-  return profile.getAnalysisRules().flatMap((rule) => rule.analyze(player, trainer));
-}
-
 export function buildRunAnalysisReport(
   benchmarkSignature: BenchmarkSignature,
   player: RawRunTrace,
@@ -633,7 +624,7 @@ export function buildRunAnalysisReport(
     ...buildCooldownAndAbilityFindings(profile, player, trainer),
     ...buildAplFindings(profile, player, trainer),
     ...buildResourceFinding(player, trainer),
-    ...buildSpecFindings(profile, player, trainer),
+    ...profile.analyzeSetup(player, trainer),
     ...buildDowntimeFinding(profile, player),
   ]
     .sort((left, right) => right.estimatedDpsLoss - left.estimatedDpsLoss || right.occurrences - left.occurrences)
@@ -667,13 +658,11 @@ export function formatDecisionStateLabel(state: AnalysisDecisionState): string {
     ? state.topRecommendations.map(titleCaseSpellId).join(', ')
     : 'None';
   const buffs = state.activeBuffs.length > 0
-    ? state.activeBuffs
-      .map((buff) => `${titleCaseBuffId(buff.buffId)}${buff.stacks > 1 ? ` x${buff.stacks}` : ''} ${buff.remaining > 0 ? `${buff.remaining.toFixed(1)}s` : 'Active'}`)
-      .join(', ')
+    ? state.activeBuffs.map((buff) => `${titleCaseBuffId(buff.buffId)}${buff.stacks > 1 ? ` x${buff.stacks}` : ''}`).join(', ')
     : 'None';
   const cooldowns = state.activeCooldowns.length > 0
     ? state.activeCooldowns.map((cooldown) => `${titleCaseSpellId(cooldown.spellId)} ${cooldown.label ?? (cooldown.remaining > 0 ? `${cooldown.remaining.toFixed(1)}s` : 'Ready')}`).join(', ')
     : 'None';
 
-  return `Energy ${Math.round(state.energy)}/${Math.round(state.energyMax)} • Chi ${Math.round(state.chi)}/${Math.round(state.chiMax)} • Prev ${state.previousAbility ? titleCaseSpellId(state.previousAbility) : 'None'} • Top ${recommendations} • Buffs ${buffs} • CDs ${cooldowns}`;
+  return `Energy ${Math.round(state.energy)} • Chi ${Math.round(state.chi)} • Prev ${state.previousAbility ? titleCaseSpellId(state.previousAbility) : 'None'} • Top ${recommendations} • Buffs ${buffs} • CDs ${cooldowns}`;
 }

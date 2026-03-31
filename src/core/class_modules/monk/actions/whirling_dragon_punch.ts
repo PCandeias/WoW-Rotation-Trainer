@@ -102,32 +102,50 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
   ): ActionResult {
     this.comboStrikesTrigger(isComboStrike);
     const singletargetHit = this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL, rng, isComboStrike);
-    const aoeHits = Array.from({ length: 3 }, () => this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike));
 
     // WDP has no direct damage — all damage comes from child actions (ST + AOE).
     // Children are recorded via addDamage + recordPendingSpellStat under their
     // own names, matching SimC's add_child reporting.  result.damage must be 0
     // to avoid double-counting (the executor calls addDamage(result.damage)).
-    this.p.addDamage(singletargetHit.damage);
+    this.p.addDamage(singletargetHit.damage, 0);
     this.p.recordPendingSpellStat(
       WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL.name,
       singletargetHit.damage,
       1,
       singletargetHit.isCrit,
     );
-    for (const aoeHit of aoeHits) {
-      this.p.addDamage(aoeHit.damage);
-      this.p.recordPendingSpellStat(
-        WHIRLING_DRAGON_PUNCH_AOE_SPELL.name,
-        aoeHit.damage,
-        1,
-        aoeHit.isCrit,
-      );
+
+    // 3 AOE ticks — each hits all enemies with sqrt reduction beyond 5 targets
+    const n = this.p.activeEnemies ?? 1;
+    const WDP_AOE_REDUCED_TARGETS = 5;
+    const WDP_AOE_FULL_AMOUNT_TARGETS = 1;
+    for (let tickIdx = 0; tickIdx < 3; tickIdx++) {
+      for (let t = 0; t < n; t++) {
+        const aoeHit = this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike);
+        let damage = aoeHit.damage;
+        if (t > 0) {
+          // Apply sqrt reduction for secondary targets (mirrors aoeDamageMultiplier logic)
+          if (
+            t >= WDP_AOE_FULL_AMOUNT_TARGETS &&
+            WDP_AOE_REDUCED_TARGETS > 0 &&
+            n > WDP_AOE_REDUCED_TARGETS
+          ) {
+            damage *= Math.sqrt(WDP_AOE_REDUCED_TARGETS / Math.min(20, n));
+          }
+        }
+        this.p.addDamage(damage, t);
+        this.p.recordPendingSpellStat(
+          WHIRLING_DRAGON_PUNCH_AOE_SPELL.name,
+          damage,
+          t === 0 && tickIdx === 0 ? 1 : 0,
+          aoeHit.isCrit,
+        );
+      }
     }
 
     const result: ActionResult = {
       damage: 0,
-      isCrit: singletargetHit.isCrit || aoeHits.some((hit) => hit.isCrit),
+      isCrit: singletargetHit.isCrit,
       newEvents: [],
       buffsApplied: [],
       cooldownAdjustments: [],

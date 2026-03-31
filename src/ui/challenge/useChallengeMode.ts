@@ -40,6 +40,8 @@ interface PointerState {
 
 const MIN_SPINNER_ROTATION_DELTA = 0.006;
 const MAX_SPINNER_ROTATION_DELTA = Math.PI / 2;
+const SPINNER_GRAB_PADDING = 14;
+const SPINNER_RELEASE_PADDING = 20;
 
 export interface UseChallengeModeResult {
   challenge: ChallengeStateSnapshot;
@@ -79,6 +81,15 @@ function distanceBetween(left: ChallengePoint, right: ChallengePoint): number {
 
 function isInsideNote(point: ChallengePoint, note: ChallengeNote): boolean {
   return distanceBetween(point, note.position) <= note.radius;
+}
+
+function isInsideSpinnerZone(
+  point: ChallengePoint,
+  note: Extract<ChallengeNote, { type: 'spinner' }>,
+  wasActive: boolean,
+): boolean {
+  const padding = wasActive ? SPINNER_RELEASE_PADDING : SPINNER_GRAB_PADDING;
+  return distanceBetween(point, note.position) <= note.radius + padding;
 }
 
 function isOrderedNoteReady(noteRuntime: ChallengeNoteRuntime, notes: ChallengeNoteRuntime[]): boolean {
@@ -317,7 +328,11 @@ export function useChallengeMode({
         }
 
         if (next.note.type === 'spinner') {
-          const pointerWithin = pointerRef.current.isDown && isInsideNote(pointerRef.current, next.note);
+          const pointerWithin = pointerRef.current.isDown && isInsideSpinnerZone(
+            pointerRef.current,
+            next.note,
+            next.pointerActive,
+          );
           if (next.pointerActive !== pointerWithin) {
             next.pointerActive = pointerWithin;
             changed = true;
@@ -430,9 +445,11 @@ export function useChallengeMode({
         }
 
         if (next.note.type === 'spinner') {
-          next.pointerActive = true;
-          next.pointerAngle = Math.atan2(point.y - next.note.position.y, point.x - next.note.position.x);
-          changed = true;
+          if (isInsideSpinnerZone(point, next.note, next.pointerActive)) {
+            next.pointerActive = true;
+            next.pointerAngle = Math.atan2(point.y - next.note.position.y, point.x - next.note.position.x);
+            changed = true;
+          }
         }
 
         return next;

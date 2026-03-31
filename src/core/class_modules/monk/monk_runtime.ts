@@ -409,16 +409,33 @@ export function initializeMonkRuntimeState(state: GameState): void {
       return bonus;
     },
     getCritDamageMultiplier: (spell, s): number => {
-      const tebRank = s.getTalentRank('tigereye_brew');
-      // TEB crit bonus: DBC 1261844 effectN(1) = 10% per rank (rank override [10, 20]).
-      // SimC applies this as crit_bonus_multiplier via parse_effects (subtype 108).
-      // bonus = (base_crit_mult - 1.0) * (1 + rank × effectN(1).percent())
-      const tebCritBonusPctPerRank = TIGEREYE_BREW_CRIT_BONUS_TALENT.effectN(1).percent();
-      // tigereye_brew is represented as a 4-rank node in the decoded talent map,
-      // but crit-bonus scaling spell 1261844 only has two effective ranks.
-      const tebRankForCrit = Math.min(2, Math.max(0, tebRank - 1)); // ranks 2/3 → spell ranks 1/2
+      // SimC formula (action.cpp total_crit_bonus()):
+      //   bonus = ((1 + base_bonus) × playerCritMult - 1) × bonusMult
+      //   return 1 + bonus
+      // playerCritMult = Eyes of the Eagle (composite_player_critical_multiplier)
+      // bonusMult = TEB × VW × … (composite_crit_damage_bonus_multiplier)
       const baseCritBonus = 1.0; // standard WoW: crits do 2× damage → bonus portion = 1.0
-      let mult = 1.0 + baseCritBonus * (1 + tebRankForCrit * tebCritBonusPctPerRank);
+
+      // Eyes of the Eagle ring enchant (DBC 1236701 eff#1): +1.25% crit_damage per rank.
+      // Profile has rank 2 on both rings → multiplicative: (1.0125)^2 = 1.02515625.
+      const playerCritDmgMult = state.stats.playerCritDamageMult ?? 1.0;
+      const scaledBonus = (1.0 + baseCritBonus) * playerCritDmgMult - 1.0;
+
+      // bonusMult accumulates TEB, VW, etc. (SimC: composite_crit_damage_bonus_multiplier)
+      let bonusMult = 1.0;
+
+      // TEB crit bonus: only for registered monk abilities, NOT auto-attacks.
+      // In SimC, TEB's crit_bonus effect (DBC 1261844) is parsed via parse_effects
+      // only for specific action_t subclasses — melee_main_hand/off_hand are excluded.
+      const isAutoAttack = spell.name === 'auto_attack_mh' || spell.name === 'auto_attack_oh';
+      if (!isAutoAttack) {
+        const tebRank = s.getTalentRank('tigereye_brew');
+        const tebCritBonusPctPerRank = TIGEREYE_BREW_CRIT_BONUS_TALENT.effectN(1).percent();
+        // tigereye_brew is a 4-rank talent node; crit-bonus spell 1261844 has two effective ranks.
+        const tebRankForCrit = Math.min(2, Math.max(0, tebRank - 1)); // ranks 2/3 → spell ranks 1/2
+        bonusMult *= (1 + tebRankForCrit * tebCritBonusPctPerRank);
+      }
+
       // Vigilant Watch: crit bonus multiplier for Blackout Kick family (DBC 450993 effectN(1)).
       // Affected spell IDs: 100784, 205523, 228649.  228649 is the TotM child action
       // in SimC, which inherits BK's crit_bonus_effects via parse_effects.
@@ -426,18 +443,10 @@ export function initializeMonkRuntimeState(state: GameState): void {
         s.hasTalent('vigilant_watch') &&
         (spell.name === 'blackout_kick' || spell.name === 'blackout_kick_free' || spell.name === 'teachings_of_the_monastery')
       ) {
-        const bonus = mult - 1.0;
-        mult = 1.0 + bonus * (1 + VIGILANT_WATCH_SPELL.effectN(1).percent());
+        bonusMult *= (1 + VIGILANT_WATCH_SPELL.effectN(1).percent());
       }
-      // Eyes of the Eagle ring enchant (DBC 1236701 eff#1): +1.25% crit_damage per rank.
-      // Profile has rank 2 on both rings → multiplicative: (1.0125)^2 = 1.02515625.
-      // SimC applies this as player_crit_damage_multiplier on the crit bonus portion.
-      const playerCritDmgMult = state.stats.playerCritDamageMult ?? 1.0;
-      if (playerCritDmgMult !== 1.0) {
-        const eyesBonus = mult - 1.0;
-        mult = 1.0 + eyesBonus * playerCritDmgMult;
-      }
-      return mult;
+
+      return 1.0 + scaledBonus * bonusMult;
     },
     getArmorPenPercent: (s): number => {
       return s.hasTalent('martial_precision') ? 12 : 0;

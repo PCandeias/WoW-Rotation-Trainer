@@ -54,11 +54,9 @@ function buildCumulativeTimeline(values: number[]): number[] {
 export class LiveTraceCollector {
   private readonly timelineLength: number;
   private readonly casts: RawRunTrace['casts'] = [];
-  private readonly channels: RawRunTrace['channels'] = [];
   private readonly damageBySpell: Record<string, AnalysisSpellStats> = {};
   private readonly recommendations: RecommendationRecord[] = [];
   private readonly buffStacksTimelineBySecond: Record<string, number[]> = {};
-  private readonly buffRemainingTimelineBySecond: Record<string, number[]> = {};
   private readonly cooldownTimelineBySecond: Record<string, number[]> = {};
   private readonly damageTimelineBySecond: number[];
   private readonly cumulativeDamageBySecond: number[];
@@ -66,11 +64,6 @@ export class LiveTraceCollector {
   private readonly chiTimelineBySecond: number[];
   private readonly energyWasteTimelineBySecond: number[];
   private readonly chiWasteTimelineBySecond: number[];
-  private readonly activeChannels = new Map<string, {
-    spellId: string;
-    startedAt: number;
-    scheduledEndTime: number;
-  }>();
   private lastRecommendationSignature = '';
 
   constructor(
@@ -99,18 +92,12 @@ export class LiveTraceCollector {
       activeBuffIds.add(buffId);
       const timeline = this.buffStacksTimelineBySecond[buffId]
         ?? (this.buffStacksTimelineBySecond[buffId] = Array<number>(this.timelineLength).fill(Number.NaN));
-      const remainingTimeline = this.buffRemainingTimelineBySecond[buffId]
-        ?? (this.buffRemainingTimelineBySecond[buffId] = Array<number>(this.timelineLength).fill(Number.NaN));
       timeline[second] = Math.max(1, buff.stacks ?? 1);
-      remainingTimeline[second] = buff.expiresAt === 0 ? 0 : Math.max(0, buff.expiresAt - snapshot.currentTime);
     }
 
     for (const [buffId, timeline] of Object.entries(this.buffStacksTimelineBySecond)) {
       if (!activeBuffIds.has(buffId)) {
         timeline[second] = 0;
-        const remainingTimeline = this.buffRemainingTimelineBySecond[buffId]
-          ?? (this.buffRemainingTimelineBySecond[buffId] = Array<number>(this.timelineLength).fill(Number.NaN));
-        remainingTimeline[second] = 0;
       }
     }
 
@@ -149,37 +136,6 @@ export class LiveTraceCollector {
   }
 
   recordCombatEvent(event: SimEvent): void {
-    if (event.type === EventType.CHANNEL_START) {
-      this.activeChannels.set(this.getChannelKey(event.spellId, event.channelId, event.time), {
-        spellId: event.spellId,
-        startedAt: event.time,
-        scheduledEndTime: event.time + event.duration,
-      });
-      return;
-    }
-
-    if (event.type === EventType.CHANNEL_END) {
-      const activeEntry = event.channelId !== undefined
-        ? [this.getChannelKey(event.spellId, event.channelId), this.activeChannels.get(this.getChannelKey(event.spellId, event.channelId))] as const
-        : [...this.activeChannels.entries()]
-          .filter(([, channel]) => channel.spellId === event.spellId)
-          .sort((left, right) => right[1].startedAt - left[1].startedAt)[0];
-      const [key, channel] = activeEntry ?? [];
-      if (!key || !channel) {
-        return;
-      }
-
-      this.channels.push({
-        spellId: channel.spellId,
-        startedAt: channel.startedAt,
-        endedAt: event.time,
-        scheduledEndTime: channel.scheduledEndTime,
-        interrupted: event.interrupted ?? false,
-      });
-      this.activeChannels.delete(key);
-      return;
-    }
-
     if (event.type === EventType.BUFF_APPLY || event.type === EventType.BUFF_EXPIRE || event.type === EventType.BUFF_STACK_CHANGE) {
       return;
     }
@@ -203,9 +159,6 @@ export class LiveTraceCollector {
     for (const timeline of Object.values(this.buffStacksTimelineBySecond)) {
       fillTimelineGaps(timeline);
     }
-    for (const timeline of Object.values(this.buffRemainingTimelineBySecond)) {
-      fillTimelineGaps(timeline);
-    }
     for (const timeline of Object.values(this.cooldownTimelineBySecond)) {
       fillTimelineGaps(timeline);
     }
@@ -224,17 +177,9 @@ export class LiveTraceCollector {
       buffStacksTimelineBySecond: Object.fromEntries(
         Object.entries(this.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
       ),
-      buffRemainingTimelineBySecond: Object.fromEntries(
-        Object.entries(this.buffRemainingTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
-      ),
       cooldownTimelineBySecond: Object.fromEntries(
         Object.entries(this.cooldownTimelineBySecond).map(([spellId, timeline]) => [spellId, [...timeline]]),
       ),
-      channels: [...this.channels].sort((left, right) => left.startedAt - right.startedAt),
-      resourceCaps: {
-        chiMax: snapshot.chiMax,
-        energyMax: snapshot.energyMax,
-      },
       resourceTimelineBySecond: {
         energy: [...this.energyTimelineBySecond],
         chi: [...this.chiTimelineBySecond],
@@ -268,7 +213,6 @@ export class LiveTraceCollector {
       .map(([buffId, buff]) => ({
         buffId,
         stacks: Math.max(1, buff.stacks ?? 1),
-        remaining: buff.expiresAt === 0 ? 0 : Math.max(0, buff.expiresAt - time),
       }))
       .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId));
 
@@ -281,22 +225,12 @@ export class LiveTraceCollector {
 
     return {
       chi: snapshot.chi,
-      chiMax: snapshot.chiMax,
       energy: snapshot.energyAtLastUpdate,
-      energyMax: snapshot.energyMax,
       previousAbility: snapshot.prevGcdAbility,
       topRecommendations: this.getRecommendationsAt(time).slice(0, 3),
       activeBuffs,
       activeCooldowns,
     };
-  }
-
-  private getChannelKey(spellId: string, channelId?: number, startedAt?: number): string {
-    if (channelId !== undefined) {
-      return `${spellId}:${channelId}`;
-    }
-
-    return `${spellId}:${startedAt?.toFixed(3) ?? 'unknown'}`;
   }
 }
 
