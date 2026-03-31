@@ -1,6 +1,6 @@
 import type { CharacterLoadout } from '@core/data/loadout';
 
-export const ANALYSIS_VERSION = 'v2';
+export const ANALYSIS_VERSION = 'v3';
 
 export interface BenchmarkSignature {
   key: string;
@@ -32,6 +32,14 @@ export interface RunCastRecord {
   preCastState?: AnalysisDecisionState;
 }
 
+export interface RunChannelRecord {
+  spellId: string;
+  startedAt: number;
+  endedAt: number;
+  scheduledEndTime: number;
+  interrupted: boolean;
+}
+
 export interface RawRunTrace {
   source: 'player' | 'trainer';
   specId: string;
@@ -44,7 +52,13 @@ export interface RawRunTrace {
   damageTimelineBySecond: number[];
   cumulativeDamageBySecond: number[];
   buffStacksTimelineBySecond: Record<string, number[]>;
+  buffRemainingTimelineBySecond: Record<string, number[]>;
   cooldownTimelineBySecond: Record<string, number[]>;
+  channels: RunChannelRecord[];
+  resourceCaps: {
+    chiMax: number;
+    energyMax: number;
+  };
   resourceTimelineBySecond: {
     energy: number[];
     chi: number[];
@@ -93,6 +107,7 @@ export interface FindingEvidence {
 export interface AnalysisActiveBuffState {
   buffId: string;
   stacks: number;
+  remaining: number;
 }
 
 export interface AnalysisActiveCooldownState {
@@ -104,16 +119,29 @@ export interface AnalysisActiveCooldownState {
 
 export interface AnalysisDecisionState {
   chi: number;
+  chiMax: number;
   energy: number;
+  energyMax: number;
   previousAbility: string | null;
   topRecommendations: string[];
   activeBuffs: AnalysisActiveBuffState[];
   activeCooldowns: AnalysisActiveCooldownState[];
 }
 
+export type AnalysisFindingCategory =
+  | 'apl'
+  | 'cooldown'
+  | 'ability'
+  | 'setup'
+  | 'downtime'
+  | 'resource'
+  | 'rotation'
+  | 'burst'
+  | 'channel';
+
 export interface AnalysisFinding {
   id: string;
-  category: 'apl' | 'cooldown' | 'ability' | 'setup' | 'downtime' | 'resource';
+  category: AnalysisFindingCategory;
   title: string;
   summary: string;
   fix: string;
@@ -166,8 +194,13 @@ export interface SpecAnalysisProfile {
   ): AplRuleExplanation | null;
   getTrackedBuffIds(): string[];
   getEssentialCooldownSpellIds(): string[];
-  analyzeSetup(player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[];
+  getAnalysisRules(): SpecAnalysisRule[];
   shouldFlagDowntime(context: DowntimeContext): boolean;
+}
+
+export interface SpecAnalysisRule {
+  id: string;
+  analyze(player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[];
 }
 
 export interface RunAnalysisReport {

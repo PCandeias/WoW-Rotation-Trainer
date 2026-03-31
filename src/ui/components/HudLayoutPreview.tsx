@@ -601,7 +601,7 @@ export function HudLayoutPreview({
       setListeningForKeybind(false);
     };
 
-    const handleMouseDown = (event: MouseEvent): void => {
+    const handleMouseInput = (event: MouseEvent): void => {
       const chord = normalizeMouseButton(event);
       if (chord === null) {
         return;
@@ -626,11 +626,13 @@ export function HudLayoutPreview({
     };
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
-    window.addEventListener('mousedown', handleMouseDown, { capture: true });
+    window.addEventListener('mousedown', handleMouseInput, { capture: true });
+    window.addEventListener('auxclick', handleMouseInput, { capture: true });
     window.addEventListener('wheel', handleWheel, { capture: true, passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown, { capture: true });
-      window.removeEventListener('mousedown', handleMouseDown, { capture: true });
+      window.removeEventListener('mousedown', handleMouseInput, { capture: true });
+      window.removeEventListener('auxclick', handleMouseInput, { capture: true });
       window.removeEventListener('wheel', handleWheel, { capture: true });
     };
   }, [buttonEditor, isEditing, listeningForKeybind]);

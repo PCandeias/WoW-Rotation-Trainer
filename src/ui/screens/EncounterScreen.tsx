@@ -32,6 +32,7 @@ import { SPELL_ICONS, WW_ACTION_BAR, type ActionBarSlotDef } from '@ui/component
 import { MONK_BUFF_REGISTRY, resolveMonkBuffIconName } from '@core/class_modules/monk/monk_buff_registry';
 import { MONK_WINDWALKER_TALENT_LOADOUT } from '@core/data/talentStringDecoder';
 import { MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
+import { PLAYER_EFFECT_BUFF_REGISTRY } from '@core/shared/player_effect_buff_registry';
 import { useSimulation, type CountdownValue } from '@ui/sim/useSimulation';
 import type { CharacterLoadout } from '@core/data/loadout';
 import type { GameStateSnapshot } from '@core/engine/gameState';
@@ -277,7 +278,7 @@ export function EncounterScreen({
       }
     };
 
-    const handleMouseDown = (event: MouseEvent): void => {
+    const handleMouseInput = (event: MouseEvent): void => {
       if (isEditableTarget(event.target)) {
         return;
       }
@@ -292,7 +293,17 @@ export function EncounterScreen({
         return;
       }
 
+      const now = performance.now();
+      const lastDispatch = lastMouseDispatchRef.current;
+      if (lastDispatch?.chord === chord && now - lastDispatch.time < 40) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
+      lastMouseDispatchRef.current = { chord, time: now };
       event.preventDefault();
+      event.stopPropagation();
       spellIds.forEach((spellId) => {
         injectInput(spellId);
       });
@@ -320,11 +331,13 @@ export function EncounterScreen({
     };
 
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mousedown', handleMouseInput);
+    window.addEventListener('auxclick', handleMouseInput);
     window.addEventListener('wheel', handleWheel, { passive: false });
     return (): void => {
       window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousedown', handleMouseInput);
+      window.removeEventListener('auxclick', handleMouseInput);
       window.removeEventListener('wheel', handleWheel);
     };
   }, [
@@ -358,6 +371,7 @@ export function EncounterScreen({
   const showRecommendations = !usesCompetitiveTrainerRules(mode) && hasStarted && countdownValue === null;
   const showChallengePlayfield = challengeEnabled && countdownValue === null && hasStarted && !isEnded;
   const reportedAnalysisRef = useRef<RunAnalysisReport | null>(null);
+  const lastMouseDispatchRef = useRef<{ chord: string; time: number } | null>(null);
   const postRunAnalysis = usePostRunAnalysis({
     enabled: isEnded && analysisTrace !== null,
     specId: 'monk_windwalker',
@@ -1853,7 +1867,10 @@ function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMi
   }
 
   const clampedIndex = Math.max(0, Math.min(currentIndex, mistakes.length - 1));
-  const mistake = mistakes[clampedIndex]!;
+  const mistake = mistakes[clampedIndex];
+  if (!mistake) {
+    return <div>No clear off-priority mistakes stood out against your own moment-to-moment state.</div>;
+  }
   const canGoPrevious = clampedIndex > 0;
   const canGoNext = clampedIndex < mistakes.length - 1;
 
@@ -2212,7 +2229,9 @@ function DecisionStatePanel({
         <div style={{ color: T.textDim, fontSize: '0.74rem' }}>Tracked buffs</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {state.activeBuffs.length > 0
-            ? state.activeBuffs.map((buff) => <BuffBadge key={buff.buffId} buffId={buff.buffId} stacks={buff.stacks} />)
+            ? state.activeBuffs.map((buff) => (
+              <BuffBadge key={buff.buffId} buffId={buff.buffId} stacks={buff.stacks} remaining={buff.remaining} />
+            ))
             : <div style={{ color: T.textDim, fontSize: '0.76rem' }}>No tracked buffs active.</div>}
         </div>
       </div>
@@ -2287,9 +2306,10 @@ function CooldownStateBadge({
   );
 }
 
-function BuffBadge({ buffId, stacks }: { buffId: string; stacks: number }): React.ReactElement {
-  const label = MONK_BUFF_REGISTRY[buffId]?.displayName ?? titleCaseSpellId(buffId);
-  const iconName = MONK_BUFF_REGISTRY[buffId]?.iconName ?? 'inv_misc_questionmark';
+function BuffBadge({ buffId, stacks, remaining }: { buffId: string; stacks: number; remaining: number }): React.ReactElement {
+  const registryEntry = MONK_BUFF_REGISTRY[buffId] ?? PLAYER_EFFECT_BUFF_REGISTRY[buffId];
+  const label = registryEntry?.displayName ?? titleCaseSpellId(buffId);
+  const iconName = registryEntry?.iconName ?? 'inv_misc_questionmark';
   return (
     <div
       style={{
@@ -2306,6 +2326,9 @@ function BuffBadge({ buffId, stacks }: { buffId: string; stacks: number }): Reac
       <span style={{ color: T.textBright, fontSize: '0.75rem' }}>
         {label}
         {stacks > 1 ? ` x${stacks}` : ''}
+      </span>
+      <span style={{ color: T.textDim, fontSize: '0.72rem' }}>
+        {remaining > 0 ? `${remaining.toFixed(1)}s` : 'Active'}
       </span>
     </div>
   );
