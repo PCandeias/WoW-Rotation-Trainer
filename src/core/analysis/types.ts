@@ -29,6 +29,7 @@ export interface RunCastRecord {
   time: number;
   spellId: string;
   recommendedSpellId: string | null;
+  preCastState?: AnalysisDecisionState;
 }
 
 export interface RawRunTrace {

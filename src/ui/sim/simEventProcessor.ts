@@ -7,7 +7,7 @@
 
 import type { SimEvent } from '@core/engine/eventQueue';
 import { EventType } from '@core/engine/eventQueue';
-import type { GameState } from '@core/engine/gameState';
+import type { GameState, GameStateSnapshot } from '@core/engine/gameState';
 import type { SimEventQueue } from '@core/engine/eventQueue';
 import { executeAbility } from '@core/engine/executor';
 import { initAutoAttacks, processAutoAttack } from '@core/engine/autoAttack';
@@ -29,7 +29,7 @@ export interface SimEventProcessorConfig {
   onEncounterEnd: () => void;
   onChannelStart?: (spellId: string, startTime: number, duration: number) => void;
   onChannelEnd?: () => void;
-  onSuccessfulCast?: (spellId: string, time: number) => void;
+  onSuccessfulCast?: (spellId: string, time: number, preCastSnapshot: GameStateSnapshot) => void;
   onCombatEvent?: (event: SimEvent) => void;
   classModule?: ClassModule;
 }
@@ -69,6 +69,7 @@ export function createSimEventProcessor(
         case EventType.PLAYER_INPUT: {
           const spell = MONK_WW_SPELLS.get(event.ability);
           if (spell) {
+            const preCastSnapshot = state.snapshot();
             const result = executeAbility(spell, state, queue, rng);
             if (
               !result.success
@@ -77,7 +78,7 @@ export function createSimEventProcessor(
               tryQueueAbility(state, event.ability);
             }
             if (result.success) {
-              config.onSuccessfulCast?.(event.ability, state.currentTime);
+              config.onSuccessfulCast?.(event.ability, state.currentTime, preCastSnapshot);
             }
             if (result.success && result.damage > 0) {
               emitDirectDamage(event.ability, result.damage, false, state.currentTime);

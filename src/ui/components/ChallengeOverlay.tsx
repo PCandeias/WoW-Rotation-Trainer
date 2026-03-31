@@ -72,6 +72,7 @@ export function ChallengeOverlay({
     hold: 'rgba(255, 140, 0, 0.88)',
     repeat: 'rgba(255, 51, 51, 0.88)',
     'hover-key': 'rgba(170, 120, 255, 0.9)',
+    'repeat-key': 'rgba(116, 165, 255, 0.92)',
     spinner: 'rgba(97, 245, 255, 0.92)',
   };
 
@@ -244,6 +245,8 @@ export function ChallengeOverlay({
           ? `${note.orderIndex + 1}`
           : note.type === 'repeat'
             ? `x${Math.max(0, note.requiredClicks - noteRuntime.clickCount)}`
+            : note.type === 'repeat-key'
+              ? `${note.requiredKey.toUpperCase()}x${Math.max(0, note.requiredPresses - noteRuntime.clickCount)}`
             : note.type === 'hold'
               ? `Hold ${note.holdDuration < 1 ? note.holdDuration.toFixed(1) : note.holdDuration.toFixed(0)}s`
               : note.type === 'slider'
@@ -274,7 +277,7 @@ export function ChallengeOverlay({
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontFamily: FONTS.ui,
-                fontSize: note.type === 'hover-key' ? '0.95rem' : note.type === 'spinner' ? '0.92rem' : '0.72rem',
+                 fontSize: note.type === 'hover-key' || note.type === 'repeat-key' ? '0.95rem' : note.type === 'spinner' ? '0.92rem' : '0.72rem',
                 fontWeight: 700,
                 userSelect: 'none',
                 boxShadow: noteRuntime.pointerActive || isNextNote
@@ -292,6 +295,9 @@ export function ChallengeOverlay({
                 <span>{label}</span>
                 {note.type === 'hover-key' && (
                   <span style={{ fontSize: '0.52rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Hover + Key</span>
+                )}
+                {note.type === 'repeat-key' && (
+                  <span style={{ fontSize: '0.52rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>Hover + Repeat</span>
                 )}
                 {note.type === 'spinner' && (
                   <span style={{ fontSize: '0.5rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>

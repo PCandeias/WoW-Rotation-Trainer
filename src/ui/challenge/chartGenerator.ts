@@ -16,6 +16,7 @@ const NOTE_DAMAGE: Record<ChallengeNote['type'], number> = {
   hold: 10,
   repeat: 12,
   'hover-key': 14,
+  'repeat-key': 14,
   spinner: 16,
 };
 
@@ -128,6 +129,14 @@ function shuffle<T>(rng: SeededRng, values: readonly T[]): T[] {
 
 function scaleSpawnGap(baseGap: number, spawnCadenceMultiplier: ChallengeSpawnCadenceMultiplier): number {
   return Math.max(MIN_GAP, baseGap / spawnCadenceMultiplier);
+}
+
+function getOrderedChainExtraTime(totalSteps: number): number {
+  return Math.max(0, totalSteps - 3) * 0.18;
+}
+
+function getRepeatWindow(requiredCount: number): number {
+  return 1.9 + Math.max(0, requiredCount - 3) * 0.18;
 }
 
 function takeNextMechanic(
@@ -273,7 +282,7 @@ export function generateChallengeChart({
     return notes;
   }
 
-  const mechanicBagSeed: ChallengeNote['type'][] = ['tap', 'ordered-chain', 'slider', 'hold', 'repeat', 'hover-key'];
+  const mechanicBagSeed: ChallengeNote['type'][] = ['tap', 'ordered-chain', 'slider', 'hold', 'repeat', 'hover-key', 'repeat-key'];
   let mechanicBag = shuffle(rng, mechanicBagSeed);
   let segmentStart = 1.35;
   let lastSpinnerStart = -999;
@@ -339,6 +348,7 @@ export function generateChallengeChart({
       }
       const stepSpacing = 0.33 + rng.next() * 0.1;
       const totalSteps = endsWithSlider ? tapCount + 1 : tapCount;
+      const extraSequenceTime = getOrderedChainExtraTime(totalSteps);
 
       positions.forEach((position, orderIndex) => {
         const startTime = segmentStart + (orderIndex * stepSpacing);
@@ -349,7 +359,7 @@ export function generateChallengeChart({
           orderIndex,
           totalSteps,
           startTime,
-          endTime: startTime + 1.7,
+          endTime: startTime + 1.7 + extraSequenceTime,
           position,
           radius: 26,
           damageOnMiss: NOTE_DAMAGE['ordered-chain'],
@@ -359,7 +369,7 @@ export function generateChallengeChart({
       if (endsWithSlider) {
         const sliderPath = createSliderPath(rng, playfield, positions, true);
         const sliderStartTime = segmentStart + (tapCount * stepSpacing);
-        const sliderEndTime = sliderStartTime + 2.15;
+        const sliderEndTime = sliderStartTime + 2.15 + extraSequenceTime;
         notes.push({
           id: `note-${noteId += 1}`,
           type: 'slider',
@@ -376,10 +386,10 @@ export function generateChallengeChart({
         });
         activeOrderedSequenceEndTime = sliderEndTime;
       } else {
-        activeOrderedSequenceEndTime = segmentStart + ((tapCount - 1) * stepSpacing) + 1.7;
+        activeOrderedSequenceEndTime = segmentStart + ((tapCount - 1) * stepSpacing) + 1.7 + extraSequenceTime;
       }
 
-      segmentStart += scaleSpawnGap((endsWithSlider ? 3.7 : 3.1) + rng.next() * 0.55, spawnCadenceMultiplier);
+      segmentStart += scaleSpawnGap((endsWithSlider ? 3.7 : 3.1) + rng.next() * 0.55 + extraSequenceTime, spawnCadenceMultiplier);
       continue;
     }
 
@@ -417,17 +427,19 @@ export function generateChallengeChart({
     }
 
     if (mechanic === 'repeat') {
+      const requiredClicks = 2 + rng.nextInt(4);
+      const repeatWindow = getRepeatWindow(requiredClicks);
       notes.push({
         id: `note-${noteId += 1}`,
         type: 'repeat',
         startTime: segmentStart,
-        endTime: segmentStart + 1.9,
+        endTime: segmentStart + repeatWindow,
         position: pickAnchor(rng, playfield),
         radius: 28,
         damageOnMiss: NOTE_DAMAGE.repeat,
-        requiredClicks: 2 + rng.nextInt(4),
+        requiredClicks,
       });
-      segmentStart += scaleSpawnGap(2.75 + rng.next() * 0.35, spawnCadenceMultiplier);
+      segmentStart += scaleSpawnGap(2.75 + rng.next() * 0.35 + Math.max(0, requiredClicks - 3) * 0.08, spawnCadenceMultiplier);
       continue;
     }
 
@@ -444,6 +456,25 @@ export function generateChallengeChart({
       });
       hoverKeyIndex += 1;
       segmentStart += scaleSpawnGap(2.75 + rng.next() * 0.35, spawnCadenceMultiplier);
+      continue;
+    }
+
+    if (mechanic === 'repeat-key') {
+      const requiredPresses = 2 + rng.nextInt(4);
+      const repeatWindow = getRepeatWindow(requiredPresses);
+      notes.push({
+        id: `note-${noteId += 1}`,
+        type: 'repeat-key',
+        startTime: segmentStart,
+        endTime: segmentStart + repeatWindow,
+        position: pickAnchor(rng, playfield),
+        radius: 28,
+        damageOnMiss: NOTE_DAMAGE['repeat-key'],
+        requiredKey: keyPool[hoverKeyIndex % keyPool.length] ?? DEFAULT_HOVER_KEY_POOL[0],
+        requiredPresses,
+      });
+      hoverKeyIndex += 1;
+      segmentStart += scaleSpawnGap(2.75 + rng.next() * 0.35 + Math.max(0, requiredPresses - 3) * 0.08, spawnCadenceMultiplier);
       continue;
     }
 

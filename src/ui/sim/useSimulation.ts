@@ -277,8 +277,8 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       onEncounterEnd: () => {
         // handled by GameLoop.onEncounterEnd
       },
-      onSuccessfulCast: (spellId: string, time: number) => {
-        analysisCollectorRef.current?.recordCast(spellId, time);
+      onSuccessfulCast: (spellId: string, time: number, preCastSnapshot) => {
+        analysisCollectorRef.current?.recordCast(spellId, time, preCastSnapshot);
       },
       onCombatEvent: (event) => {
         analysisCollectorRef.current?.recordCombatEvent(event);

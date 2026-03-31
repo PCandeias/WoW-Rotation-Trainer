@@ -327,6 +327,40 @@ function buildDecisionState(
   };
 }
 
+function filterRecordedDecisionState(
+  profile: SpecAnalysisProfile,
+  state: AnalysisDecisionState,
+): AnalysisDecisionState {
+  const relevantBuffIds = new Set(profile.getTrackedBuffIds());
+  const relevantCooldownIds = new Set(profile.getEssentialCooldownSpellIds());
+
+  return {
+    chi: state.chi,
+    energy: state.energy,
+    previousAbility: state.previousAbility,
+    topRecommendations: state.topRecommendations.slice(0, 3),
+    activeBuffs: state.activeBuffs
+      .filter((buff) => relevantBuffIds.has(buff.buffId) && buff.stacks > 0)
+      .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId))
+      .slice(0, 6),
+    activeCooldowns: state.activeCooldowns
+      .filter((cooldown) => relevantCooldownIds.has(cooldown.spellId))
+      .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId)),
+  };
+}
+
+function buildDecisionStateForCast(
+  profile: SpecAnalysisProfile,
+  trace: RawRunTrace,
+  cast: RawRunTrace['casts'][number],
+): AnalysisDecisionState {
+  if (cast.preCastState) {
+    return filterRecordedDecisionState(profile, cast.preCastState);
+  }
+
+  return buildDecisionState(profile, trace, cast.time);
+}
+
 function findLatestCastBeforeTime(
   trace: RawRunTrace,
   time: number,
@@ -423,7 +457,7 @@ function buildExactMistakes(
       if (!expectedSpellId) {
         return null;
       }
-      const playerState = buildDecisionState(profile, player, cast.time);
+      const playerState = buildDecisionStateForCast(profile, player, cast);
       const explanation = profile.explainExactDecision?.(expectedSpellId, cast.spellId, playerState)
         ?? profile.explainRecommendedSpell(expectedSpellId);
 

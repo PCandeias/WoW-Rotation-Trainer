@@ -1,6 +1,11 @@
 import type { GameStateSnapshot } from '@core/engine/gameState';
 import { EventType, type SimEvent } from '@core/engine/eventQueue';
-import type { AnalysisSpellStats, RawRunTrace, RecommendationRecord } from './types';
+import type {
+  AnalysisDecisionState,
+  AnalysisSpellStats,
+  RawRunTrace,
+  RecommendationRecord,
+} from './types';
 
 function fillTimelineGaps(timeline: number[]): number[] {
   if (timeline.length === 0) {
@@ -109,11 +114,12 @@ export class LiveTraceCollector {
     }
   }
 
-  recordCast(spellId: string, time: number): void {
+  recordCast(spellId: string, time: number, preCastSnapshot: GameStateSnapshot): void {
     this.casts.push({
       time,
       spellId,
       recommendedSpellId: this.getRecommendationAt(time),
+      preCastState: this.buildPreCastState(preCastSnapshot, time),
     });
   }
 
@@ -187,6 +193,10 @@ export class LiveTraceCollector {
   }
 
   private getRecommendationAt(time: number): string | null {
+    return this.getRecommendationsAt(time)[0] ?? null;
+  }
+
+  private getRecommendationsAt(time: number): string[] {
     let current: RecommendationRecord | null = null;
     for (const record of this.recommendations) {
       if (record.time > time) {
@@ -195,7 +205,32 @@ export class LiveTraceCollector {
       current = record;
     }
 
-    return current?.spellIds[0] ?? null;
+    return current?.spellIds ?? [];
+  }
+
+  private buildPreCastState(snapshot: GameStateSnapshot, time: number): AnalysisDecisionState {
+    const activeBuffs = [...snapshot.buffs.entries()]
+      .map(([buffId, buff]) => ({
+        buffId,
+        stacks: Math.max(1, buff.stacks ?? 1),
+      }))
+      .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId));
+
+    const activeCooldowns = [...snapshot.cooldowns.entries()]
+      .map(([spellId, cooldown]) => ({
+        spellId,
+        remaining: Math.max(0, (cooldown.readyAt ?? time) - time),
+      }))
+      .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId));
+
+    return {
+      chi: snapshot.chi,
+      energy: snapshot.energyAtLastUpdate,
+      previousAbility: snapshot.prevGcdAbility,
+      topRecommendations: this.getRecommendationsAt(time).slice(0, 3),
+      activeBuffs,
+      activeCooldowns,
+    };
   }
 }
 

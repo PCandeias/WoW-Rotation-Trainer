@@ -1290,11 +1290,15 @@ function EndScreen({
 
   const reportGrid: CSSProperties = {
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr) minmax(380px, 0.92fr)',
-    gridTemplateRows: 'minmax(0, 0.82fr) minmax(0, 1.08fr) minmax(0, 0.9fr)',
+    gridTemplateColumns: 'minmax(420px, 1fr) minmax(420px, 1fr) minmax(380px, 0.92fr)',
+    gridTemplateRows: 'minmax(300px, 0.82fr) minmax(360px, 1.08fr) minmax(300px, 0.9fr)',
     gap: 12,
     minHeight: 0,
-    overflow: 'hidden',
+    overflow: 'auto',
+    scrollbarGutter: 'stable both-edges',
+    alignContent: 'start',
+    paddingRight: 4,
+    paddingBottom: 4,
   };
 
   const btnBase: CSSProperties = {
@@ -1387,7 +1391,7 @@ function EndScreen({
           </div>
         </div>
 
-        <div style={reportGrid}>
+        <div data-testid="analysis-report-grid" style={reportGrid}>
           <ReportCard
             title="Damage Over Time"
             subtitle="See where your live DPS pace drifted away from the trainer."
@@ -1838,59 +1842,119 @@ function ImprovementNotes({ findings }: { findings: RunAnalysisReport['findings'
 }
 
 function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMistakes'] }): React.ReactElement {
+  const [currentIndex, setCurrentIndex] = useState(0);
+
+  useEffect(() => {
+    setCurrentIndex(0);
+  }, [mistakes]);
+
   if (mistakes.length === 0) {
     return <div>No clear off-priority mistakes stood out against your own moment-to-moment state.</div>;
   }
 
+  const clampedIndex = Math.max(0, Math.min(currentIndex, mistakes.length - 1));
+  const mistake = mistakes[clampedIndex]!;
+  const canGoPrevious = clampedIndex > 0;
+  const canGoNext = clampedIndex < mistakes.length - 1;
+
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      {mistakes.map((mistake) => (
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          gap: 12,
+        }}
+      >
         <div
-          key={mistake.id}
+          style={{
+            color: T.textDim,
+            fontSize: '0.74rem',
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          Mistake {clampedIndex + 1} of {mistakes.length}
+        </div>
+        <div style={{ display: 'inline-flex', gap: 8 }}>
+          <button
+            type="button"
+            aria-label="Previous exact mistake"
+            disabled={!canGoPrevious}
+            onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))}
+            style={{
+              ...buildControlStyle({ tone: 'ghost' }),
+              width: 32,
+              height: 32,
+              padding: 0,
+              opacity: canGoPrevious ? 1 : 0.45,
+            }}
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            aria-label="Next exact mistake"
+            disabled={!canGoNext}
+            onClick={() => setCurrentIndex((index) => Math.min(mistakes.length - 1, index + 1))}
+            style={{
+              ...buildControlStyle({ tone: 'ghost' }),
+              width: 32,
+              height: 32,
+              padding: 0,
+              opacity: canGoNext ? 1 : 0.45,
+            }}
+          >
+            →
+          </button>
+        </div>
+      </div>
+      <div
+        key={mistake.id}
+        style={{
+          border: `1px solid ${T.border}`,
+          borderRadius: 10,
+          padding: '10px 12px',
+          backgroundColor: 'rgba(255,255,255,0.02)',
+          display: 'grid',
+          gap: 8,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ color: T.textBright, fontSize: '0.84rem' }}>{mistake.title}</div>
+          <div style={{ color: T.textDim, fontSize: '0.76rem' }}>{mistake.time.toFixed(1)}s</div>
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <SpellDecisionBadge
+            label="You pressed"
+            spellId={mistake.playerSpellId}
+            emptyLabel="No timely cast"
+            tone="actual"
+          />
+          <span style={{ color: T.textDim, fontSize: '0.76rem' }}>→</span>
+          <SpellDecisionBadge label="Best button" spellId={mistake.expectedSpellId} tone="expected" />
+        </div>
+        <div>{mistake.summary}</div>
+        <div
           style={{
             border: `1px solid ${T.border}`,
-            borderRadius: 10,
-            padding: '10px 12px',
+            borderRadius: 8,
             backgroundColor: 'rgba(255,255,255,0.02)',
+            padding: '8px 10px',
             display: 'grid',
             gap: 8,
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-            <div style={{ color: T.textBright, fontSize: '0.84rem' }}>{mistake.title}</div>
-            <div style={{ color: T.textDim, fontSize: '0.76rem' }}>{mistake.time.toFixed(1)}s</div>
+          <div style={{ color: T.textDim, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            Your state
           </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <SpellDecisionBadge
-              label="You pressed"
-              spellId={mistake.playerSpellId}
-              emptyLabel="No timely cast"
-              tone="actual"
-            />
-            <span style={{ color: T.textDim, fontSize: '0.76rem' }}>→</span>
-            <SpellDecisionBadge label="Best button" spellId={mistake.expectedSpellId} tone="expected" />
-          </div>
-          <div>{mistake.summary}</div>
-          <div
-            style={{
-              border: `1px solid ${T.border}`,
-              borderRadius: 8,
-              backgroundColor: 'rgba(255,255,255,0.02)',
-              padding: '8px 10px',
-              display: 'grid',
-              gap: 8,
-            }}
-          >
-            <div style={{ color: T.textDim, fontSize: '0.74rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-              Your state
-            </div>
-            <DecisionStatePanel state={mistake.playerState} />
-          </div>
-          <div style={{ color: T.textDim, fontSize: '0.78rem' }}>
-            Fix: {mistake.fix}
-          </div>
+          <DecisionStatePanel state={mistake.playerState} />
         </div>
-      ))}
+        <div style={{ color: T.textDim, fontSize: '0.78rem' }}>
+          Fix: {mistake.fix}
+        </div>
+      </div>
     </div>
   );
 }

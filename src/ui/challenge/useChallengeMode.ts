@@ -38,6 +38,9 @@ interface PointerState {
   isDown: boolean;
 }
 
+const MIN_SPINNER_ROTATION_DELTA = 0.006;
+const MAX_SPINNER_ROTATION_DELTA = Math.PI / 2;
+
 export interface UseChallengeModeResult {
   challenge: ChallengeStateSnapshot;
   activeNotes: ChallengeNoteRuntime[];
@@ -327,8 +330,8 @@ export function useChallengeMode({
             const currentAngle = Math.atan2(pointerRef.current.y - next.note.position.y, pointerRef.current.x - next.note.position.x);
             if (next.pointerAngle !== null) {
               const deltaAngle = Math.abs(normalizeAngleDelta(currentAngle - next.pointerAngle));
-              if (deltaAngle > 0.015) {
-                next.progress += deltaAngle;
+              if (deltaAngle >= MIN_SPINNER_ROTATION_DELTA) {
+                next.progress += Math.min(deltaAngle, MAX_SPINNER_ROTATION_DELTA);
                 changed = true;
               }
             }
@@ -484,7 +487,10 @@ export function useChallengeMode({
       const feedbackBursts = current.feedbackBursts.filter((feedback) => feedback.expiresAt > simTime);
 
       const notes = current.notes.map((noteRuntime) => {
-        if (noteRuntime.status !== 'active' || noteRuntime.note.type !== 'hover-key') {
+        if (
+          noteRuntime.status !== 'active'
+          || (noteRuntime.note.type !== 'hover-key' && noteRuntime.note.type !== 'repeat-key')
+        ) {
           return noteRuntime;
         }
 
@@ -494,6 +500,14 @@ export function useChallengeMode({
 
         consumed = true;
         const next = { ...noteRuntime };
+        if (next.note.type === 'repeat-key') {
+          next.clickCount += 1;
+          if (next.clickCount >= next.note.requiredPresses) {
+            markHit(next, stats, feedbackBursts, simTime);
+          }
+          return next;
+        }
+
         markHit(next, stats, feedbackBursts, simTime);
         return next;
       });

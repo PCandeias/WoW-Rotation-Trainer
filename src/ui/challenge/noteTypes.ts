@@ -1,6 +1,6 @@
 import type { ChallengeDifficulty, ChallengeSpawnCadenceMultiplier } from '@ui/state/trainerSettings';
 
-export type ChallengeNoteType = 'tap' | 'ordered-chain' | 'slider' | 'hold' | 'repeat' | 'hover-key' | 'spinner';
+export type ChallengeNoteType = 'tap' | 'ordered-chain' | 'slider' | 'hold' | 'repeat' | 'hover-key' | 'repeat-key' | 'spinner';
 export type ChallengeNoteStatus = 'pending' | 'active' | 'hit' | 'missed';
 export type ChallengeHitGrade = 'Perfect' | 'Great' | 'Good';
 
@@ -78,6 +78,12 @@ export interface HoverKeyChallengeNote extends ChallengeBaseNote {
   requiredKey: string;
 }
 
+export interface RepeatKeyChallengeNote extends ChallengeBaseNote {
+  type: 'repeat-key';
+  requiredKey: string;
+  requiredPresses: number;
+}
+
 export interface SpinnerChallengeNote extends ChallengeBaseNote {
   type: 'spinner';
   spinDuration: number;
@@ -91,6 +97,7 @@ export type ChallengeNote =
   | HoldChallengeNote
   | RepeatChallengeNote
   | HoverKeyChallengeNote
+  | RepeatKeyChallengeNote
   | SpinnerChallengeNote;
 
 export interface ChallengeNoteRuntime {
@@ -189,6 +196,7 @@ export function createEmptyChallengeStats(): ChallengeStats {
       hold: 0,
       repeat: 0,
       'hover-key': 0,
+      'repeat-key': 0,
       spinner: 0,
     },
     missesByType: {
@@ -198,6 +206,7 @@ export function createEmptyChallengeStats(): ChallengeStats {
       hold: 0,
       repeat: 0,
       'hover-key': 0,
+      'repeat-key': 0,
       spinner: 0,
     },
     hitsByGrade: {
