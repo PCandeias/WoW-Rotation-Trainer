@@ -9,6 +9,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createGameState } from '@core/engine/gameState';
 import type { GameState, GameStateSnapshot } from '@core/engine/gameState';
 import { SimEventQueue, EventType } from '@core/engine/eventQueue';
+import { deriveTargetMaxHealthForKillRange } from '@core/engine/target';
 import type { SimEvent } from '@core/engine/eventQueue';
 import { GameLoop } from '@core/engine/gameLoop';
 import { createRng } from '@core/engine/rng';
@@ -130,8 +131,6 @@ const MAX_DAMAGE_EVENTS = 10;
 const DAMAGE_EVENT_LIFETIME_MS = 1500;
 const PRE_PULL_COUNTDOWN_SECONDS = 3;
 const PRE_PULL_GO_DISPLAY_MS = 700;
-const TARGET_KILL_RANGE_PCT = 15;
-
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -243,10 +242,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       duration: encounterDuration,
       activeEnemies: nTargets,
     });
-    const derivedTargetMaxHealth = Math.max(
-      state.getMaxHealth() / (TARGET_KILL_RANGE_PCT / 100),
-      state.getMaxHealth(),
-    );
+    const derivedTargetMaxHealth = deriveTargetMaxHealthForKillRange(state.getMaxHealth());
     state.initializeTargetHealth(derivedTargetMaxHealth);
     const queue = new SimEventQueue();
     const rng = createRng(Date.now());

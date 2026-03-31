@@ -14,6 +14,24 @@ export interface Target {
   healthPct: number;
 }
 
+export const TARGET_KILL_RANGE_PCT = 15;
+
+/**
+ * Derive a patchwerk-style target health pool large enough that execute abilities
+ * can still enter true kill range near the end of the fight.
+ */
+export function deriveTargetMaxHealthForKillRange(playerMaxHealth: number): number {
+  const maxHealth = Math.max(0, playerMaxHealth);
+  if (maxHealth <= 0) {
+    return 0;
+  }
+
+  return Math.max(
+    maxHealth / (TARGET_KILL_RANGE_PCT / 100),
+    maxHealth,
+  );
+}
+
 /**
  * Create a new target with full health.
  */

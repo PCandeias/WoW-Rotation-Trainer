@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { cloneLoadout, type CharacterLoadout } from '@core/data/loadout';
 import { getDefaultMonkWindwalkerProfile } from '@core/data/defaultProfile';
 import type { CharacterProfile } from '@core/data/profileParser';
+import { createGameState } from '@core/engine/gameState';
 import { runHeadless } from '@core/engine/headless';
+import { deriveTargetMaxHealthForKillRange } from '@core/engine/target';
 import {
   buildBenchmarkSignature,
   buildMonkWindwalkerAnalysisProfile,
@@ -112,10 +114,19 @@ function getOrCreateTrainerTrace(
   }
 
   const profile = buildProfile(options.talents, options.talentRanks, options.loadout);
+  const bootstrapState = createGameState(profile, {
+    duration: options.encounterDuration,
+    activeEnemies: options.activeEnemies,
+  });
+  const targetMaxHealth = deriveTargetMaxHealthForKillRange(bootstrapState.getMaxHealth());
   const traces = TRAINER_BENCHMARK_SEEDS.map((seed) => {
     const result = runHeadless({
       profile,
-      encounter: { duration: options.encounterDuration, activeEnemies: options.activeEnemies },
+      encounter: {
+        duration: options.encounterDuration,
+        activeEnemies: options.activeEnemies,
+        targetMaxHealth,
+      },
       seed,
     });
     return buildTraceFromSimResult(result, profile.spec, benchmarkSignature);
