@@ -224,7 +224,16 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
 
       setSimState((prev) => ({
         ...prev,
+        snapshot: null,
+        analysisTrace: null,
+        spellInputStatus: new Map(),
+        simTime: 0,
+        dps: 0,
         countdownValue,
+        recommendations: [],
+        damageEvents: [],
+        procHighlight: false,
+        tutorialPrompt: null,
         hasStarted: false,
         isRunning: false,
         isPaused: false,
