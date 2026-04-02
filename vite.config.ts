@@ -2,8 +2,22 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 
+function resolveGitHubPagesBase(): string {
+  if (process.env.GITHUB_ACTIONS !== 'true') {
+    return '/';
+  }
+
+  const repositoryName = process.env.GITHUB_REPOSITORY?.split('/')[1];
+  if (!repositoryName || repositoryName.endsWith('.github.io')) {
+    return '/';
+  }
+
+  return `/${repositoryName}/`;
+}
+
 // https://vitejs.dev/config/
 export default defineConfig({
+  base: resolveGitHubPagesBase(),
   plugins: [react()],
   resolve: {
     alias: {
@@ -13,7 +27,6 @@ export default defineConfig({
       '@data': resolve(__dirname, 'src/core/data'),
     },
   },
-  base: './',
   build: {
     rollupOptions: {
       output: {

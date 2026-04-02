@@ -1,7 +1,7 @@
 // src/core/class_modules/monk/actions/rising_sun_kick.ts
 import { MonkMeleeAction } from '../monk_action';
 import { requireMonkSpellData } from '../../../dbc/monk_spell_data';
-import type { ActionResult } from '../../../engine/action';
+import type { ActionCastFailReason, ActionResult } from '../../../engine/action';
 import { EventType } from '../../../engine/eventQueue';
 import type { SimEventQueue } from '../../../engine/eventQueue';
 import { rollChance } from '../../../engine/rng';
@@ -47,7 +47,7 @@ export class RisingSunKickAction extends MonkMeleeAction {
     return this.p.hasTalent('knowledge_of_the_broken_temple') ? 1 : 2;
   }
 
-  override preCastFailReason(): 'not_available' | undefined {
+  override preCastFailReason(): ActionCastFailReason | undefined {
     return this.p.isBuffActive('rushing_wind_kick') ? 'not_available' : undefined;
   }
 
