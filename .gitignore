@@ -1,2 +1,34 @@
 node_modules
 dist
+.vite
+coverage/
+reports/
+docs/
+scripts/
+tools/
+src/**/__tests__/
+src/**/*.test.ts
+src/**/*.test.tsx
+src/core/validation/
+*.log
+
+# AI / agent instruction files
+AGENTS.md
+agents.md
+CLAUDE.md
+CODEX.md
+GEMINI.md
+TODO.md
+copilot-instructions.md
+.github/
+*.instructions.md
+*.prompt.md
+*.agent.md
+SKILL.md
+
+# Local editor / OS files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.swo
