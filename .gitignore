@@ -20,7 +20,6 @@ CODEX.md
 GEMINI.md
 TODO.md
 copilot-instructions.md
-.github/
 *.instructions.md
 *.prompt.md
 *.agent.md
