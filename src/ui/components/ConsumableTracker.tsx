@@ -12,7 +12,6 @@ interface ConsumableTrackerDef {
   emoji: string;
   displayName: string;
   cdTotal: number;
-  activeBuffId?: string;
 }
 
 export interface ConsumableTrackerProps {
@@ -23,9 +22,9 @@ export interface ConsumableTrackerProps {
 }
 
 const CONSUMABLE_TRACKERS: readonly ConsumableTrackerDef[] = [
-  { spellId: 'berserking', iconName: 'racial_troll_berserk', emoji: '🔴', displayName: 'Berserking', cdTotal: 180, activeBuffId: 'berserking' },
-  { spellId: 'algethar_puzzle_box', iconName: 'inv_misc_enggizmos_18', emoji: '💎', displayName: "Algeth'ar Puzzle Box", cdTotal: 120, activeBuffId: 'algethar_puzzle' },
-  { spellId: 'potion', iconName: 'inv_12_profession_alchemy_voidpotion_red', emoji: '🧪', displayName: 'Potion', cdTotal: 300, activeBuffId: 'potion_of_recklessness_haste' },
+  { spellId: 'berserking', iconName: 'racial_troll_berserk', emoji: '🔴', displayName: 'Berserking', cdTotal: 180 },
+  { spellId: 'algethar_puzzle_box', iconName: 'inv_misc_enggizmos_18', emoji: '💎', displayName: "Algeth'ar Puzzle Box", cdTotal: 120 },
+  { spellId: 'potion', iconName: 'inv_12_profession_alchemy_voidpotion_red', emoji: '🧪', displayName: 'Potion', cdTotal: 300 },
 ];
 
 /**
@@ -37,33 +36,9 @@ export function ConsumableTracker({
   trackedIds,
   iconsPerRow = 12,
 }: ConsumableTrackerProps): React.ReactElement {
+  const visibleTrackers = CONSUMABLE_TRACKERS.filter((def) => !trackedIds || trackedIds.includes(normalizeTrackedId(def.spellId)));
   const gcdRemaining = Math.max(0, gameState.gcdReady - currentTime);
   const gcdTotal = Math.max(0.75, 1.5 / (1 + (gameState.stats?.hastePercent ?? 0) / 100));
-  const visibleTrackers = CONSUMABLE_TRACKERS.flatMap((def) => {
-    if (trackedIds && !trackedIds.includes(normalizeTrackedId(def.spellId))) {
-      return [];
-    }
-
-    const cooldown = gameState.cooldowns.get(def.spellId);
-    const chargeInfo = getCooldownCharges(cooldown, currentTime);
-    const cdRemaining = chargeInfo
-      ? (chargeInfo.current > 0 ? 0 : chargeInfo.nextChargeIn)
-      : Math.max(0, (cooldown?.readyAt ?? currentTime) - currentTime);
-    const activeBuffRemaining = def.activeBuffId
-      ? Math.max(0, (gameState.buffs.get(def.activeBuffId)?.expiresAt ?? 0) - currentTime)
-      : 0;
-
-    if (cdRemaining <= 0 && activeBuffRemaining <= 0) {
-      return [];
-    }
-
-    return [{
-      def,
-      chargeInfo,
-      cdRemaining,
-      activeBuffRemaining,
-    }];
-  });
 
   if (visibleTrackers.length === 0) {
     return <></>;
@@ -89,8 +64,13 @@ export function ConsumableTracker({
         Consumables
       </div>
       <div data-testid="consumable-tracker-row" style={rowStyle}>
-        {visibleTrackers.map(({ def, chargeInfo, cdRemaining, activeBuffRemaining }) => {
+        {visibleTrackers.map((def) => {
           const spell = SHARED_PLAYER_SPELLS.get(def.spellId);
+          const cooldown = gameState.cooldowns.get(def.spellId);
+          const chargeInfo = getCooldownCharges(cooldown, currentTime);
+          const cdRemaining = chargeInfo
+            ? (chargeInfo.current > 0 ? 0 : chargeInfo.nextChargeIn)
+            : Math.max(0, (cooldown?.readyAt ?? currentTime) - currentTime);
 
           return (
             <ActionBarSlot
@@ -102,7 +82,6 @@ export function ConsumableTracker({
               cdTotal={def.cdTotal}
               size={SIZES.cooldownIconLg}
               charges={chargeInfo ? { current: chargeInfo.current, max: chargeInfo.max } : undefined}
-              activeBuffRemaining={activeBuffRemaining}
               gcdRemaining={spell?.isOnGcd ? gcdRemaining : 0}
               gcdTotal={gcdTotal}
               tooltipText={spell?.id !== undefined ? `${def.displayName}\nSpell ID: ${spell.id}` : def.displayName}
