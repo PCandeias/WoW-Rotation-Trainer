@@ -18,6 +18,7 @@ import { processChannelEnd, processChannelTick } from '@core/engine/channel';
 import { processDotTickDetailed } from '@core/engine/dot';
 import type { RngInstance } from '@core/engine/rng';
 import { buffAffectsEnergyRegen, expireSharedPlayerBuff } from '@core/shared/player_effects';
+import { createSharedPlayerActions } from '@core/shared/player_effect_actions';
 import type { SpecRuntime } from '@core/runtime/spec_runtime';
 import { monkWindwalkerRuntime } from '@core/class_modules/monk/monk_spec_runtime';
 
@@ -315,7 +316,11 @@ function cloneLookaheadState(
 ): GameState {
   const sim = state.clone();
   const originalActions = state.action_list ?? new Map();
+  const inferredSharedRace = originalActions.has('berserking')
+    ? 'troll'
+    : (originalActions.has('blood_fury') ? 'orc' : undefined);
   const reboundActions = new Map([
+    ...createSharedPlayerActions(sim, inferredSharedRace).entries(),
     ...runtime.module.create_actions(sim).entries(),
   ]);
   sim.action_list = new Map(originalActions);
