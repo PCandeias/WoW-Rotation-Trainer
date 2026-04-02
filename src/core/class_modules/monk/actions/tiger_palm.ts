@@ -52,22 +52,22 @@ export class TigerPalmAction extends MonkMeleeAction {
       ? baseBkProcChance * (1 + MEMORY_OF_THE_MONASTERY_SPELL.effectN(1).percent())
       : baseBkProcChance;
     if (this.p.hasTalent('combo_breaker') && rollChance(rng, bkProcChance)) {
-      const stacksBefore = this.p.getBuffStacks('blackout_reinforcement');
+      const stacksBefore = this.p.getBuffStacks('combo_breaker');
       const stacksAfter = Math.min(2, Math.max(1, stacksBefore + 1));
-      this.p.applyBuff('blackout_reinforcement', 15, stacksAfter);
+      this.p.applyBuff('combo_breaker', 15, stacksAfter);
       result.newEvents.push(
         stacksBefore > 0
           ? {
               type: EventType.BUFF_STACK_CHANGE,
               time: this.p.currentTime,
-              buffId: 'blackout_reinforcement',
+              buffId: 'combo_breaker',
               stacks: stacksAfter,
               prevStacks: stacksBefore,
             }
           : {
               type: EventType.BUFF_APPLY,
               time: this.p.currentTime,
-              buffId: 'blackout_reinforcement',
+              buffId: 'combo_breaker',
               stacks: stacksAfter,
             },
       );

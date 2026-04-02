@@ -4,13 +4,14 @@ import { LoadoutPanel } from '@ui/screens/LoadoutPanel';
 import { AbilityIcon } from '@ui/components/AbilityIcon';
 import { HudLayoutPreview } from '@ui/components/HudLayoutPreview';
 import { TrackerManagerPanel } from '@ui/components/TrackerManagerPanel';
-import { TARGET_DEBUFF_SPELL_IDS, TRACKED_BUFF_SPELL_IDS } from '@ui/components/trackerSpellIds';
 import { FONTS, T } from '@ui/theme/elvui';
 import { buildCardStyle, buildControlStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
-import { MONK_WINDWALKER_TALENT_LOADOUT } from '@core/data/talentStringDecoder';
+import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
+import { getTalentLoadoutForProfileSpec } from '@core/data/talentStringDecoder';
 import {
   ACTION_BAR_IDS,
   ENCOUNTER_PRESET_OPTIONS,
+  copyActionBarLayoutAndKeybindsFromSpec,
   type ActionBarId,
   type TrainerMode,
   type TrainerSettings,
@@ -18,6 +19,7 @@ import {
 } from '@ui/state/trainerSettings';
 import { resolveEncounterDuration } from '@ui/state/trainerSettings';
 import { cloneLoadout } from '@core/data/loadout';
+import { getPlayableTrainerSpecs, getTrainerSpecDefinition, getTrainerSpecUiDefaults } from '@ui/specs/specCatalog';
 import { getRecentRuns, getSavedRuns, type StoredRunRecord } from '@ui/state/runHistory';
 
 export type SetupTab = 'mode' | 'general' | 'loadout' | 'buffs' | 'consumables' | 'gear' | 'hud' | 'action-bars' | 'history';
@@ -142,6 +144,17 @@ export function SetupScreen({
   onSaveHistoryRun,
   onDeleteHistoryRun,
 }: SetupScreenProps): React.ReactElement {
+  const specDefinition = getTrainerSpecDefinition(settings.selectedSpec);
+  const profileSpec = specDefinition.profileSpec;
+  const specUiDefaults = getTrainerSpecUiDefaults(settings.selectedSpec);
+  const talentDefinition = getTalentLoadoutForProfileSpec(profileSpec);
+  const defaultProfile = getDefaultProfileForSpec(profileSpec);
+  const accentColor = specDefinition.accentColor;
+  const copyableSpecs = useMemo(
+    () => getPlayableTrainerSpecs().filter((spec) => spec.id !== settings.selectedSpec),
+    [settings.selectedSpec],
+  );
+  const [copySourceSpec, setCopySourceSpec] = useState<TrainerSettings['selectedSpec'] | null>(copyableSpecs[0]?.id ?? null);
   const [activeTab, setActiveTab] = useState<SetupTab>(initialTab);
   const [modeOptionsExpanded, setModeOptionsExpanded] = useState(false);
   const [loadoutOpen, setLoadoutOpen] = useState(false);
@@ -151,8 +164,15 @@ export function SetupScreen({
   const [targetDebuffBlacklistDraft, setTargetDebuffBlacklistDraft] = useState(() => formatSpellIdList(settings.hud.targetDebuffs.blacklistSpellIds));
   const [hudFilterError, setHudFilterError] = useState<string | null>(null);
   const [hudFilterStatus, setHudFilterStatus] = useState<string | null>(null);
-  const supportedBuffBlacklistIds = useMemo(() => new Set(Object.values(TRACKED_BUFF_SPELL_IDS)), []);
-  const supportedTargetDebuffBlacklistIds = useMemo(() => new Set(Object.values(TARGET_DEBUFF_SPELL_IDS)), []);
+  const supportedBuffBlacklistIds = useMemo(() => new Set(Object.values(specUiDefaults.buffSpellIds)), [specUiDefaults.buffSpellIds]);
+  const supportedTargetDebuffBlacklistIds = useMemo(
+    () => new Set(Object.values(specUiDefaults.targetDebuffSpellIds)),
+    [specUiDefaults.targetDebuffSpellIds],
+  );
+
+  useEffect(() => {
+    setCopySourceSpec(copyableSpecs[0]?.id ?? null);
+  }, [copyableSpecs]);
 
   const encounterDuration = resolveEncounterDuration(settings);
   const enabledExternalBuffs = useMemo(
@@ -364,6 +384,10 @@ export function SetupScreen({
     return (
       <div style={root}>
         <HudLayoutPreview
+          profileSpec={profileSpec}
+          buffSpellIds={specUiDefaults.buffSpellIds}
+          actionBarSlots={specUiDefaults.actionBarSlots}
+          currentTalents={new Set(settings.talents)}
           layout={settings.hud.layout}
           layoutScale={settings.hud.general.layoutScale ?? 1}
           actionBars={settings.actionBars}
@@ -405,7 +429,7 @@ export function SetupScreen({
                 title="Practice"
                 subtitle="Guided play"
                 description="Hints enabled with the current practice pacing."
-                accentColor={T.classMonk}
+                accentColor={accentColor}
                 active={settings.mode === 'practice'}
                 onSelect={(mode): void => onChange((current) => ({ ...current, mode }))}
               />
@@ -541,8 +565,8 @@ export function SetupScreen({
                             type="button"
                             style={{
                               ...buttonStyle,
-                              borderColor: settings.practiceSpeedMultiplier === multiplier ? T.classMonk : T.borderBright,
-                              color: settings.practiceSpeedMultiplier === multiplier ? T.classMonk : T.textBright,
+                              borderColor: settings.practiceSpeedMultiplier === multiplier ? accentColor : T.borderBright,
+                              color: settings.practiceSpeedMultiplier === multiplier ? accentColor : T.textBright,
                             }}
                             onClick={(): void => onChange((current) => ({ ...current, practiceSpeedMultiplier: multiplier as 0.25 | 0.5 | 0.75 | 1 }))}
                           >
@@ -821,6 +845,10 @@ export function SetupScreen({
               </section>
             </div>
             <HudLayoutPreview
+              profileSpec={profileSpec}
+              buffSpellIds={specUiDefaults.buffSpellIds}
+              actionBarSlots={specUiDefaults.actionBarSlots}
+              currentTalents={new Set(settings.talents)}
               layout={settings.hud.layout}
               layoutScale={settings.hud.general.layoutScale ?? 1}
               actionBars={settings.actionBars}
@@ -917,6 +945,37 @@ export function SetupScreen({
             <p style={{ color: T.textDim, margin: 0 }}>
               Configure each action bar separately. Enabled bars render as their own movable HUD groups, and the HUD edit mode exposes the same settings on right-click.
             </p>
+            {copyableSpecs.length > 0 ? (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                <label style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.76rem' }}>
+                  Copy action-bar layout & keybinds from{' '}
+                  <select
+                    aria-label="Copy action bar layout and keybinds from spec"
+                    value={copySourceSpec ?? ''}
+                    onChange={(event): void => setCopySourceSpec((event.target.value || null) as TrainerSettings['selectedSpec'] | null)}
+                  >
+                    {copyableSpecs.map((spec) => (
+                      <option key={spec.id} value={spec.id}>
+                        {spec.specName} {spec.className}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  style={buttonStyle}
+                  disabled={copySourceSpec === null}
+                  onClick={(): void => {
+                    if (!copySourceSpec) {
+                      return;
+                    }
+                    onChange((current) => copyActionBarLayoutAndKeybindsFromSpec(current, copySourceSpec));
+                  }}
+                >
+                  Copy Layout & Keybinds
+                </button>
+              </div>
+            ) : null}
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
               <button
                 type="button"
@@ -1023,9 +1082,13 @@ export function SetupScreen({
               })}
             </div>
             <HudLayoutPreview
+              profileSpec={profileSpec}
+              buffSpellIds={specUiDefaults.buffSpellIds}
+              actionBarSlots={specUiDefaults.actionBarSlots}
               layout={settings.hud.layout}
               layoutScale={settings.hud.general.layoutScale ?? 1}
               actionBars={settings.actionBars}
+              currentTalents={new Set(settings.talents)}
               trackerRows={hudLayoutTrackerRows}
               visibility={hudLayoutVisibility}
               cooldownTracking={settings.hud.cooldowns}
@@ -1178,13 +1241,13 @@ export function SetupScreen({
         <main style={panel}>
           <div style={headerRow}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-              <div style={{ width: 72, height: 72, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${T.classMonk}`, boxShadow: `0 16px 30px ${T.glow}` }}>
-                <AbilityIcon iconName="spell_monk_windwalker_spec" emoji="🐉" size={64} alt="Windwalker" />
+              <div style={{ width: 72, height: 72, borderRadius: '50%', overflow: 'hidden', border: `2px solid ${accentColor}`, boxShadow: `0 16px 30px ${accentColor}33` }}>
+                <AbilityIcon iconName={specDefinition.iconName} emoji={specDefinition.emoji} size={64} alt={specDefinition.specName} />
               </div>
               <div>
-                <h1 style={{ margin: 0, fontFamily: FONTS.display, color: T.textBright, fontSize: '2.1rem' }}>Windwalker Setup</h1>
+                <h1 style={{ margin: 0, fontFamily: FONTS.display, color: T.textBright, fontSize: '2.1rem' }}>{specDefinition.specName} Setup</h1>
                 <div style={{ color: T.textDim, fontFamily: FONTS.body, fontSize: '0.96rem' }}>
-                  Configure your encounter, HUD, and loadout before the pull.
+                  Configure your {specDefinition.specName.toLowerCase()} encounter, HUD, and loadout before the pull.
                 </div>
               </div>
             </div>
@@ -1236,7 +1299,8 @@ export function SetupScreen({
 
       {loadoutOpen && (
         <LoadoutPanel
-          definition={MONK_WINDWALKER_TALENT_LOADOUT}
+          definition={talentDefinition}
+          defaultProfile={defaultProfile}
           talents={new Set(settings.talents)}
           talentRanks={new Map(Object.entries(settings.talentRanks))}
           loadout={settings.loadout}

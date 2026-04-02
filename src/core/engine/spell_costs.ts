@@ -20,7 +20,7 @@ export function getSharedUiChiCost(spell: SpellDef, state: SpellCostStateLike): 
 
   if (
     (spell.name === 'blackout_kick' || spell.name === 'blackout_kick_free') &&
-    isBuffActive(state, 'blackout_reinforcement')
+    isBuffActive(state, 'combo_breaker')
   ) {
     return 0;
   }

@@ -44,16 +44,12 @@ export interface RawRunTrace {
   damageTimelineBySecond: number[];
   cumulativeDamageBySecond: number[];
   buffStacksTimelineBySecond: Record<string, number[]>;
+  targetDebuffStacksTimelineBySecond: Record<string, number[]>;
   cooldownTimelineBySecond: Record<string, number[]>;
-  resourceTimelineBySecond: {
-    energy: number[];
-    chi: number[];
-  };
-  wasteTimelineBySecond: {
-    energy: number[];
-    chi: number[];
-  };
+  resourceTimelineBySecond: Record<string, number[]>;
+  wasteTimelineBySecond: Record<string, number[]>;
   waitingTime: number;
+  targetDebuffUptimes: Record<string, number>;
   benchmarkSignature?: BenchmarkSignature;
 }
 
@@ -65,10 +61,7 @@ export interface AnalysisChartPoint {
 
 export interface ResourceWasteChartPoint {
   time: number;
-  playerChi: number;
-  trainerChi: number;
-  playerEnergy: number;
-  trainerEnergy: number;
+  [key: string]: number;
 }
 
 export interface CooldownTimelineRow {
@@ -114,6 +107,14 @@ export interface AbilityDamageBreakdownRow {
   spellId: string;
   player: AbilityDamageBreakdownSide;
   trainer: AbilityDamageBreakdownSide;
+}
+
+export interface TargetDebuffUptimeRow {
+  buffId: string;
+  playerSeconds: number;
+  trainerSeconds: number;
+  playerRatio: number;
+  trainerRatio: number;
 }
 
 export interface AnalysisActiveCooldownState {
@@ -195,6 +196,11 @@ export interface SpecAnalysisProfile {
   finisherSpellIds?: string[];
   exactMistakeSpellIds: string[];
   explainRecommendedSpell(spellId: string): AplRuleExplanation | null;
+  shouldReportRecommendationMismatch?(
+    expectedSpellId: string,
+    actualSpellId: string,
+    playerState: AnalysisDecisionState,
+  ): boolean;
   explainExactDecision?(
     expectedSpellId: string,
     actualSpellId: string,
@@ -225,6 +231,7 @@ export interface RunAnalysisReport {
     resourceWaste: ResourceWasteChartPoint[];
   };
   damageBreakdown?: AbilityDamageBreakdownRow[];
+  targetDebuffUptimes: TargetDebuffUptimeRow[];
   exactMistakes: ExactMistakeEntry[];
   findings: AnalysisFinding[];
 }

@@ -38,16 +38,18 @@ export function buildTraceFromSimResult(
     buffStacksTimelineBySecond: Object.fromEntries(
       Object.entries(result.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
     ),
+    targetDebuffStacksTimelineBySecond: Object.fromEntries(
+      Object.entries(result.targetDebuffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
+    ),
     cooldownTimelineBySecond: {},
-    resourceTimelineBySecond: {
-      energy: [...result.resourceTimelineBySecond.energy],
-      chi: [...result.resourceTimelineBySecond.chi],
-    },
-    wasteTimelineBySecond: {
-      energy: [...result.wasteTimelineBySecond.energy],
-      chi: [...result.wasteTimelineBySecond.chi],
-    },
+    resourceTimelineBySecond: Object.fromEntries(
+      Object.entries(result.resourceTimelineBySecond).map(([resourceId, timeline]) => [resourceId, [...timeline]]),
+    ),
+    wasteTimelineBySecond: Object.fromEntries(
+      Object.entries(result.wasteTimelineBySecond).map(([resourceId, timeline]) => [resourceId, [...timeline]]),
+    ),
     waitingTime: result.waitingTime,
+    targetDebuffUptimes: { ...result.targetDebuffUptimes },
     benchmarkSignature,
   };
 }
@@ -71,6 +73,35 @@ function averageSeries(seriesList: number[][]): number[] {
   }
 
   return averaged;
+}
+
+function averageTimelineRecords(records: Record<string, number[]>[]): Record<string, number[]> {
+  const resourceIds = new Set(records.flatMap((record) => Object.keys(record)));
+  return Object.fromEntries(
+    Array.from(resourceIds, (resourceId) => [
+      resourceId,
+      averageSeries(records.map((record) => record[resourceId] ?? [])),
+    ]),
+  );
+}
+
+function averageScalarRecords(records: Record<string, number>[]): Record<string, number> {
+  const keys = new Set(records.flatMap((record) => Object.keys(record)));
+  return Object.fromEntries(
+    Array.from(keys, (key) => {
+      let total = 0;
+      let count = 0;
+      for (const record of records) {
+        const value = record[key];
+        if (value === undefined) {
+          continue;
+        }
+        total += value;
+        count += 1;
+      }
+      return [key, count > 0 ? total / count : 0];
+    }),
+  );
 }
 
 function averageDamageBySpell(traces: RawRunTrace[]): RawRunTrace['damageBySpell'] {
@@ -174,16 +205,12 @@ export function buildAverageTrainerTrace(
     damageTimelineBySecond: averageSeries(traces.map((trace) => trace.damageTimelineBySecond)),
     cumulativeDamageBySecond: averageSeries(traces.map((trace) => trace.cumulativeDamageBySecond)),
     buffStacksTimelineBySecond: averageBuffTimelines(traces),
+    targetDebuffStacksTimelineBySecond: averageTimelineRecords(traces.map((trace) => trace.targetDebuffStacksTimelineBySecond)),
     cooldownTimelineBySecond: {},
-    resourceTimelineBySecond: {
-      energy: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.energy)),
-      chi: averageSeries(traces.map((trace) => trace.resourceTimelineBySecond.chi)),
-    },
-    wasteTimelineBySecond: {
-      energy: averageSeries(traces.map((trace) => trace.wasteTimelineBySecond.energy)),
-      chi: averageSeries(traces.map((trace) => trace.wasteTimelineBySecond.chi)),
-    },
+    resourceTimelineBySecond: averageTimelineRecords(traces.map((trace) => trace.resourceTimelineBySecond)),
+    wasteTimelineBySecond: averageTimelineRecords(traces.map((trace) => trace.wasteTimelineBySecond)),
     waitingTime: traces.reduce((sum, trace) => sum + trace.waitingTime, 0) / traces.length,
+    targetDebuffUptimes: averageScalarRecords(traces.map((trace) => trace.targetDebuffUptimes)),
     benchmarkSignature,
   };
 }

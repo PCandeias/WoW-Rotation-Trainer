@@ -22,9 +22,11 @@ export enum EventType {
   PLAYER_INPUT,
   PLAYER_CANCEL,
   QUEUED_ABILITY_FIRE,
+  CAST_START,
   ABILITY_CAST,
   CHANNEL_START,
   CHANNEL_TICK,
+  DOT_TICK,
   CHANNEL_END,
   COOLDOWN_READY,
   BUFF_APPLY,
@@ -41,6 +43,8 @@ export enum EventType {
 // Use string literal IDs initially — SpellId and BuffId will be defined more precisely later
 export type SpellId = string;
 export type BuffId = string;
+
+import type { ActionCastContext } from './action';
 
 // DamageSnapshot is defined in damage.ts — import for local use and re-export for consumers
 import type { DamageSnapshot } from './damage';
@@ -59,7 +63,15 @@ export type SimEvent =
   | { type: EventType.RESOURCE_THRESHOLD_READY; time: number; token: number }
   | { type: EventType.PLAYER_INPUT; time: number; ability: SpellId }
   | { type: EventType.PLAYER_CANCEL; time: number }
-  | { type: EventType.ABILITY_CAST; time: number; spellId: SpellId }
+  | { type: EventType.CAST_START; time: number; spellId: SpellId; duration: number; castId: number }
+  | {
+      type: EventType.ABILITY_CAST;
+      time: number;
+      spellId: SpellId;
+      castId?: number;
+      isComboStrike?: boolean;
+      castContext?: ActionCastContext;
+    }
   | {
       type: EventType.CHANNEL_START;
       time: number;
@@ -77,6 +89,18 @@ export type SimEvent =
       snapshot: DamageSnapshot;
       channelId?: number;
       /** Total number of ticks for this channel (for debug log "N of M" display). */
+      totalTicks: number;
+    }
+  | {
+      type: EventType.DOT_TICK;
+      time: number;
+      spellId: SpellId;
+      debuffId: BuffId;
+      targetId: number;
+      dotInstanceId: number;
+      tickNumber: number;
+      snapshot: DamageSnapshot;
+      /** Total number of ticks for this dot (for debug log "N of M" display). */
       totalTicks: number;
     }
   | {
@@ -98,7 +122,14 @@ export type SimEvent =
       prevStacks: number;
     }
   | { type: EventType.AUTO_ATTACK_MH | EventType.AUTO_ATTACK_OH; time: number }
-  | { type: EventType.DELAYED_SPELL_IMPACT; time: number; spellId: SpellId }
+  | {
+      type: EventType.DELAYED_SPELL_IMPACT;
+      time: number;
+      spellId: SpellId;
+      castContext?: ActionCastContext;
+      targetId?: number;
+      targetCount?: number;
+    }
   | { type: EventType.ENERGY_CAP_CHECK; time: number }
   | { type: EventType.TIGEREYE_BREW_TICK; time: number }
   | { type: EventType.COMBAT_WISDOM_TICK; time: number };

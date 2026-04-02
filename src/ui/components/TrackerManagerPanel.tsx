@@ -12,12 +12,12 @@ import type {
   TrainerSettingsUpdater,
 } from '@ui/state/trainerSettings';
 import {
-  BUFF_TRACKERS,
   CONSUMABLE_TRACKERS,
-  ESSENTIAL_COOLDOWN_TRACKERS,
-  UTILITY_COOLDOWN_TRACKERS,
+  getBuffTrackerCatalogForSpec,
+  getCooldownTrackerCatalogForSpec,
   type TrackerCatalogEntry,
 } from '@ui/state/trackerCatalog';
+import { getTrainerSpecDefinition, getTrainerSpecUiDefaults } from '@ui/specs/specCatalog';
 
 type ManagerTab = 'cooldowns' | 'buffs' | 'consumables';
 type BuffAssignment = 'icons' | 'bars' | 'hidden';
@@ -85,6 +85,14 @@ export function TrackerManagerPanel({
   onClearMessages,
   onOpenHudLayoutEditor,
 }: TrackerManagerPanelProps): React.ReactElement {
+  const specDefinition = getTrainerSpecDefinition(settings.selectedSpec);
+  const profileSpec = specDefinition.profileSpec;
+  const specUiDefaults = getTrainerSpecUiDefaults(settings.selectedSpec);
+  const accentColor = specDefinition.accentColor;
+  const buffCatalog = useMemo(
+    () => getBuffTrackerCatalogForSpec(settings.selectedSpec),
+    [settings.selectedSpec],
+  );
   const [activeTab, setActiveTab] = useState<ManagerTab>('cooldowns');
   const [contextEntry, setContextEntry] = useState<ContextEntryState | null>(null);
   const [dragEntry, setDragEntry] = useState<DragEntryState | null>(null);
@@ -271,8 +279,8 @@ export function TrackerManagerPanel({
           setDragEntry(null);
         }}
         style={{
-          ...buildCardStyle({ active: tracked, accentColor: T.classMonk }),
-          border: `1px solid ${tracked ? T.classMonk : T.border}`,
+          ...buildCardStyle({ active: tracked, accentColor }),
+          border: `1px solid ${tracked ? accentColor : T.border}`,
           borderRadius: 14,
           background: tracked
             ? 'linear-gradient(180deg, rgba(18, 39, 34, 0.94), rgba(10, 16, 28, 0.92))'
@@ -368,8 +376,8 @@ export function TrackerManagerPanel({
           setDragEntry(null);
         }}
         style={{
-          ...buildCardStyle({ active: assignment !== 'hidden', accentColor: T.classMonk }),
-          border: `1px solid ${assignment === 'hidden' ? T.border : T.classMonk}`,
+          ...buildCardStyle({ active: assignment !== 'hidden', accentColor }),
+          border: `1px solid ${assignment === 'hidden' ? T.border : accentColor}`,
           borderRadius: 14,
           background: assignment === 'hidden'
             ? 'linear-gradient(180deg, rgba(15, 21, 34, 0.94), rgba(8, 12, 21, 0.9))'
@@ -452,7 +460,7 @@ export function TrackerManagerPanel({
             <div>
               <div style={{ fontFamily: FONTS.display, color: T.textBright, fontSize: '1rem' }}>Buff Trackers</div>
               <div style={{ color: T.textDim, fontFamily: FONTS.body, fontSize: '0.82rem', marginTop: 4 }}>
-                Track Windwalker-specific buffs here. Icon trackers and buff bars are managed as separate groups, and each buff can move between them independently.
+                Track {specDefinition.specName}-specific buffs here. Icon trackers and buff bars are managed as separate groups, and each buff can move between them independently.
               </div>
             </div>
           </div>
@@ -563,7 +571,7 @@ export function TrackerManagerPanel({
             onBuffBlacklistDraftChange,
             [...supportedBuffBlacklistIds].join(', '),
             '196741, 1249625',
-            BUFF_TRACKERS.flatMap((entry) => entry.spellId ? [{
+            buffCatalog.flatMap((entry) => entry.spellId ? [{
               id: `buff-filter-${entry.id}`,
               label: `${entry.displayName} (${entry.spellId})`,
               value: `${entry.spellId}`,
@@ -646,6 +654,10 @@ export function TrackerManagerPanel({
           {activeTab === 'consumables' && renderConsumablesTab()}
 
           <HudLayoutPreview
+            profileSpec={profileSpec}
+            buffSpellIds={specUiDefaults.buffSpellIds}
+            actionBarSlots={specUiDefaults.actionBarSlots}
+            currentTalents={new Set(settings.talents)}
             layout={settings.hud.layout}
             layoutScale={settings.hud.general.layoutScale ?? 1}
             actionBars={settings.actionBars}
@@ -1283,14 +1295,16 @@ function updateEntryOption(
 }
 
 function getCatalogForGroup(settings: TrainerSettings, groupKey: GroupKey): readonly TrackerCatalogEntry[] {
+  const cooldownCatalog = getCooldownTrackerCatalogForSpec(settings.selectedSpec);
+  const buffCatalog = getBuffTrackerCatalogForSpec(settings.selectedSpec);
   switch (groupKey) {
     case 'cooldowns.essential':
-      return getCooldownEntriesForGroup(settings, 'essential');
+      return getCooldownEntriesForGroup(settings, 'essential', cooldownCatalog);
     case 'cooldowns.utility':
-      return getCooldownEntriesForGroup(settings, 'utility');
+      return getCooldownEntriesForGroup(settings, 'utility', cooldownCatalog);
     case 'buffs.iconTracker':
     case 'buffs.barTracker':
-      return BUFF_TRACKERS;
+      return buffCatalog;
     case 'consumables':
       return CONSUMABLE_TRACKERS;
   }
@@ -1302,7 +1316,11 @@ function getCatalogEntry(
   entryId: string,
 ): TrackerCatalogEntry | undefined {
   return getCatalogForGroup(settings, groupKey).find((candidate) => candidate.id === entryId)
-    ?? [...ESSENTIAL_COOLDOWN_TRACKERS, ...UTILITY_COOLDOWN_TRACKERS, ...BUFF_TRACKERS, ...CONSUMABLE_TRACKERS]
+    ?? [
+      ...getCooldownTrackerCatalogForSpec(settings.selectedSpec).all,
+      ...getBuffTrackerCatalogForSpec(settings.selectedSpec),
+      ...CONSUMABLE_TRACKERS,
+    ]
       .find((candidate) => candidate.id === entryId);
 }
 
@@ -1318,19 +1336,20 @@ function orderEntriesByTrackedIds(
 }
 
 function getBuffEntriesForAssignment(settings: TrainerSettings, assignment: BuffAssignment): TrackerCatalogEntry[] {
+  const buffCatalog = getBuffTrackerCatalogForSpec(settings.selectedSpec);
   switch (assignment) {
     case 'icons':
-      return orderEntriesByTrackedIds(BUFF_TRACKERS, settings.hud.buffs.iconTracker.trackedEntryIds)
+      return orderEntriesByTrackedIds(buffCatalog, settings.hud.buffs.iconTracker.trackedEntryIds)
         .filter((entry) => settings.hud.buffs.iconTracker.trackedEntryIds.includes(entry.id));
     case 'bars':
-      return orderEntriesByTrackedIds(BUFF_TRACKERS, settings.hud.buffs.barTracker.trackedEntryIds)
+      return orderEntriesByTrackedIds(buffCatalog, settings.hud.buffs.barTracker.trackedEntryIds)
         .filter((entry) => settings.hud.buffs.barTracker.trackedEntryIds.includes(entry.id));
     case 'hidden': {
       const visibleIds = new Set([
         ...settings.hud.buffs.iconTracker.trackedEntryIds,
         ...settings.hud.buffs.barTracker.trackedEntryIds,
       ]);
-      return BUFF_TRACKERS.filter((entry) => !visibleIds.has(entry.id));
+      return buffCatalog.filter((entry) => !visibleIds.has(entry.id));
     }
   }
 }
@@ -1338,14 +1357,23 @@ function getBuffEntriesForAssignment(settings: TrainerSettings, assignment: Buff
 function getCooldownEntriesForGroup(
   settings: TrainerSettings,
   group: CooldownAssignment,
+  cooldownCatalog = getCooldownTrackerCatalogForSpec(settings.selectedSpec),
 ): readonly TrackerCatalogEntry[] {
-  return [...ESSENTIAL_COOLDOWN_TRACKERS, ...UTILITY_COOLDOWN_TRACKERS].filter(
+  return cooldownCatalog.all.filter(
     (entry) => getCooldownAssignment(settings, entry.id) === group,
   );
 }
 
 function getDefaultCooldownAssignment(entryId: string): CooldownAssignment {
-  return UTILITY_COOLDOWN_TRACKERS.some((entry) => entry.id === entryId) ? 'utility' : 'essential';
+  return entryId === 'touch_of_karma'
+    || entryId === 'feral_spirit'
+    || entryId === 'surging_totem'
+    || entryId === 'doom_winds'
+    || entryId === 'ascendance'
+    || entryId === 'sundering'
+    || entryId === 'blood_fury'
+    ? 'utility'
+    : 'essential';
 }
 
 function getCooldownAssignment(settings: TrainerSettings, entryId: string): CooldownAssignment {

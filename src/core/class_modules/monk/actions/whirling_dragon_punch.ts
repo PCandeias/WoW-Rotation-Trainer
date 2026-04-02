@@ -27,8 +27,8 @@ const THUNDERFIST_DURATION_SECONDS = THUNDERFIST_BUFF.duration_ms() > 0
   : (MONK_WW_BUFFS.get('thunderfist')?.duration ?? 60);
 const TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.maxStacks ?? 4;
 const TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.duration ?? 20;
-const BLACKOUT_REINFORCEMENT_MAX_STACKS = MONK_WW_BUFFS.get('blackout_reinforcement')?.maxStacks ?? 2;
-const BLACKOUT_REINFORCEMENT_DURATION_SECONDS = MONK_WW_BUFFS.get('blackout_reinforcement')?.duration ?? 15;
+const BLACKOUT_REINFORCEMENT_MAX_STACKS = MONK_WW_BUFFS.get('combo_breaker')?.maxStacks ?? 2;
+const BLACKOUT_REINFORCEMENT_DURATION_SECONDS = MONK_WW_BUFFS.get('combo_breaker')?.duration ?? 15;
 
 export class WhirlingDragonPunchAction extends MonkMeleeAction {
   readonly name = 'whirling_dragon_punch';
@@ -164,16 +164,16 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
       });
     }
 
-    // echo_technique: +1 blackout_reinforcement stack (cap at 2)
+    // echo_technique: +1 combo_breaker stack (cap at 2)
     if (this.p.hasTalent('echo_technique')) {
-      const stacksBefore = this.p.getBuffStacks('blackout_reinforcement');
+      const stacksBefore = this.p.getBuffStacks('combo_breaker');
       const stacksAfter = Math.min(BLACKOUT_REINFORCEMENT_MAX_STACKS, Math.max(1, stacksBefore + 1));
-      this.p.applyBuff('blackout_reinforcement', BLACKOUT_REINFORCEMENT_DURATION_SECONDS, stacksAfter);
+      this.p.applyBuff('combo_breaker', BLACKOUT_REINFORCEMENT_DURATION_SECONDS, stacksAfter);
       if (stacksBefore > 0) {
         result.newEvents.push({
           type: EventType.BUFF_STACK_CHANGE,
           time: this.p.currentTime,
-          buffId: 'blackout_reinforcement',
+          buffId: 'combo_breaker',
           stacks: stacksAfter,
           prevStacks: stacksBefore,
         });
@@ -181,7 +181,7 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
         result.newEvents.push({
           type: EventType.BUFF_APPLY,
           time: this.p.currentTime,
-          buffId: 'blackout_reinforcement',
+          buffId: 'combo_breaker',
         });
       }
     }

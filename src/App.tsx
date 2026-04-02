@@ -6,10 +6,12 @@ import { SetupScreen, type SetupTab } from '@ui/screens/SetupScreen';
 import { cloneLoadout } from '@core/data/loadout';
 import {
   resolveEncounterDuration,
+  switchTrainerSpec,
   toTalentRankMap,
   toTalentSet,
   useTrainerSettings,
 } from '@ui/state/trainerSettings';
+import { isTrainerSpecPlayable } from '@ui/specs/specCatalog';
 import {
   addRunToHistory,
   createStoredRunRecord,
@@ -157,6 +159,7 @@ export function App(): React.JSX.Element {
   if (screen === 'encounter') {
     return (
       <EncounterScreen
+        selectedSpec={settings.selectedSpec}
         mode={settings.mode}
         speedMultiplier={settings.mode === 'practice' ? settings.practiceSpeedMultiplier : 1}
         challengeSettings={settings.challenge}
@@ -251,13 +254,16 @@ export function App(): React.JSX.Element {
   }
 
   return (
-    <SpecSelectionScreen
-      selectedSpec={settings.selectedSpec}
-      onSelectSpec={(selectedSpec): void => {
-        setSettings((current) => ({ ...current, selectedSpec }));
-        setSetupInitialTab('mode');
-        setScreen('setup');
-      }}
-    />
+      <SpecSelectionScreen
+        selectedSpec={settings.selectedSpec}
+        onSelectSpec={(selectedSpec): void => {
+          if (!isTrainerSpecPlayable(selectedSpec)) {
+            return;
+          }
+          setSettings((current) => switchTrainerSpec(current, selectedSpec));
+          setSetupInitialTab('mode');
+          setScreen('setup');
+        }}
+      />
   );
 }

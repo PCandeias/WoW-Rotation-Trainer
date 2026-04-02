@@ -17,6 +17,11 @@ function isBlockedByActiveChannel(state: GameState, spellId: string): boolean {
   return isCastLockedByActiveChannel(state, spell);
 }
 
+function isBlockedByActiveCast(state: GameState): boolean {
+  const activeCast = state.getActiveCast();
+  return activeCast !== null && state.currentTime < activeCast.endsAt;
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -48,16 +53,17 @@ export function tryQueueAbility(
 ): boolean {
   const window = queueWindow ?? DEFAULT_QUEUE_WINDOW;
   const blockedByActiveChannel = isBlockedByActiveChannel(state, spellId);
+  const blockedByActiveCast = isBlockedByActiveCast(state);
   const gcdRemaining = state.gcdReady - state.currentTime;
 
   // GCD already ready — ability should be cast directly, not queued
-  if (state.isGcdReady() && !blockedByActiveChannel) {
+  if (state.isGcdReady() && !blockedByActiveChannel && !blockedByActiveCast) {
     return false;
   }
 
   // If an active uninterruptible channel blocks this spell, keep the queued
   // input until the channel lock is released.
-  if (blockedByActiveChannel) {
+  if (blockedByActiveChannel || blockedByActiveCast) {
     state.queuedAbility = spellId;
     state.queuedAt = state.currentTime;
     state.queuedWindow = Number.POSITIVE_INFINITY;
@@ -96,6 +102,10 @@ export function drainQueue(state: GameState): string | null {
   }
 
   if (isBlockedByActiveChannel(state, state.queuedAbility)) {
+    return null;
+  }
+
+  if (isBlockedByActiveCast(state)) {
     return null;
   }
 

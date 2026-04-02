@@ -7,6 +7,7 @@ import type { GameStateSnapshot } from '@core/engine/gameState';
 import { TargetDebuffTracker } from './TargetDebuffTracker';
 
 export interface TargetFrameProps {
+  profileSpec?: string;
   /** Current snapshot, used to derive visible target debuffs. */
   gameState?: GameStateSnapshot;
   /** Total damage dealt so far (retained for compatibility with existing callers). */
@@ -29,6 +30,7 @@ export interface TargetFrameProps {
  * Shows the target's remaining HP as a percentage.
  */
 export function TargetFrame({
+  profileSpec = 'monk',
   gameState,
   totalDamage: _totalDamage,
   encounterDuration,
@@ -90,6 +92,7 @@ export function TargetFrame({
           <TargetDebuffTracker
             gameState={gameState}
             currentTime={currentTime}
+            profileSpec={profileSpec}
             blacklistSpellIds={debuffBlacklistSpellIds}
           />
         </div>

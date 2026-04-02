@@ -40,6 +40,7 @@ export type FailReason =
   | 'insufficient_energy'
   | 'on_gcd'
   | 'channel_locked'
+  | 'cast_locked'
   | 'on_cooldown'
   | 'execute_not_ready'
   | 'wdp_constraint'
@@ -61,6 +62,7 @@ export interface ExecutionResult {
   isComboStrike: boolean;
   /** Whether the hit was a critical strike (false for misses, channels, utility) */
   isCrit: boolean;
+  executeTime?: number;
   /** Events pushed to the queue during this execution */
   events: SimEvent[];
 }
@@ -78,6 +80,17 @@ function hasteScaledGcd(hastePercent: number): number {
 
 function effectiveGcdDuration(_spell: SpellDef, hastePercent: number): number {
   return hasteScaledGcd(hastePercent);
+}
+
+function effectiveCastTime(spell: SpellDef, state: GameState, hastePercent: number): number {
+  const baseDuration = spell.castTime ?? 0;
+  if (baseDuration <= 0) {
+    return 0;
+  }
+
+  const action = state.action_list?.get(spell.name);
+  const fallbackDuration = baseDuration / (1 + hastePercent / 100);
+  return action?.castTime(baseDuration, hastePercent) ?? fallbackDuration;
 }
 
 function resolveRegisteredAction(state: GameState, spell: SpellDef): Action | undefined {
@@ -125,6 +138,11 @@ export function getAbilityFailReason(
 
   if (isCastLockedByActiveChannel(state, spell)) {
     return 'channel_locked';
+  }
+
+  const activeCast = state.getActiveCast();
+  if (activeCast !== null && state.currentTime < activeCast.endsAt) {
+    return 'cast_locked';
   }
 
   if (spell.cooldown > 0 && !state.isCooldownReady(spell.name)) {
@@ -295,6 +313,7 @@ export function executeAbility(
     damage: 0,
     isComboStrike: false,
     isCrit: false,
+    executeTime: 0,
     events: collected,
   });
 
@@ -373,6 +392,50 @@ export function executeAbility(
 
   startAbilityCooldown(spell, state, queue, collected);
 
+  state.recordGcdAbility(comboStrikeCheckName);
+  if (mayComboStrike) {
+    state.lastComboStrikeAbility = comboStrikeCheckName;
+  }
+  state.lastCastAbility = spell.name;
+
+  const castTime = effectiveCastTime(spell, state, hastePercent);
+  if (!spell.isChanneled && castTime > 0) {
+    const castId = state.startCast(spell.name, castTime, isComboStrike);
+    const castContext = registeredAction?.createCastContext();
+    pushEvent(
+      {
+        type: EventType.CAST_START,
+        time: state.currentTime,
+        spellId: spell.name,
+        duration: castTime,
+        castId,
+      },
+      queue,
+      collected,
+    );
+    pushEvent(
+      {
+        type: EventType.ABILITY_CAST,
+        time: state.currentTime + castTime,
+        spellId: spell.name,
+        castId,
+        isComboStrike,
+        castContext,
+      },
+      queue,
+      collected,
+    );
+
+    return {
+      success: true,
+      damage: 0,
+      isComboStrike,
+      isCrit: false,
+      executeTime: castTime,
+      events: collected,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Damage / channel scheduling
   // -------------------------------------------------------------------------
@@ -385,7 +448,7 @@ export function executeAbility(
     // Damage from channeled spells comes from tick events, so we discard result.damage.
     const channelAction = state.action_list?.get(spell.name);
     if (channelAction) {
-      const actionResult = channelAction.execute(queue, rng, isComboStrike);
+      const actionResult = channelAction.execute(queue, rng, isComboStrike, channelAction.createCastContext());
       applyActionResult(state, queue, collected, actionResult);
     }
 
@@ -453,7 +516,7 @@ export function executeAbility(
       // Dispatch to Action class if available (e.g. TouchOfDeathAction)
       const executeAction = state.action_list?.get(spell.name);
       if (executeAction) {
-        const result = executeAction.execute(queue, rng, isComboStrike);
+        const result = executeAction.execute(queue, rng, isComboStrike, executeAction.createCastContext());
         damage = result.damage;
         isCrit = result.isCrit;
         state.addDamage(damage);
@@ -466,7 +529,7 @@ export function executeAbility(
       // Dispatch to Action class if available (migrated spells)
       const action = state.action_list?.get(spell.name);
       if (action) {
-        const result = action.execute(queue, rng, isComboStrike);
+        const result = action.execute(queue, rng, isComboStrike, action.createCastContext());
         damage = result.damage;
         isCrit = result.isCrit;
         state.addDamage(damage);
@@ -517,17 +580,6 @@ export function executeAbility(
   }
 
   // -------------------------------------------------------------------------
-  // prev_gcd + combo_strike tracking
-  // SimC: combo_strike_actions is only updated for may_combo_strike abilities.
-  // (sc_monk.cpp:418-419)
-  // -------------------------------------------------------------------------
-
-  state.recordGcdAbility(comboStrikeCheckName);
-  if (mayComboStrike) {
-    state.lastComboStrikeAbility = comboStrikeCheckName;
-  }
-
-  // -------------------------------------------------------------------------
   // Proc chains
   // -------------------------------------------------------------------------
 
@@ -550,17 +602,102 @@ export function executeAbility(
   // Fire shared post-execution hooks (trinket procs, etc.)
   state.executionHooks.onAbilityExecuted?.(state, spell, rng, queue);
 
-  // -------------------------------------------------------------------------
-  // lastCastAbility update
-  // -------------------------------------------------------------------------
+  return {
+    success: true,
+    damage,
+    isComboStrike,
+    isCrit,
+    executeTime: 0,
+    events: collected,
+  };
+}
 
-  state.lastCastAbility = spell.name;
+export function processAbilityCast(
+  event: Extract<SimEvent, { type: EventType.ABILITY_CAST }>,
+  state: GameState,
+  queue: SimEventQueue,
+  rng: RngInstance,
+): ExecutionResult {
+  const spell = state.executionHooks.resolveSpellDef?.(state, event.spellId);
+  if (!spell) {
+    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [] };
+  }
+
+  if (event.castId !== undefined && !state.completeCast(event.spellId, event.castId)) {
+    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [] };
+  }
+
+  const collected: SimEvent[] = [];
+  let damage = 0;
+  let isCrit = false;
+  const isComboStrike = event.isComboStrike ?? false;
+  const registeredAction = resolveRegisteredAction(state, spell);
+
+  if (spell.isExecute) {
+    const executeAction = state.action_list?.get(spell.name);
+    if (executeAction) {
+      const result = executeAction.execute(queue, rng, isComboStrike, event.castContext);
+      damage = result.damage;
+      isCrit = result.isCrit;
+      state.addDamage(damage);
+      applyActionResult(state, queue, collected, result);
+    }
+  } else {
+    const action = state.action_list?.get(spell.name);
+    if (action) {
+      const result = action.execute(queue, rng, isComboStrike, event.castContext);
+      damage = result.damage;
+      isCrit = result.isCrit;
+      state.addDamage(damage);
+      applyActionResult(state, queue, collected, result);
+    } else {
+      const dmgResult = calculateDamage(spell, state, rng, isComboStrike);
+      damage = dmgResult.finalDamage;
+      isCrit = dmgResult.isCrit;
+      state.addDamage(damage);
+    }
+  }
+
+  if (spell.buffApplied) {
+    const buffDuration = spell.buffDuration ?? 0;
+    if (buffAffectsEnergyRegen(spell.buffApplied)) {
+      state.settleEnergy();
+    }
+    state.applyBuff(spell.buffApplied, buffDuration, spell.buffMaxStacks ?? 1);
+    if (buffAffectsEnergyRegen(spell.buffApplied)) {
+      state.recomputeEnergyRegenRate();
+    }
+    pushEvent(
+      {
+        type: EventType.BUFF_APPLY,
+        time: state.currentTime,
+        buffId: spell.buffApplied,
+      },
+      queue,
+      collected,
+    );
+    if (buffDuration > 0) {
+      pushEvent(
+        {
+          type: EventType.BUFF_EXPIRE,
+          time: state.currentTime + buffDuration,
+          buffId: spell.buffApplied,
+        },
+        queue,
+        collected,
+      );
+    }
+  }
+
+  registeredAction?.afterExecute(queue, rng);
+  state.executionHooks.onAbilityExecuted?.(state, spell, rng, queue);
 
   return {
     success: true,
     damage,
     isComboStrike,
     isCrit,
+    executeTime: 0,
     events: collected,
   };
 }

@@ -1,6 +1,7 @@
 import type { CastAction } from '../apl/actionList';
 import { cloneLoadout, createEmptyLoadout } from '../data/loadout';
 import type { CharacterProfile } from '../data/profileParser';
+import { convertSecondaryRatingToPercent } from '../data/profileParser';
 import type { SpellDef } from '../data/spells';
 import type { GameState, GameStateExecutionHooks } from '../engine/gameState';
 import { EventType } from '../engine/eventQueue';
@@ -8,10 +9,13 @@ import type { RngInstance } from '../engine/rng';
 import type { SimEventQueue } from '../engine/eventQueue';
 import { createRppmTracker, attemptProc, type RppmTracker } from '../engine/rppm';
 import { SHARED_PLAYER_SPELLS, getSharedTargetDebuffMultiplier } from './player_effects';
-import { createSharedPlayerActions } from './player_effect_actions';
+import {
+  createSharedPlayerActions,
+  getAllSharedRacialActionNames,
+  getAvailableSharedRacialActionNames,
+} from './player_effect_actions';
 
 const SHARED_USE_BUFF_TRINKETS = new Set(['algethar_puzzle_box']);
-const HASTE_RATING_PER_PCT = 33;
 const FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING = 89.39348;
 const HARANDAR_CELEBRATION_PRIMARY_STAT = 50;
 const VOID_TOUCHED_PRIMARY_STAT = 25.10191;
@@ -34,11 +38,26 @@ const GEM_COLOR_BY_ID = new Map<number, 'peridot' | 'garnet' | 'amethyst' | 'lap
   [240916, 'lapis'],
   [240918, 'lapis'],
 ]);
-const SHARED_PROC_EXCLUDED_SPELLS = new Set(['potion', 'berserking', 'algethar_puzzle_box']);
+const SHARED_PROC_EXCLUDED_SPELLS = new Set(['bloodlust', 'potion', 'berserking', 'algethar_puzzle_box']);
 const DISABLED_CONSUMABLE_VALUES = new Set(['disabled', 'none', '0']);
 
 type LoaProcId = 'blessing_of_the_capybara' | 'akilzons_cry_of_victory';
 type HuntBuffId = 'hasty_hunt' | 'focused_hunt' | 'masterful_hunt' | 'versatile_hunt';
+
+function profileHasEmbeddedAction(profile: CharacterProfile, actionName: string): boolean {
+  return profile.rawLines.some((line) => {
+    if (!line.startsWith('actions')) {
+      return false;
+    }
+    const eqIndex = line.indexOf('=');
+    if (eqIndex < 0) {
+      return false;
+    }
+    return line.slice(eqIndex + 1)
+      .split('/')
+      .some((segment) => segment.trim().split(',')[0] === actionName);
+  });
+}
 
 interface LoaProcState {
   tracker: RppmTracker;
@@ -211,6 +230,9 @@ function resolveRaidRandomHuntBuff(rng: RngInstance): HuntBuffId {
 export function initializeSharedPlayerState(state: GameState, profile: CharacterProfile): void {
   const loadout = cloneLoadout(profile.loadout ?? createEmptyLoadout());
   const trinketEffects = profile.gearEffects.filter((effect) => effect.source.startsWith('trinket_'));
+  const bloodlustEnabled = loadout.externalBuffs.bloodlust;
+  const bloodlustIsActionDriven = profileHasEmbeddedAction(profile, 'bloodlust');
+  const availableRacials = new Set(getAvailableSharedRacialActionNames(profile.race));
 
   // Mystic Touch is modeled as a target-side assumption flag, not a standard buff.
   state.assumeMysticTouch = loadout.externalBuffs.mysticTouch;
@@ -247,7 +269,7 @@ export function initializeSharedPlayerState(state: GameState, profile: Character
     });
   }
 
-  if (loadout.externalBuffs.bloodlust) {
+  if (bloodlustEnabled && !bloodlustIsActionDriven) {
     state.applyBuff('bloodlust', 40);
   }
   if (loadout.externalBuffs.battleShout) {
@@ -280,8 +302,17 @@ export function initializeSharedPlayerState(state: GameState, profile: Character
 
   state.recomputeEnergyRegenRate();
   state.executionHooks = createSharedPlayerExecutionHooks();
-  state.action_list = createSharedPlayerActions(state);
+  state.action_list = createSharedPlayerActions(state, profile.race);
 
+  for (const actionName of getAllSharedRacialActionNames()) {
+    if (!availableRacials.has(actionName)) {
+      state.disabledPlayerActions.add(actionName);
+    }
+  }
+
+  if (!bloodlustIsActionDriven) {
+    state.disabledPlayerActions.add('bloodlust');
+  }
   if (isConsumableDisabled(loadout.consumables.potion)) {
     state.disabledPlayerActions.add('potion');
   }
@@ -293,7 +324,22 @@ function applyPassiveLoadoutStats(
   loadout: ReturnType<typeof cloneLoadout>,
 ): void {
   if (loadout.consumables.flask === 'flask_of_the_blood_knights_2') {
-    state.stats.hastePercent += FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING / HASTE_RATING_PER_PCT;
+    const baseHasteRating = state.stats.hasteRating ?? 0;
+    const totalHasteRating = baseHasteRating + FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING;
+    state.stats.hasteRating = totalHasteRating;
+    if (baseHasteRating > 0) {
+      state.stats.hastePercent = convertSecondaryRatingToPercent(
+        totalHasteRating,
+        'haste',
+        state.characterLevel,
+      );
+    } else {
+      state.stats.hastePercent += convertSecondaryRatingToPercent(
+        FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING,
+        'haste',
+        state.characterLevel,
+      );
+    }
   }
 
   if (loadout.consumables.food === 'harandar_celebration') {
@@ -352,7 +398,7 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
       return undefined;
     },
     deferCooldownUntilChannelEnd: (_state, spell): boolean => spell.name === 'algethar_puzzle_box',
-    onCooldownStarted: (state, spell, duration): void => {
+    onCooldownStarted: (state, spell, _duration): void => {
       if (spell.name !== 'algethar_puzzle_box') {
         return;
       }
@@ -360,7 +406,6 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
       const slotIndex = state.trinkets.findIndex((trinket) => trinket.itemName === 'algethar_puzzle_box');
       state.pendingUseBuffStartedAt.set(spell.name, state.currentTime);
       if (slotIndex >= 0) {
-        state.trinkets[slotIndex].cooldownReadyAt = state.currentTime + duration;
         state.trinkets[slotIndex].pendingUseBuffStartedAt = state.currentTime;
       }
     },
@@ -381,7 +426,11 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
       state.delayCooldown('algethar_puzzle_box', elapsed);
 
       if (slotIndex >= 0) {
-        state.trinkets[slotIndex].cooldownReadyAt += elapsed;
+        const aplCooldownDuration = SHARED_PLAYER_SPELLS.get('algethar_puzzle_box')?.cooldown;
+        if (aplCooldownDuration === undefined) {
+          throw new Error('Missing shared spell cooldown for algethar_puzzle_box');
+        }
+        state.trinkets[slotIndex].cooldownReadyAt = startedAt + aplCooldownDuration;
         state.trinkets[slotIndex].pendingUseBuffStartedAt = undefined;
       }
       state.pendingUseBuffStartedAt.delete(event.spellId);

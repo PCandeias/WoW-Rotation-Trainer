@@ -190,12 +190,6 @@ export function initializeMonkRuntimeState(state: GameState): void {
       return s.hasTalent('against_all_odds') ? 0.04 : 0;
     },
     getAttackPowerWeaponMultiplierBonus: (_s: IGameState): number => 0,
-    getHastePercentBonus: (s: IGameState): number => {
-      if (statsSeedIncludesPassiveBonuses || !s.hasTalent('veterans_eye')) {
-        return 0;
-      }
-      return 5;
-    },
   };
 
   state.executionHooks = {
@@ -232,7 +226,7 @@ export function initializeMonkRuntimeState(state: GameState): void {
       let cost = baseCost;
       if (
         (spell.name === 'blackout_kick' || spell.name === 'blackout_kick_free') &&
-        s.isBuffActive('blackout_reinforcement')
+        s.isBuffActive('combo_breaker')
       ) {
         cost = 0;
       }
@@ -251,23 +245,18 @@ export function initializeMonkRuntimeState(state: GameState): void {
       s.isBuffActive('zenith') || s.isBuffActive('celestial_conduit_active') ? 1 : 0
     ),
     // WW Monk GCD: spec aura 1258122 eff#8 reduces base GCD 1.5s → 1.0s; gcd_type=NONE (non-hasted).
-    // SimC: sc_monk.cpp:492. The 1.5s haste-scaled default is doubly wrong for WW.
+    // SimC: sc_monk.cpp:492.
     getGcdDuration: (_s, _spell, _default, _hastePercent): number => 1.0,
-    /**
-     * SimC gcd.max = base_gcd (1.5s) × attack_haste, min 750ms.
-     * For energy classes, base_regen / energyRegenRate == attack_haste,
-     * so we derive gcd.max from the live energy regen rate.
-     *
-     * Under normal conditions this is mathematically identical to the
-     * default `1.5 / (1 + hastePercent / 100)`.  The hook exists because
-     * the APL validator injects energyRegenRate directly from SimC logs,
-     * so deriving gcd.max from energyRegenRate keeps both in sync even
-     * if hastePercent is not perfectly aligned.
-     */
-    getGcdMax: (s, _defaultGcd): number => {
-      const baseRegen = 10 * s.energyRegenMultiplier;
-      return Math.max(0.75, 1.5 * baseRegen / s.energyRegenRate);
-    },
+    // SimC APL gcd.max is still the generic haste-scaled base GCD (action.cpp:gcd_expr_t),
+    // distinct from the actual fixed 1.0s WW trigger_gcd. During validation we inject the
+    // exact SimC energy regen rate, but that rate can also include non-haste multipliers
+    // such as Ascension's +10% energy regeneration. Strip those back out before deriving
+    // gcd.max so only the shared haste term influences the result.
+    getGcdMax: (s, defaultGcd): number => (
+      s.energyRegenRate > 0 && s.energyRegenMultiplier > 0
+        ? Math.max(0.75, 15 / (s.energyRegenRate / s.energyRegenMultiplier))
+        : defaultGcd
+    ),
     getUnregisteredCooldownDuration: (s, spell, baseDuration, hasteScalesCooldown): number => {
       let adjusted = baseDuration;
       if (spell.name === 'whirling_dragon_punch' || spell.name === 'strike_of_the_windlord') {

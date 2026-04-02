@@ -40,8 +40,12 @@ export interface DamageSnapshot {
   targetMultiplier: number;
   /** Attack power coefficient for this spell */
   apCoefficient: number;
+  /** Spell power coefficient for this spell. */
+  spellPowerCoefficient?: number;
   /** Attack power at snapshot time */
   attackPower: number;
+  /** Spell power at snapshot time. */
+  spellPower?: number;
   /** Minimum base damage at snapshot time */
   baseDmgMin: number;
   /** Maximum base damage at snapshot time */
@@ -150,7 +154,9 @@ export function captureSnapshot(
     versatilityMultiplier: computeVersatilityMultiplier(state),
     targetMultiplier: computeTargetMultiplier(spell, state),
     apCoefficient: spell.apCoefficient,
+    spellPowerCoefficient: spell.spCoefficient ?? 0,
     attackPower: state.getWeaponMainHandAttackPower?.() ?? state.getAttackPower(),
+    spellPower: state.getSpellPower?.() ?? 0,
     baseDmgMin: spell.baseDmgMin,
     baseDmgMax: spell.baseDmgMax,
     critChance: computeSpellCritChance(spell, state),
@@ -176,7 +182,10 @@ export function calculateDamage(
 ): DamageResult {
   // Execute spells (Touch of Death) — damage is based on target HP, handled externally
   // Zero-coefficient utility spells return zero immediately
-  if (spell.isExecute || (spell.apCoefficient === 0 && spell.baseDmgMin === 0 && spell.baseDmgMax === 0)) {
+  if (
+    spell.isExecute
+    || (spell.apCoefficient === 0 && (spell.spCoefficient ?? 0) === 0 && spell.baseDmgMin === 0 && spell.baseDmgMax === 0)
+  ) {
     return {
       baseDamage: 0,
       finalDamage: 0,
@@ -202,7 +211,9 @@ export function calculateDamage(
 
   // Resolve base values — use snapshot if provided
   const apCoeff = snapshot?.apCoefficient ?? spell.apCoefficient;
+  const spCoeff = snapshot?.spellPowerCoefficient ?? spell.spCoefficient ?? 0;
   const ap = snapshot?.attackPower ?? (state.getWeaponMainHandAttackPower?.() ?? state.getAttackPower());
+  const sp = snapshot?.spellPower ?? (state.getSpellPower?.() ?? 0);
   const dmgMin = snapshot?.baseDmgMin ?? spell.baseDmgMin;
   const dmgMax = snapshot?.baseDmgMax ?? spell.baseDmgMax;
 
@@ -211,8 +222,8 @@ export function calculateDamage(
     ? dmgMin
     : rollRange(rng, dmgMin, dmgMax);
 
-  // Base damage = rolled base + AP scaling
-  const baseDamage = baseDmg + apCoeff * ap;
+  // Base damage = rolled base + AP scaling + SP scaling
+  const baseDamage = baseDmg + apCoeff * ap + spCoeff * sp;
 
   // Apply multipliers
   const combined = actionMult * playerMult * masteryMult * hitComboMult * versMult * targetMult;

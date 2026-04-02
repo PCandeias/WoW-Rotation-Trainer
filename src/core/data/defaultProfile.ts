@@ -1,4 +1,5 @@
 import monkProfileText from './profiles/monk_windwalker_mid1.simc?raw';
+import shamanProfileText from './profiles/shaman_enhancement_mid1.simc?raw';
 
 import { cloneLoadout, createEmptyLoadout, withSimcOptimalRaidExternalBuffs } from './loadout';
 import type { CharacterProfile, CharacterStats } from './profileParser';
@@ -28,6 +29,21 @@ const BASE_DEFAULT_MONK_WINDWALKER_PROFILE: CharacterProfile = (() : CharacterPr
   };
 })();
 
+const BASE_DEFAULT_SHAMAN_ENHANCEMENT_PROFILE: CharacterProfile = (() : CharacterProfile => {
+  const parsed = parseProfile(shamanProfileText);
+  const baseLoadout = parsed.loadout ? cloneLoadout(parsed.loadout) : createEmptyLoadout();
+  const optimalRaidLoadout = withSimcOptimalRaidExternalBuffs(baseLoadout, true);
+
+  return {
+    ...parsed,
+    talents: new Set(parsed.talents),
+    talentRanks: new Map(parsed.talentRanks),
+    gearEffects: parsed.gearEffects.map((effect) => ({ ...effect })),
+    rawLines: [...parsed.rawLines],
+    loadout: optimalRaidLoadout,
+  };
+})();
+
 const DEFAULT_COMBAT_STATS: RequiredCombatDefaults = (() : RequiredCombatDefaults => {
   const stats = BASE_DEFAULT_MONK_WINDWALKER_PROFILE.stats;
   return {
@@ -39,6 +55,11 @@ const DEFAULT_COMBAT_STATS: RequiredCombatDefaults = (() : RequiredCombatDefault
   };
 })();
 
+const DEFAULT_PROFILE_BUILDERS = new Map<string, () => CharacterProfile>([
+  ['monk', (): CharacterProfile => cloneCharacterProfile(BASE_DEFAULT_MONK_WINDWALKER_PROFILE)],
+  ['shaman', (): CharacterProfile => cloneCharacterProfile(BASE_DEFAULT_SHAMAN_ENHANCEMENT_PROFILE)],
+]);
+
 function requireDefaultStat(value: number | undefined, fieldName: keyof RequiredCombatDefaults): number {
   if (value === undefined) {
     throw new Error(`Default trainer profile is missing required combat field '${fieldName}'`);
@@ -48,7 +69,20 @@ function requireDefaultStat(value: number | undefined, fieldName: keyof Required
 }
 
 export function getDefaultMonkWindwalkerProfile(): CharacterProfile {
-  return cloneCharacterProfile(BASE_DEFAULT_MONK_WINDWALKER_PROFILE);
+  return getDefaultProfileForSpec('monk');
+}
+
+export function getDefaultProfileForSpec(spec: string): CharacterProfile {
+  const builder = DEFAULT_PROFILE_BUILDERS.get(spec);
+  if (!builder) {
+    throw new Error(`No default trainer profile registered for spec '${spec}'`);
+  }
+
+  return builder();
+}
+
+export function getRegisteredDefaultProfiles(): CharacterProfile[] {
+  return [...DEFAULT_PROFILE_BUILDERS.values()].map((builder) => builder());
 }
 
 export function resolveCharacterStatsWithTrainerDefaults(stats: CharacterStats): CharacterStats {

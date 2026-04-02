@@ -12,13 +12,18 @@ import {
   withSimcOptimalRaidExternalBuffs,
   type CharacterLoadout,
 } from './loadout';
-import { decodeMonkWindwalkerTalentString } from './talentStringDecoder';
+import { buildSimcWeaponSignature, deriveWeaponStatsFromSimc } from './simcWeaponStats';
+import { decodeTalentStringForProfileSpec } from './talentStringDecoder';
 
 export interface CharacterStats {
   attackPower: number;
+  spellPower?: number;
   critPercent: number;
+  critRating?: number;
   hastePercent: number;
+  hasteRating?: number;
   versatilityPercent: number;
+  versatilityRating?: number;
   masteryPercent: number;
   /** Raw mastery rating from gear (before DR). Used for DR-aware trinket mastery computation. */
   masteryRating?: number;
@@ -94,16 +99,46 @@ export interface CharacterProfile {
   loadout?: CharacterLoadout;
 }
 
-// Rating-to-percent conversion divisors for WoW The War Within (TWW), Season 1-2, level 70.
-// These values change each expansion — source: https://www.wowhead.com/rating-calculator
-// Crit: 35 rating = 1%
-// Haste: 33 rating = 1%
-// Mastery: 35 rating = 1% (WW-specific, varies by spec)
-// Versatility: 40 rating = 1%
-const CRIT_RATING_PER_PCT = 35.0;
-const HASTE_RATING_PER_PCT = 33.0;
-const MASTERY_RATING_PER_PCT = 35.0;
-const VERS_RATING_PER_PCT = 40.0;
+type SecondaryStatType = 'crit' | 'haste' | 'mastery' | 'versatility';
+
+// SimC reads these from DBC (`dbc_t::combat_rating(...)`) per character level.
+// We currently model the levels used by the shipped default profiles/tests.
+const SECONDARY_RATING_PER_PCT_BY_LEVEL: Record<number, Record<SecondaryStatType, number>> = {
+  70: {
+    crit: 35.0,
+    haste: 33.0,
+    mastery: 35.0,
+    versatility: 40.0,
+  },
+  90: {
+    // The shipped level-90 SimC exports in this repo still align with the same
+    // secondary-rating factors as the existing trainer imports. Using the raw
+    // retail DBC combat_rating table here under-seeds Windwalker and regresses
+    // SimC parity across the full validation run.
+    crit: 35.0,
+    haste: 33.0,
+    mastery: 35.0,
+    versatility: 40.0,
+  },
+};
+
+export function getSecondaryRatingPerPercent(
+  stat: SecondaryStatType,
+  level: number,
+): number {
+  const supportedLevel = SECONDARY_RATING_PER_PCT_BY_LEVEL[level]
+    ? level
+    : 70;
+  return SECONDARY_RATING_PER_PCT_BY_LEVEL[supportedLevel][stat];
+}
+
+export function convertSecondaryRatingToPercent(
+  rating: number,
+  stat: SecondaryStatType,
+  level: number,
+): number {
+  return applyStatDR(rating / getSecondaryRatingPerPercent(stat, level));
+}
 
 /**
  * Applies the Shadowlands secondary-stat Diminishing Returns (DR) curve to a raw percent value.
@@ -190,11 +225,9 @@ export const WW_SHADO_PAN_TALENTS = new Set([
  * - `monk="Name"` → `name`; strip quotes
  * - `race=` → `race`
  * - `talents=` → store raw string; decode selected talents for supported profiles
- * - `gear_crit_rating=N` → convert to percent: `critPercent = N / 35.0`
- * - `gear_haste_rating=N` → `hastePercent = N / 33.0`
- * - `gear_mastery_rating=N` → `masteryPercent = N / 35.0`
- * - `gear_versatility_rating=N` → `versatilityPercent = N / 40.0`
+ * - `gear_*_rating=N` → convert to percent using SimC-style level-aware combat rating values, then apply DR
  * - `attack_power=N` → `attackPower`
+ * - `spell_power=N` → `spellPower`
  * - `level=N` or `character_level=N` → `characterLevel`
  * - `target_level=N` → `targetLevel`
  * - `target_armor=N` → `targetArmor`
@@ -217,6 +250,7 @@ export function parseProfile(input: string): CharacterProfile {
     statsSource: 'profile',
     stats: {
       attackPower: 0,
+      spellPower: 0,
       critPercent: 0,
       hastePercent: 0,
       versatilityPercent: 0,
@@ -281,10 +315,28 @@ export function parseProfile(input: string): CharacterProfile {
   }
 
   applyDecodedTalentString(profile);
+  recomputeSecondaryStatPercents(profile);
   validateRequiredProfileFields(profile);
+  deriveMissingWeaponStatsFromSimc(profile);
   validateRequiredWeaponStats(profile);
 
   return profile;
+}
+
+function recomputeSecondaryStatPercents(profile: CharacterProfile): void {
+  const level = profile.stats.characterLevel ?? 70;
+  if (profile.stats.critRating != null) {
+    profile.stats.critPercent = convertSecondaryRatingToPercent(profile.stats.critRating, 'crit', level);
+  }
+  if (profile.stats.hasteRating != null) {
+    profile.stats.hastePercent = convertSecondaryRatingToPercent(profile.stats.hasteRating, 'haste', level);
+  }
+  if (profile.stats.masteryRating != null) {
+    profile.stats.masteryPercent = convertSecondaryRatingToPercent(profile.stats.masteryRating, 'mastery', level);
+  }
+  if (profile.stats.versatilityRating != null) {
+    profile.stats.versatilityPercent = convertSecondaryRatingToPercent(profile.stats.versatilityRating, 'versatility', level);
+  }
 }
 
 /**
@@ -428,6 +480,12 @@ function parseField(profile: CharacterProfile, key: string, value: string): void
     return;
   }
 
+  if (key === 'spell_power') {
+    const val = parseIntegerField(key, value);
+    profile.stats.spellPower = val;
+    return;
+  }
+
   if (key === 'level' || key === 'character_level') {
     const val = parseIntegerField(key, value);
     profile.stats.characterLevel = val;
@@ -461,25 +519,45 @@ function parseField(profile: CharacterProfile, key: string, value: string): void
   // Stat rating conversions — apply Diminishing Returns curve after linear division
   if (key === 'gear_crit_rating') {
     const val = parseIntegerField(key, value);
-    profile.stats.critPercent = applyStatDR(val / CRIT_RATING_PER_PCT);
+    profile.stats.critRating = val;
+    profile.stats.critPercent = convertSecondaryRatingToPercent(
+      val,
+      'crit',
+      profile.stats.characterLevel ?? 70,
+    );
     return;
   }
 
   if (key === 'gear_haste_rating') {
     const val = parseIntegerField(key, value);
-    profile.stats.hastePercent = applyStatDR(val / HASTE_RATING_PER_PCT);
+    profile.stats.hasteRating = val;
+    profile.stats.hastePercent = convertSecondaryRatingToPercent(
+      val,
+      'haste',
+      profile.stats.characterLevel ?? 70,
+    );
     return;
   }
 
   if (key === 'gear_mastery_rating') {
     const val = parseIntegerField(key, value);
-    profile.stats.masteryPercent = applyStatDR(val / MASTERY_RATING_PER_PCT);
+    profile.stats.masteryRating = val;
+    profile.stats.masteryPercent = convertSecondaryRatingToPercent(
+      val,
+      'mastery',
+      profile.stats.characterLevel ?? 70,
+    );
     return;
   }
 
   if (key === 'gear_versatility_rating') {
     const val = parseIntegerField(key, value);
-    profile.stats.versatilityPercent = applyStatDR(val / VERS_RATING_PER_PCT);
+    profile.stats.versatilityRating = val;
+    profile.stats.versatilityPercent = convertSecondaryRatingToPercent(
+      val,
+      'versatility',
+      profile.stats.characterLevel ?? 70,
+    );
     return;
   }
 
@@ -583,12 +661,8 @@ function parseField(profile: CharacterProfile, key: string, value: string): void
     return;
   }
 
-  if (key === 'set_bonus') {
-    const [setBonusId, enabledValue] = value.split('=');
-    if (!setBonusId || enabledValue !== '1') {
-      throw new Error(`Invalid set_bonus value for '${key}': '${value}'`);
-    }
-    profile.talents.add(setBonusId);
+  if (key === 'set_bonus' || key === 'set_bonus+') {
+    applySetBonusValue(profile, key, value);
     return;
   }
 
@@ -655,6 +729,21 @@ function parseIntegerField(key: string, value: string): number {
   return parsed;
 }
 
+function applySetBonusValue(profile: CharacterProfile, key: string, value: string): void {
+  const entries = value.split('/').map((entry) => entry.trim()).filter(Boolean);
+  if (entries.length === 0) {
+    throw new Error(`Invalid set_bonus value for '${key}': '${value}'`);
+  }
+
+  for (const entry of entries) {
+    const [setBonusId, enabledValue] = entry.split('=');
+    if (!setBonusId || enabledValue !== '1') {
+      throw new Error(`Invalid set_bonus value for '${key}': '${value}'`);
+    }
+    profile.talents.add(setBonusId);
+  }
+}
+
 function parseFloatField(key: string, value: string): number {
   const parsed = Number.parseFloat(value);
   if (Number.isNaN(parsed)) {
@@ -714,18 +803,25 @@ function applyDecodedTalentString(profile: CharacterProfile): void {
     return;
   }
 
-  const decodedTalents = decodeMonkWindwalkerTalentString(profile.rawTalentString);
+  const decodedTalents = decodeTalentStringForProfileSpec(profile.spec, profile.rawTalentString);
   if (decodedTalents.length === 0) {
-    throw new Error(`Invalid monk talent string: '${profile.rawTalentString}'`);
+    throw new Error(`Invalid ${profile.spec} talent string: '${profile.rawTalentString}'`);
   }
 
   // Decode-driven talent set with set bonuses re-applied from parsed lines.
   const decodedTalentSet = new Set(decodedTalents.map((talent) => talent.internalId));
   const rankMap = new Map(decodedTalents.map((talent) => [talent.internalId, talent.rank]));
   for (const line of profile.rawLines) {
-    const setBonusMatch = /^set_bonus=([^=]+)=1$/.exec(line);
-    if (setBonusMatch?.[1]) {
-      decodedTalentSet.add(setBonusMatch[1]);
+    const setBonusMatch = /^(set_bonus\+?|set_bonus)=(.+)$/.exec(line);
+    if (setBonusMatch?.[2]) {
+      applySetBonusValue(
+        {
+          ...profile,
+          talents: decodedTalentSet,
+        },
+        setBonusMatch[1],
+        setBonusMatch[2],
+      );
     }
   }
 
@@ -769,5 +865,50 @@ function validateRequiredWeaponStats(profile: CharacterProfile): void {
 
   if (hasOffHand && profile.stats.offHandMaxDmg <= 0) {
     throw new Error("Profile is missing required 'off_hand_max' for the equipped off-hand weapon");
+  }
+}
+
+function deriveMissingWeaponStatsFromSimc(profile: CharacterProfile): void {
+  const mainHand = profile.loadout?.gear.find((item) => item.slot === 'main_hand');
+  const offHand = profile.loadout?.gear.find((item) => item.slot === 'off_hand');
+
+  const resolvedMainHand = deriveWeaponStatsFromSimc(mainHand);
+  if (resolvedMainHand) {
+    if (profile.stats.mainHandSpeed <= 0) {
+      profile.stats.mainHandSpeed = resolvedMainHand.speed;
+    }
+    if (profile.stats.mainHandMinDmg <= 0) {
+      profile.stats.mainHandMinDmg = resolvedMainHand.minDamage;
+    }
+    if (profile.stats.mainHandMaxDmg <= 0) {
+      profile.stats.mainHandMaxDmg = resolvedMainHand.maxDamage;
+    }
+  } else if (
+    mainHand?.itemId &&
+    (profile.stats.mainHandSpeed <= 0 || profile.stats.mainHandMinDmg <= 0 || profile.stats.mainHandMaxDmg <= 0)
+  ) {
+    throw new Error(
+      `Profile weapon stats for 'main_hand' could not be derived from SimC data for signature '${buildSimcWeaponSignature(mainHand) ?? 'unknown'}'`
+    );
+  }
+
+  const resolvedOffHand = deriveWeaponStatsFromSimc(offHand);
+  if (resolvedOffHand) {
+    if (profile.stats.offHandSpeed <= 0) {
+      profile.stats.offHandSpeed = resolvedOffHand.speed;
+    }
+    if (profile.stats.offHandMinDmg <= 0) {
+      profile.stats.offHandMinDmg = resolvedOffHand.minDamage;
+    }
+    if (profile.stats.offHandMaxDmg <= 0) {
+      profile.stats.offHandMaxDmg = resolvedOffHand.maxDamage;
+    }
+  } else if (
+    offHand?.itemId &&
+    (profile.stats.offHandSpeed <= 0 || profile.stats.offHandMinDmg <= 0 || profile.stats.offHandMaxDmg <= 0)
+  ) {
+    throw new Error(
+      `Profile weapon stats for 'off_hand' could not be derived from SimC data for signature '${buildSimcWeaponSignature(offHand) ?? 'unknown'}'`
+    );
   }
 }

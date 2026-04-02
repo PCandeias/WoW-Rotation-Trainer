@@ -125,15 +125,15 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
     // Sequenced Strikes: guaranteed Combo Breaker stack when SCK consumes Dance proc.
     // DBC: spell 451515, effect 1152152, value 100.0 → 100% chance.
     if (danceWasActive && this.p.hasTalent('sequenced_strikes')) {
-      const stacksBefore = this.p.getBuffStacks('blackout_reinforcement');
+      const stacksBefore = this.p.getBuffStacks('combo_breaker');
       const stacksAfter = Math.min(2, stacksBefore + 1);
-      this.p.applyBuff('blackout_reinforcement', 15, stacksAfter);
+      this.p.applyBuff('combo_breaker', 15, stacksAfter);
       newEvents.push(
         stacksBefore > 0
           ? { type: EventType.BUFF_STACK_CHANGE, time: this.p.currentTime,
-              buffId: 'blackout_reinforcement', stacks: stacksAfter, prevStacks: stacksBefore }
+              buffId: 'combo_breaker', stacks: stacksAfter, prevStacks: stacksBefore }
           : { type: EventType.BUFF_APPLY, time: this.p.currentTime,
-              buffId: 'blackout_reinforcement', stacks: stacksAfter },
+              buffId: 'combo_breaker', stacks: stacksAfter },
       );
     }
 

@@ -1,5 +1,6 @@
 import { MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
 import { MONK_BUFF_REGISTRY } from '@core/class_modules/monk/monk_buff_registry';
+import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import type {
   AnalysisDecisionState,
   AnalysisFinding,
@@ -15,6 +16,7 @@ const IMPORTANT_COOLDOWNS = [
   'strike_of_the_windlord',
   'fists_of_fury',
   'zenith',
+  'potion',
 ] as const;
 
 const IMPORTANT_ABILITIES = [
@@ -41,7 +43,7 @@ const PROC_ANALYSIS_RULES = [
     misuseFix: 'Save `Spinning Crane Kick` for proc windows unless the APL explicitly wants it for the current state.',
   },
   {
-    buffId: 'blackout_reinforcement',
+    buffId: 'combo_breaker',
     expectedSpellId: 'blackout_kick',
     expireTitle: 'Blackout Kick! procs were missed',
     expireSummary: 'You let `Blackout Kick!` expire instead of spending the free `Blackout Kick` window.',
@@ -66,12 +68,11 @@ const EXACT_MISTAKE_BASE_SPELLS = [
 const EXACT_MISTAKE_OPTIONAL_SPELLS = [
   'invoke_xuen_the_white_tiger',
   'celestial_conduit',
-  'zenith',
 ] as const;
 
 const EXACT_MISTAKE_BASE_BUFFS = [
   'hit_combo',
-  'blackout_reinforcement',
+  'combo_breaker',
   'dance_of_chi_ji',
   'combo_strikes',
   'whirling_dragon_punch',
@@ -87,7 +88,7 @@ const EXACT_MISTAKE_OPTIONAL_BUFFS: readonly { talentId: string; buffIds: readon
 ];
 
 function isSpellAvailable(spellId: string, talents: ReadonlySet<string>): boolean {
-  const requiredTalent = MONK_WW_SPELLS.get(spellId)?.talentRequired;
+  const requiredTalent = (MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId))?.talentRequired;
   return !requiredTalent || talents.has(requiredTalent);
 }
 
@@ -160,9 +161,44 @@ function explainRecommendedSpell(spellId: string): AplRuleExplanation | null {
         summary: '`Invoke Xuen, the White Tiger` is part of a strong burst sequence and should not be left unused.',
         fix: 'Be ready to summon Xuen before your next `Celestial Conduit` or major burst sequence.',
       };
+    case 'potion':
+      return {
+        title: 'Use Potion of Recklessness in the stacked burst window',
+        summary: 'The benchmark lines `Potion of Recklessness` up with its real burst sequence instead of drifting it to a later, lower-value moment.',
+        fix: 'Plan your opener so `Potion of Recklessness` fires with the benchmark burst stack around your major cooldown window, rather than after extra setup actions.',
+      };
+    case 'zenith':
+      return {
+        title: 'Do not sit on Zenith outside the burst window',
+        summary: '`Zenith` was the benchmark burst button here, and delaying it risks wasting recharge time or misaligning the rest of the burst sequence.',
+        fix: 'Spend `Zenith` when its benchmark window opens instead of waiting through extra filler or off-GCD housekeeping.',
+      };
+    case 'algethar_puzzle_box':
+      return {
+        title: 'Start Algeth\'ar Puzzle Box before the rest of the burst stack',
+        summary: '`Algeth\'ar Puzzle Box` was the setup action the benchmark wanted here. Delaying its windup until after `Zenith` or other burst buffs wastes part of those buffs for no gain.',
+        fix: 'Start `Algeth\'ar Puzzle Box` first when the benchmark calls for it, then roll the rest of the burst window after the windup finishes.',
+      };
     default:
       return null;
   }
+}
+
+function shouldReportRecommendationMismatch(
+  expectedSpellId: string,
+  actualSpellId: string,
+  playerState: AnalysisDecisionState,
+): boolean {
+  const isTigerPalmBlackoutKickSwap = (
+    (expectedSpellId === 'tiger_palm' && actualSpellId === 'blackout_kick')
+    || (expectedSpellId === 'blackout_kick' && actualSpellId === 'tiger_palm')
+  );
+
+  if (!isTigerPalmBlackoutKickSwap) {
+    return true;
+  }
+
+  return hasBuff(playerState, 'combo_breaker');
 }
 
 function buffStacks(state: AnalysisDecisionState, buffId: string): number {
@@ -182,7 +218,7 @@ function describeBuff(buffId: string): string {
 
 function explainExactDecision(
   expectedSpellId: string,
-  _actualSpellId: string,
+  actualSpellId: string,
   playerState: AnalysisDecisionState,
 ): AplRuleExplanation | null {
   switch (expectedSpellId) {
@@ -198,12 +234,12 @@ function explainExactDecision(
       };
     }
     case 'blackout_kick': {
-      const breakoutStacks = buffStacks(playerState, 'blackout_reinforcement');
+      const breakoutStacks = buffStacks(playerState, 'combo_breaker');
       const zenithActive = hasBuff(playerState, 'zenith');
       return {
         title: breakoutStacks >= 2 ? 'Do not let Blackout Kick! overcap' : 'Use the free Blackout Kick window',
         summary: breakoutStacks > 0
-          ? `You had \`${describeBuff('blackout_reinforcement')}\` at ${breakoutStacks} stack${breakoutStacks === 1 ? '' : 's'}, making \`Blackout Kick\` free and valuable for cooldown reduction${zenithActive ? ' during `Zenith`.' : '.'}`
+          ? `You had \`${describeBuff('combo_breaker')}\` at ${breakoutStacks} stack${breakoutStacks === 1 ? '' : 's'}, making \`Blackout Kick\` free and valuable for cooldown reduction${zenithActive ? ' during `Zenith`.' : '.'}`
           : '`Blackout Kick` was the correct filler here because it advanced your cooldown cycle more cleanly than the button you pressed.',
         fix: 'Spend `Blackout Kick!` before it overcaps, and let it help cycle into higher-damage cooldowns.',
       };
@@ -259,6 +295,16 @@ function explainExactDecision(
           ? '`Whirling Dragon Punch` was available at this moment, and those windows are valuable because they disappear quickly once other cooldowns move again.'
           : '`Whirling Dragon Punch` was the correct burst follow-up here and should not have been pushed back.',
         fix: 'Avoid spending a filler GCD when `Whirling Dragon Punch` is available or about to fall out of its window.',
+      };
+    case 'potion':
+      return {
+        title: actualSpellId === 'algethar_puzzle_box'
+          ? 'Do not push Potion of Recklessness behind Puzzle Box'
+          : 'Use Potion of Recklessness in the benchmark burst window',
+        summary: actualSpellId === 'algethar_puzzle_box'
+          ? 'This was a `Potion of Recklessness` window, but using `Algeth\'ar Puzzle Box` first pushed the potion behind the benchmark burst stack.'
+          : '`Potion of Recklessness` was the correct off-GCD buff here, and delaying it weakened the stacked burst timing the benchmark was building toward.',
+        fix: 'Fire `Potion of Recklessness` as the benchmark burst window opens instead of drifting it behind extra setup actions.',
       };
     default:
       return explainRecommendedSpell(expectedSpellId);
@@ -375,6 +421,7 @@ export function buildMonkWindwalkerAnalysisProfile(talents: ReadonlySet<string>)
     finisherSpellIds: FINISHER_SPELLS.filter((spellId) => isSpellAvailable(spellId, talents)),
     exactMistakeSpellIds: getExactMistakeSpellIds(talents),
     explainRecommendedSpell,
+    shouldReportRecommendationMismatch,
     explainExactDecision,
     getTrackedBuffIds: () => getTrackedBuffIds(talents),
     getEssentialCooldownSpellIds: () => getEssentialCooldownSpellIds(talents),

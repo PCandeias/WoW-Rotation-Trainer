@@ -11,7 +11,7 @@ import type { EncounterConfig, GameStateSnapshot } from './gameState';
 import { SimEventQueue, EventType } from './eventQueue';
 import { createRng } from './rng';
 import type { RngInstance } from './rng';
-import { executeAbility, getAbilityFailReason, getEffectiveChiCost } from './executor';
+import { executeAbility, getAbilityFailReason, getEffectiveChiCost, processAbilityCast } from './executor';
 import {
   captureAutoAttackSpeedSnapshot,
   initAutoAttacks,
@@ -20,6 +20,7 @@ import {
   rescheduleAutoAttacksForSpeedChange,
 } from './autoAttack';
 import { processChannelTickDetailed, processChannelEnd } from './channel';
+import { processDotTickDetailed } from './dot';
 import { drainQueue } from './spellQueue';
 import type { SpellDef } from '../data/spells';
 import { spellRequiresGcdReady } from '../data/spells';
@@ -32,7 +33,6 @@ import type { CharacterProfile } from '../data/profileParser';
 import { expireSharedPlayerBuff } from '../shared/player_effects';
 import type { SpecRuntime } from '../runtime/spec_runtime';
 import { resolveSpecRuntime } from '../runtime/spec_registry';
-import { processDelayedSpellImpact } from '../class_modules/monk/flurry_strikes';
 import type { DebugLine } from './debug_logger';
 import {
   fmtPerforms,
@@ -48,6 +48,36 @@ import {
   fmtAplSkip,
   resolveSpellId,
 } from './debug_logger';
+
+function getActionLineCooldownName(action: CastAction): string | null {
+  const lineCooldown = action.params?.line_cd == null ? Number.NaN : Number.parseFloat(action.params.line_cd);
+  if (!Number.isFinite(lineCooldown) || lineCooldown <= 0) {
+    return null;
+  }
+  return `line_cd_${action.ability}`;
+}
+
+function getActionLineCooldownDuration(action: CastAction): number | null {
+  const lineCooldown = action.params?.line_cd == null ? Number.NaN : Number.parseFloat(action.params.line_cd);
+  if (!Number.isFinite(lineCooldown) || lineCooldown <= 0) {
+    return null;
+  }
+  return lineCooldown;
+}
+
+function getActionLineCooldownRemains(action: CastAction, state: ReturnType<typeof createGameState>): number {
+  const cooldownName = getActionLineCooldownName(action);
+  return cooldownName == null ? 0 : state.getCooldownRemains(cooldownName);
+}
+
+function applyActionLineCooldown(action: CastAction, state: ReturnType<typeof createGameState>): void {
+  const cooldownName = getActionLineCooldownName(action);
+  const duration = getActionLineCooldownDuration(action);
+  if (cooldownName == null || duration == null) {
+    return;
+  }
+  state.cooldowns.set(cooldownName, { readyAt: state.currentTime + duration });
+}
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -168,24 +198,25 @@ export interface SimResult {
    * Keyed by buffId. Divide by encounterDuration to get the uptime fraction (0–1).
    */
   buffUptimes: Record<string, number>;
+  /**
+   * Total uptime in seconds for each primary-target debuff that was ever applied.
+   * Keyed by buffId. Divide by encounterDuration to get the uptime fraction (0–1).
+   */
+  targetDebuffUptimes: Record<string, number>;
   /** Number of BUFF_APPLY events seen for each buffId. */
   buffApplyCounts: Record<string, number>;
   /** Total seconds spent channeling per ability (summed actual active time). */
   channelTimeBySpell: Record<string, number>;
   /** Per-second trainer timelines (index = elapsed second, 0-based). */
   damageTimelineBySecond: number[];
-  resourceTimelineBySecond: {
-    energy: number[];
-    chi: number[];
-  };
-  wasteTimelineBySecond: {
-    energy: number[];
-    chi: number[];
-  };
+  resourceTimelineBySecond: Record<string, number[]>;
+  wasteTimelineBySecond: Record<string, number[]>;
   /** Per-second Tigereye Brew (rank 1) stack count (forward-filled). */
   tebStacksTimelineBySecond: number[];
   /** Per-second stack counts for each buff that was observed during the run. */
   buffStacksTimelineBySecond: Record<string, number[]>;
+  /** Per-second stack counts for each primary-target debuff that was observed during the run. */
+  targetDebuffStacksTimelineBySecond: Record<string, number[]>;
   /** Per-second base Attack Power timeline (excludes WEAPON_MAINHAND AP term). */
   attackPowerTimelineBySecond: number[];
   /** Per-second WEAPON_MAINHAND Attack Power timeline (base AP + weapon AP term). */
@@ -397,7 +428,169 @@ function applyVariable(
 // walkActionList
 // ---------------------------------------------------------------------------
 
-type ActionSelectionMode = 'any' | 'off-gcd' | 'on-gcd';
+type ActionSelectionMode = 'any' | 'off-gcd' | 'on-gcd' | 'non-gcd';
+
+function shouldApplyAsPersistentPrecombatBuff(spell: SpellDef, encounterDuration: number): boolean {
+  return Boolean(
+    spell.buffApplied
+    && (spell.buffDuration ?? 0) >= encounterDuration,
+  );
+}
+
+function createPrecombatEvalContext(
+  actionLists: ActionList[],
+  state: ReturnType<typeof createGameState>,
+): EvalContext {
+  const ctx: EvalContext = { variables: new Map() };
+  const precombatList = actionLists.find((entry) => entry.name === 'precombat');
+  if (!precombatList) {
+    return ctx;
+  }
+
+  for (const action of precombatList.actions) {
+    if (action.type === 'variable') {
+      applyVariable(action, state, ctx);
+    }
+  }
+
+  return ctx;
+}
+
+function precombatLeadTime(spell: SpellDef, state: ReturnType<typeof createGameState>): number {
+  const hasteMultiplier = 1 + state.getHastePercent() / 100;
+  if (spell.isChanneled) {
+    return spell.channelDuration / hasteMultiplier;
+  }
+  return (spell.castTime ?? 0) / hasteMultiplier;
+}
+
+function processPrecombatEventsUntilPull(
+  state: ReturnType<typeof createGameState>,
+  queue: SimEventQueue,
+  rng: RngInstance,
+): void {
+  while (!queue.isEmpty() && queue.peek().time <= 0) {
+    const event = queue.pop();
+    state.currentTime = event.time;
+
+    switch (event.type) {
+      case EventType.CAST_START:
+      case EventType.CHANNEL_START:
+      case EventType.COOLDOWN_READY:
+      case EventType.BUFF_APPLY:
+      case EventType.BUFF_STACK_CHANGE:
+        break;
+      case EventType.ABILITY_CAST:
+        void processAbilityCast(event, state, queue, rng);
+        break;
+      case EventType.CHANNEL_TICK:
+        void processChannelTickDetailed(event, state, rng, queue);
+        break;
+      case EventType.DOT_TICK:
+        void processDotTickDetailed(event, state, rng, queue);
+        break;
+      case EventType.CHANNEL_END:
+        processChannelEnd(event, state, queue, rng);
+        break;
+      case EventType.BUFF_EXPIRE:
+        if (isCurrentBuffExpireEvent(state, event.buffId)) {
+          expireSharedPlayerBuff(state, event.buffId);
+        }
+        break;
+      case EventType.DELAYED_SPELL_IMPACT:
+      case EventType.TIGEREYE_BREW_TICK:
+      case EventType.COMBAT_WISDOM_TICK:
+      case EventType.AUTO_ATTACK_MH:
+      case EventType.AUTO_ATTACK_OH:
+      case EventType.RESOURCE_THRESHOLD_READY:
+      case EventType.ENERGY_CAP_CHECK:
+      case EventType.GCD_READY:
+      case EventType.OFF_GCD_READY:
+      case EventType.CWC_READY:
+      case EventType.PLAYER_INPUT:
+      case EventType.PLAYER_CANCEL:
+      case EventType.QUEUED_ABILITY_FIRE:
+      case EventType.ENCOUNTER_START:
+      case EventType.ENCOUNTER_END:
+        throw new Error(`Unsupported precombat event '${EventType[event.type]}' at ${event.time.toFixed(3)}s`);
+      default:
+        event satisfies never;
+        throw new Error(`Unhandled precombat event '${String((event as { type: number }).type)}'`);
+    }
+  }
+}
+
+function applyPrecombatActions(
+  state: ReturnType<typeof createGameState>,
+  actionLists: ActionList[],
+  runtime: SpecRuntime,
+  rng: RngInstance,
+  encounterDuration: number,
+): void {
+  const precombatList = actionLists.find((entry) => entry.name === 'precombat');
+  if (!precombatList) {
+    return;
+  }
+
+  const scratchQueue = new SimEventQueue();
+  const ctx = createPrecombatEvalContext(actionLists, state);
+
+  for (const action of precombatList.actions) {
+    if (action.type === 'variable') {
+      continue;
+    }
+
+    if (action.type !== 'cast') {
+      continue;
+    }
+
+    const spell = runtime.resolveActionSpell(action, state);
+    if (!spell) {
+      continue;
+    }
+
+    if (action.condition) {
+      try {
+        const value = evaluate(action.condition.ast, state, { ...ctx, candidateAbility: spell.name });
+        if (value === 0) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (!shouldApplyAsPersistentPrecombatBuff(spell, encounterDuration)) {
+      const leadTime = precombatLeadTime(spell, state);
+      state.currentTime = -leadTime;
+      state.gcdReady = state.currentTime;
+      const result = executeAbility(spell, state, scratchQueue, rng);
+      if (!result.success) {
+        state.currentTime = 0;
+        state.gcdReady = 0;
+        continue;
+      }
+      processPrecombatEventsUntilPull(state, scratchQueue, rng);
+      state.currentTime = 0;
+      state.gcdReady = 0;
+      continue;
+    }
+
+    if (getActionLineCooldownRemains(action, state) > 0) {
+      continue;
+    }
+
+    const result = executeAbility(spell, state, scratchQueue, rng);
+    if (!result.success) {
+      continue;
+    }
+    applyActionLineCooldown(action, state);
+
+    state.gcdReady = 0;
+  }
+
+  state.gcdReady = 0;
+}
 
 function walkActionList(
   list: ActionList,
@@ -446,6 +639,14 @@ function walkActionList(
         }
       }
 
+      const lineCooldownRemains = getActionLineCooldownRemains(action, state);
+      if (lineCooldownRemains > 0) {
+        if (logger) {
+          logger(fmtAplSkip(time ?? 0, playerName ?? 'unknown', spell.name, 'not ready: on_line_cd'));
+        }
+        continue;
+      }
+
       const failReason = getAbilityFailReason(spell, state);
       if (failReason !== undefined) {
         if (logger) {
@@ -455,6 +656,7 @@ function walkActionList(
       }
       if (mode === 'off-gcd' && !spellUsableDuringCurrentGcd(spell)) continue;
       if (mode === 'on-gcd' && !spell.isOnGcd) continue;
+      if (mode === 'non-gcd' && spellRequiresGcdReady(spell)) continue;
 
       return { action, spell };
     }
@@ -507,12 +709,13 @@ export function pickNextAplAction(
   state: ReturnType<typeof createGameState>,
   actionLists: ActionList[],
   runtime: SpecRuntime,
+  mode: ActionSelectionMode = 'any',
 ): { spellName: string; spellId: string } | null {
-  const ctx: EvalContext = { variables: new Map() };
+  const ctx = createPrecombatEvalContext(actionLists, state);
   const defaultList = actionLists.find((al) => al.name === 'default');
   if (!defaultList) return null;
 
-  const selected = walkActionList(defaultList, actionLists, state, ctx, runtime, 'any', undefined, undefined, state.currentTime);
+  const selected = walkActionList(defaultList, actionLists, state, ctx, runtime, mode, undefined, undefined, state.currentTime);
   if (!selected) return null;
 
   return { spellName: selected.spell.name, spellId: String(selected.spell.id) };
@@ -527,8 +730,8 @@ function selectAction(
   logger?: DebugLine,
   playerName?: string,
 ): SelectedAction | null {
-  // Create fresh EvalContext for each APL pass (variables reset each pass)
-  const ctx: EvalContext = { variables: new Map() };
+  // Create fresh EvalContext for each APL pass while preserving precombat variable seeds.
+  const ctx = createPrecombatEvalContext(actionLists, state);
 
   // Find the 'default' action list
   const defaultList = actionLists.find((al) => al.name === 'default');
@@ -547,10 +750,17 @@ function getCooldownTolerance(latencyModel: HeadlessLatencyModel): number {
 }
 
 function getOffGcdQueueableTimeForSpell(
+  action: CastAction,
   spell: SpellDef,
   state: ReturnType<typeof createGameState>,
   latencyModel: HeadlessLatencyModel,
 ): number | null {
+  const lineCooldownRemains = getActionLineCooldownRemains(action, state);
+  if (lineCooldownRemains > 0) {
+    const queueableOffset = Math.max(0, lineCooldownRemains - getCooldownTolerance(latencyModel));
+    return state.currentTime + queueableOffset;
+  }
+
   if (!spellUsableDuringCurrentGcd(spell)) {
     return null;
   }
@@ -624,7 +834,7 @@ function findEarliestOffGcdQueueableTimeInList(
 
       earliestTime = mergeQueueableTimes(
         earliestTime,
-        getOffGcdQueueableTimeForSpell(spell, state, latencyModel),
+        getOffGcdQueueableTimeForSpell(action, spell, state, latencyModel),
       );
       continue;
     }
@@ -675,14 +885,19 @@ function findEarliestOffGcdQueueableTime(
     return null;
   }
 
-  const ctx: EvalContext = { variables: new Map() };
+  const ctx = createPrecombatEvalContext(actionLists, state);
   return findEarliestOffGcdQueueableTimeInList(defaultList, actionLists, state, ctx, runtime, latencyModel).earliestTime;
 }
 
 function getForegroundEnergyThresholdTimeForSpell(
+  action: CastAction,
   spell: SpellDef,
   state: ReturnType<typeof createGameState>,
 ): number | null {
+  if (getActionLineCooldownRemains(action, state) > 0) {
+    return null;
+  }
+
   const failReason = getAbilityFailReason(spell, state);
   if (failReason !== 'insufficient_energy') {
     return null;
@@ -739,7 +954,7 @@ function findEarliestForegroundEnergyThresholdInList(
 
       earliestTime = mergeQueueableTimes(
         earliestTime,
-        getForegroundEnergyThresholdTimeForSpell(spell, state),
+        getForegroundEnergyThresholdTimeForSpell(action, spell, state),
       );
       continue;
     }
@@ -789,7 +1004,7 @@ function findEarliestForegroundEnergyThresholdTime(
     return null;
   }
 
-  const ctx: EvalContext = { variables: new Map() };
+  const ctx = createPrecombatEvalContext(actionLists, state);
   return findEarliestForegroundEnergyThresholdInList(defaultList, actionLists, state, ctx, runtime).earliestTime;
 }
 
@@ -901,9 +1116,12 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   const masteryPctTimelineBySecond = Array<number>(timelineLength).fill(Number.NaN);
   const versPctTimelineBySecond = Array<number>(timelineLength).fill(Number.NaN);
   const buffStacksTimelineBySecond: Record<string, number[]> = {};
+  const targetDebuffStacksTimelineBySecond: Record<string, number[]> = {};
   let waitingTime = 0;
   let resourceThresholdWaitToken = 0;
   let waitingForTrigger: ForegroundWaitState | null = null;
+
+  applyPrecombatActions(state, actionLists, runtime, rng, config.encounter.duration);
 
   const recordForegroundWait = (startedAt: number, duration: number): void => {
     if (!(duration > 0)) {
@@ -979,7 +1197,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     // This is accurate for all current WW spells (no simultaneous refund mechanics).
     const chiSpent = Math.max(0, chiCostForSpell);
     const energySpent = Math.max(0, selected.spell.energyCost);
-    const executeTime = selected.spell.isOnGcd ? Math.max(0, state.gcdReady - castStartedAt) : 0;
+    const executeTime = result.executeTime ?? (selected.spell.isOnGcd ? Math.max(0, state.gcdReady - castStartedAt) : 0);
     executeTimeBySpell[selectedSpellId] = (executeTimeBySpell[selectedSpellId] ?? 0) + executeTime;
     castLog.push({
       time: state.currentTime,
@@ -1023,7 +1241,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       if (chiGained > 0) {
         logger(fmtChiGain(t, playerName, chiGained, state.chi, state.chiMax, selectedSpellId));
       }
-      const castFinishes = selected.spell.isOnGcd ? state.gcdReady : castStartedAt;
+      const castFinishes = castStartedAt + executeTime;
       logger(fmtScheduleReady(t, playerName, selectedSpellId, castFinishes, 0));
     }
   };
@@ -1042,6 +1260,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       return undefined;
     }
 
+    applyActionLineCooldown(selected.action, state);
     recordSuccessfulCast(selected, result, castStartedAt, chiBeforeExec, chiCostForSpell, energyBeforeExec);
     return selected.spell;
   };
@@ -1079,6 +1298,24 @@ export function runHeadless(config: HeadlessConfig): SimResult {
 
     for (const [buffId, timeline] of Object.entries(buffStacksTimelineBySecond)) {
       if (!activeBuffIds.has(buffId)) {
+        timeline[second] = 0;
+      }
+    }
+
+    const activeTargetDebuffIds = new Set<string>();
+    const primaryTarget = state.targets[0];
+    if (primaryTarget) {
+      for (const [debuffId, debuff] of primaryTarget.debuffs.entries()) {
+        const stacks = debuff.stackTimers.filter((timer) => timer === 0 || timer > state.currentTime).length;
+        activeTargetDebuffIds.add(debuffId);
+        const timeline = targetDebuffStacksTimelineBySecond[debuffId]
+          ?? (targetDebuffStacksTimelineBySecond[debuffId] = Array<number>(timelineLength).fill(Number.NaN));
+        timeline[second] = stacks;
+      }
+    }
+
+    for (const [debuffId, timeline] of Object.entries(targetDebuffStacksTimelineBySecond)) {
+      if (!activeTargetDebuffIds.has(debuffId)) {
         timeline[second] = 0;
       }
     }
@@ -1252,9 +1489,32 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         break;
       }
 
-      /* istanbul ignore next -- headless mode never emits ABILITY_CAST */
+      case EventType.CAST_START: {
+        break;
+      }
+
       case EventType.ABILITY_CAST: {
-        // No-op (already handled by executeAbility)
+        const result = processAbilityCast(event, state, queue, rng);
+        recordSpellStats(damageBySpell, event.spellId, result.damage, 0, result.isCrit);
+        pushSpellEvent({
+          time: state.currentTime,
+          spellId: event.spellId,
+          damage: result.damage,
+          isCrit: result.isCrit,
+          outcome: 'landed',
+        });
+        if (logger && result.damage > 0) {
+          logger(fmtHits(
+            state.currentTime,
+            playerName,
+            event.spellId,
+            resolveSpellId(event.spellId),
+            targetName,
+            result.damage,
+            'physical',
+            result.isCrit ? 'crit' : 'hit',
+          ));
+        }
         break;
       }
 
@@ -1279,6 +1539,33 @@ export function runHeadless(config: HeadlessConfig): SimResult {
             targetName,
             tickResult.damage,
             'physical',
+            tickResult.isCrit ? 'crit' : 'hit',
+          ));
+        }
+        break;
+      }
+
+      case EventType.DOT_TICK: {
+        const tickResult = processDotTickDetailed(event, state, rng, queue);
+        recordSpellStats(damageBySpell, event.spellId, tickResult.damage, 0, tickResult.isCrit);
+        pushSpellEvent({
+          time: state.currentTime,
+          spellId: event.spellId,
+          damage: tickResult.damage,
+          isCrit: tickResult.isCrit,
+          outcome: 'landed',
+        });
+        if (logger && tickResult.damage > 0) {
+          logger(fmtTick(
+            state.currentTime,
+            playerName,
+            event.spellId,
+            resolveSpellId(event.spellId),
+            event.tickNumber,
+            event.totalTicks,
+            targetName,
+            tickResult.damage,
+            'magic',
             tickResult.isCrit ? 'crit' : 'hit',
           ));
         }
@@ -1379,47 +1666,26 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         break;
       }
 
-      case EventType.DELAYED_SPELL_IMPACT: {
-        const result = processDelayedSpellImpact(event.spellId, state, queue, rng);
-        if (result) {
-          castLog.push({
-            time: state.currentTime,
-            spellId: event.spellId,
-            damage: result.damage,
-            isComboStrike: false,
-          });
-          pushSpellEvent({
-            time: state.currentTime,
-            spellId: event.spellId,
-            damage: result.damage,
-            isCrit: result.isCrit,
-            outcome: 'landed',
-          });
-        }
-        wakeForegroundIfWaiting();
-        break;
-      }
-
-      case EventType.TIGEREYE_BREW_TICK: {
-        if (state.hasTalent('tigereye_brew')) {
-          const current = state.getBuffStacks('tigereye_brew_1');
-          if (current < 20) {
-            state.applyBuff('tigereye_brew_1', 120, current + 1);
-          }
-          const period = 8 / (1 + state.getHastePercent() / 100);
-          queue.push({ type: EventType.TIGEREYE_BREW_TICK, time: state.currentTime + period });
-        }
-        wakeForegroundIfWaiting();
-        break;
-      }
-
+      case EventType.DELAYED_SPELL_IMPACT:
+      case EventType.TIGEREYE_BREW_TICK:
       case EventType.COMBAT_WISDOM_TICK: {
-        if (state.hasTalent('combat_wisdom')) {
-          state.applyBuff('combat_wisdom', config.encounter.duration - state.currentTime);
-          const nextTick = state.currentTime + 15;
-          state.nextCombatWisdomAt = nextTick;
-          if (nextTick < config.encounter.duration) {
-            queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
+        const result = runtime.processScheduledEvent?.(event, state, queue, rng, config.encounter.duration);
+        if (result?.handled) {
+          const damages = result.damages ?? (result.damage ? [result.damage] : []);
+          for (const damage of damages) {
+            castLog.push({
+              time: state.currentTime,
+              spellId: damage.spellId,
+              damage: damage.amount,
+              isComboStrike: false,
+            });
+            pushSpellEvent({
+              time: state.currentTime,
+              spellId: damage.spellId,
+              damage: damage.amount,
+              isCrit: damage.isCrit,
+              outcome: 'landed',
+            });
           }
         }
         wakeForegroundIfWaiting();
@@ -1543,6 +1809,9 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   for (const timeline of Object.values(buffStacksTimelineBySecond)) {
     fillTimelineGaps(timeline);
   }
+  for (const timeline of Object.values(targetDebuffStacksTimelineBySecond)) {
+    fillTimelineGaps(timeline);
+  }
 
   return {
     totalDamage: state.totalDamage,
@@ -1559,6 +1828,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     energyWasted: state.getTotalEnergyWasted(),
     waitingTime,
     buffUptimes: state.collectBuffUptimes(),
+    targetDebuffUptimes: state.collectPrimaryTargetDebuffUptimes(),
     buffApplyCounts,
     channelTimeBySpell,
     damageTimelineBySecond,
@@ -1572,6 +1842,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     },
     tebStacksTimelineBySecond,
     buffStacksTimelineBySecond,
+    targetDebuffStacksTimelineBySecond,
     attackPowerTimelineBySecond,
     weaponAttackPowerTimelineBySecond,
     critPctTimelineBySecond,

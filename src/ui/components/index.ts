@@ -7,6 +7,7 @@ export { ActionBarSlot, type ActionBarSlotProps } from './ActionBarSlot';
 export { ActionBar, WW_ACTION_BAR, SPELL_ICONS, getCharges, type ActionBarProps, type ActionBarSlotDef } from './ActionBar';
 export { CooldownManager, type CooldownManagerProps } from './CooldownManager';
 export { ResourceBar, type ResourceBarProps } from './ResourceBar';
+export { SegmentedResourceBar, type SegmentedResourceBarProps } from './SegmentedResourceBar';
 export { ChiOrbs, type ChiOrbsProps } from './ChiOrbs';
 export { PlayerFrame, type PlayerFrameProps } from './PlayerFrame';
 export { EnergyChiDisplay, type EnergyChiDisplayProps } from './EnergyChiDisplay';

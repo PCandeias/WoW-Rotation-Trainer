@@ -1,3 +1,5 @@
+import type { BuffState } from '../apl/evaluator';
+
 /**
  * Represents an individual enemy target in the simulation.
  * Each target has independent health tracking.
@@ -12,6 +14,8 @@ export interface Target {
   currentHealth: number;
   /** Health as a percentage (0–100). Derived from currentHealth/maxHealth. */
   healthPct: number;
+  /** Target-side debuffs / DoT auras tracked independently per enemy. */
+  debuffs: Map<string, BuffState>;
 }
 
 export const TARGET_KILL_RANGE_PCT = 15;
@@ -41,5 +45,6 @@ export function createTarget(id: number, maxHealth: number): Target {
     maxHealth,
     currentHealth: maxHealth,
     healthPct: maxHealth > 0 ? 100 : 100,
+    debuffs: new Map(),
   };
 }

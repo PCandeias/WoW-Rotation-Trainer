@@ -11,18 +11,20 @@ import {
   type CharacterLoadout,
   type LoadoutExternalBuffs,
 } from '@core/data/loadout';
-import { getDefaultMonkWindwalkerProfile } from '@core/data/defaultProfile';
+import { getDefaultProfileForSpec, getRegisteredDefaultProfiles } from '@core/data/defaultProfile';
+import type { CharacterProfile } from '@core/data/profileParser';
 import { SearchableTextInput, type SearchSuggestion } from '@ui/components/SearchableTextInput';
 import { TalentTreeView } from '../components/TalentTreeView';
 import { buildControlStyle, buildHudFrameStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
 import {
   decodeTalentLoadoutState,
   getTalentCatalog,
+  getTalentLoadoutForProfileSpec,
   MONK_WINDWALKER_TALENT_LOADOUT,
   type TalentLoadoutDefinition,
 } from '@core/data/talentStringDecoder';
 
-const DEFAULT_PROFILE = getDefaultMonkWindwalkerProfile();
+const DEFAULT_PROFILE = getDefaultProfileForSpec('monk');
 
 // ---------------------------------------------------------------------------
 // Props
@@ -31,6 +33,8 @@ const DEFAULT_PROFILE = getDefaultMonkWindwalkerProfile();
 export interface LoadoutPanelProps {
   /** Loadout definition that drives the talent tree UI and import decoding. */
   definition?: TalentLoadoutDefinition;
+  /** Default profile used for reset behavior and default consumables/gear state. */
+  defaultProfile?: CharacterProfile;
   /** Current non-talent profile loadout settings. */
   loadout?: CharacterLoadout;
   /** Active selected talents for the current profile. */
@@ -49,6 +53,7 @@ export interface LoadoutPanelProps {
 
 export function LoadoutPanel({
   definition = MONK_WINDWALKER_TALENT_LOADOUT,
+  defaultProfile = DEFAULT_PROFILE,
   loadout,
   talents,
   talentRanks,
@@ -66,7 +71,11 @@ export function LoadoutPanel({
   const [temporaryEnchantDraft, setTemporaryEnchantDraft] = useState(() => buildTemporaryEnchantDraft(loadout));
   const [gearDrafts, setGearDrafts] = useState(() => buildGearDrafts(loadout));
   const preserveDraftsOnNextLoadoutSync = useRef(false);
-  const loadoutSuggestions = useMemo(() => buildLoadoutSuggestions(loadout), [loadout]);
+  const loadoutSuggestions = useMemo(() => buildLoadoutSuggestions(loadout, defaultProfile.spec), [defaultProfile.spec, loadout]);
+  const defaultDefinition = useMemo(
+    () => getTalentLoadoutForProfileSpec(defaultProfile.spec),
+    [defaultProfile.spec],
+  );
 
   useEffect(() => {
     if (preserveDraftsOnNextLoadoutSync.current) {
@@ -85,17 +94,17 @@ export function LoadoutPanel({
 
   const handleResetAll = useCallback(() => {
     if (onLoadoutChange) {
-      onLoadoutChange(cloneLoadout(DEFAULT_PROFILE.loadout));
+      onLoadoutChange(cloneLoadout(defaultProfile.loadout));
     }
 
-    if (!onTalentChange || definition.id !== MONK_WINDWALKER_TALENT_LOADOUT.id) {
+    if (!onTalentChange || definition.id !== defaultDefinition.id) {
       setTalentStatus('Default loadout restored.');
       setHighlightedTalentIds(new Set());
       return;
     }
 
-    const changedTalentIds = getChangedTalentIds(talents, DEFAULT_PROFILE.talents);
-    onTalentChange(DEFAULT_PROFILE.talents, DEFAULT_PROFILE.talentRanks);
+    const changedTalentIds = getChangedTalentIds(talents, defaultProfile.talents);
+    onTalentChange(defaultProfile.talents, defaultProfile.talentRanks);
     setImportError(null);
     setImportString('');
     setHighlightedTalentIds(changedTalentIds);
@@ -104,7 +113,7 @@ export function LoadoutPanel({
         ? 'Current build already matches the default profile build.'
         : `Restored the default profile build. Changed: ${formatTalentChanges(definition, changedTalentIds)}`,
     );
-  }, [definition, onLoadoutChange, onTalentChange, talents]);
+  }, [defaultDefinition.id, defaultProfile, definition, onLoadoutChange, onTalentChange, talents]);
 
   const handleTalentImport = useCallback(() => {
     if (!onTalentChange) {
@@ -681,7 +690,7 @@ function buildGearDrafts(loadout: CharacterLoadout | undefined): Record<(typeof 
   return Object.fromEntries(GEAR_SLOTS.map((slot) => [slot, bySlot.get(slot) ?? ''])) as Record<(typeof GEAR_SLOTS)[number], string>;
 }
 
-function buildLoadoutSuggestions(loadout: CharacterLoadout | undefined): {
+function buildLoadoutSuggestions(loadout: CharacterLoadout | undefined, profileSpec: string): {
   potion: SearchSuggestion[];
   flask: SearchSuggestion[];
   food: SearchSuggestion[];
@@ -690,7 +699,10 @@ function buildLoadoutSuggestions(loadout: CharacterLoadout | undefined): {
   gear: Record<(typeof GEAR_SLOTS)[number], SearchSuggestion[]>;
 } {
   const gearDrafts = buildGearDrafts(loadout);
-  const gearValues = Object.values(gearDrafts);
+  const profileGearValues = getRegisteredDefaultProfiles()
+    .filter((profile) => profile.spec === profileSpec)
+    .flatMap((profile) => Object.values(buildGearDrafts(profile.loadout)));
+  const gearValues = [...Object.values(gearDrafts), ...Object.values(profileGearValues)];
 
   return {
     potion: createValueSuggestions('potion', [

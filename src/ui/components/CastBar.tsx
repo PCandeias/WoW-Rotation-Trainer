@@ -4,7 +4,8 @@ import { T, FONTS } from '@ui/theme/elvui';
 import { buildHudFrameStyle } from '@ui/theme/stylePrimitives';
 import { AbilityIcon } from './AbilityIcon';
 import { SPELL_ICONS } from './ActionBar';
-import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
+import type { SpellDef } from '@core/data/spells/types';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 
 export interface CastBarProps {
@@ -24,6 +25,8 @@ export interface CastBarProps {
   debug?: boolean;
   /** Color for the progress fill. Default: '#44aaff' */
   color?: string;
+  /** Spec spellbook used to resolve fallback channel metadata. */
+  spellbook?: ReadonlyMap<string, SpellDef>;
 }
 
 /**
@@ -42,16 +45,18 @@ export function CastBar({
   remainingTime,
   debug = false,
   color = '#44aaff',
+  spellbook,
 }: CastBarProps): React.ReactElement | null {
   if (!isChanneling) {
     return null;
   }
 
+  const effectiveSpellbook = spellbook ?? getSpellbookForProfileSpec('monk');
   const icon = spellId ? SPELL_ICONS[spellId] : undefined;
 
   // Resolve total channel duration — prefer the prop, fall back to spell data
   const spellBaseDuration = spellId
-    ? ((MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId))?.channelDuration ?? 0)
+    ? ((effectiveSpellbook.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId))?.channelDuration ?? 0)
     : 0;
   const resolvedTotal = (totalTime && totalTime > 0) ? totalTime : spellBaseDuration;
 

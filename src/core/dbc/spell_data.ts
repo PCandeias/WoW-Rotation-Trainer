@@ -24,6 +24,14 @@ export class SpellEffect {
   percent():    number { return this.d._value / 100; }
   time_value(): number { return this.d._value; }
   ap_coeff():   number { return this.d._ap_coefficient; }
+  sp_coeff():   number { return this.d._sp_coefficient; }
+  /**
+   * SimC's spell data dumps expose these mastery-scaling coefficients through
+   * the same numeric field we ingest as `_sp_coefficient` for subtype 107
+   * effects, so the trainer uses that sourced value and converts it to the
+   * fractional `mastery_value()` shape SimC formulas expect.
+   */
+  mastery_value(): number { return this.d._sp_coefficient / 100; }
 }
 
 export class SpellData {

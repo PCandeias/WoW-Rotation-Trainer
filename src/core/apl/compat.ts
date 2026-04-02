@@ -15,12 +15,11 @@ export interface AplCompatibilityCatalog {
 }
 
 const APL_BUFF_ALIASES = new Map<string, string>([
-  ['combo_breaker', 'blackout_reinforcement'],
   ['dance_of_chiji', 'dance_of_chi_ji'],
   ['zenith', 'celestial_conduit_active'],
 ]);
 const SYNTHETIC_BUFF_NAMES = new Set(['flurry_charge']);
-const COOLDOWN_PROPS = new Set(['ready', 'up', 'remains', 'duration', 'full_recharge_time']);
+const COOLDOWN_PROPS = new Set(['ready', 'up', 'remains', 'duration', 'full_recharge_time', 'charges_fractional']);
 const BUFF_PROPS = new Set(['up', 'remains', 'stack']);
 
 const DEFAULT_CATALOG: AplCompatibilityCatalog = {
@@ -34,7 +33,6 @@ export const DEFAULT_APL_UNSUPPORTED_ACTION_ALLOWLIST = new Set([
   'arcane_torrent',
   'auto_attack',
   'bag_of_tricks',
-  'blood_fury',
   'chi_torpedo',
   'fireblood',
   'flying_serpent_kick',
@@ -110,6 +108,10 @@ function validatePropertyPath(path: string[], catalog: AplCompatibilityCatalog):
       const [name, prop] = rest;
       return isSupportedBuffName(name, catalog) && BUFF_PROPS.has(prop) ? null : path.join('.');
     }
+    case 'dot':
+      return rest.length === 2 && BUFF_PROPS.has(rest[1]) ? null : path.join('.');
+    case 'active_dot':
+      return rest.length === 1 ? null : path.join('.');
     case 'cooldown': {
       if (rest.length !== 2) return path.join('.');
       const [name, prop] = rest;
@@ -118,6 +120,7 @@ function validatePropertyPath(path: string[], catalog: AplCompatibilityCatalog):
     case 'talent':
       return rest.length === 1 || (rest.length === 2 && rest[1] === 'enabled') ? null : path.join('.');
     case 'combo_strike':
+    case 'ticking':
       return rest.length === 0 ? null : path.join('.');
     case 'variable':
       return rest.length === 1 ? null : path.join('.');

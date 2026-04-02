@@ -56,6 +56,52 @@ export class BerserkingAction extends SharedPlayerAction {
   }
 }
 
+export class BloodFuryAction extends SharedPlayerAction {
+  readonly name = 'blood_fury';
+  readonly spellData = new SpellData(33697, 'Blood Fury');
+
+  override execute(
+    _queue: SimEventQueue,
+    _rng: RngInstance,
+    _isComboStrike: boolean,
+  ): ActionResult {
+    this.p.settleEnergy();
+    const newEvents = this.applyTimedBuff('blood_fury', 15);
+    this.p.recomputeEnergyRegenRate();
+
+    return {
+      damage: 0,
+      isCrit: false,
+      newEvents,
+      buffsApplied: [],
+      cooldownAdjustments: [],
+    };
+  }
+}
+
+export class BloodlustAction extends SharedPlayerAction {
+  readonly name = 'bloodlust';
+  readonly spellData = new SpellData(2825, 'Bloodlust');
+
+  override execute(
+    _queue: SimEventQueue,
+    _rng: RngInstance,
+    _isComboStrike: boolean,
+  ): ActionResult {
+    this.p.settleEnergy();
+    const newEvents = this.applyTimedBuff('bloodlust', 40);
+    this.p.recomputeEnergyRegenRate();
+
+    return {
+      damage: 0,
+      isCrit: false,
+      newEvents,
+      buffsApplied: [],
+      cooldownAdjustments: [],
+    };
+  }
+}
+
 export class PotionOfRecklessnessAction extends SharedPlayerAction {
   readonly name = 'potion';
   readonly spellData = new SpellData(1236994, 'Potion of Recklessness');
@@ -123,10 +169,35 @@ export class AlgetharPuzzleBoxAction extends SharedPlayerAction {
   }
 }
 
-export function createSharedPlayerActions(state: IGameState): Map<string, Action> {
-  return new Map<string, Action>([
-    ['berserking', new BerserkingAction(state)],
+const RACIAL_ACTIONS_BY_RACE: ReadonlyMap<string, readonly string[]> = new Map([
+  ['troll', ['berserking']],
+  ['orc', ['blood_fury']],
+]);
+
+export function getAvailableSharedRacialActionNames(race?: string): readonly string[] {
+  const normalizedRace = race?.trim().toLowerCase();
+  return normalizedRace == null ? [] : (RACIAL_ACTIONS_BY_RACE.get(normalizedRace) ?? []);
+}
+
+export function getAllSharedRacialActionNames(): readonly string[] {
+  return [...new Set([...RACIAL_ACTIONS_BY_RACE.values()].flat())];
+}
+
+export function createSharedPlayerActions(state: IGameState, race?: string): Map<string, Action> {
+  const actions = new Map<string, Action>([
+    ['bloodlust', new BloodlustAction(state)],
     ['potion', new PotionOfRecklessnessAction(state)],
     ['algethar_puzzle_box', new AlgetharPuzzleBoxAction(state)],
   ]);
+
+  const racialActions = getAvailableSharedRacialActionNames(race);
+  for (const actionName of racialActions) {
+    if (actionName === 'berserking') {
+      actions.set(actionName, new BerserkingAction(state));
+    } else if (actionName === 'blood_fury') {
+      actions.set(actionName, new BloodFuryAction(state));
+    }
+  }
+
+  return actions;
 }

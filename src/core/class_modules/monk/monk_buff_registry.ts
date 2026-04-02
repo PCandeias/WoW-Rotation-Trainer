@@ -33,7 +33,7 @@ export const MONK_BUFF_REGISTRY: BuffRegistry = {
   zenith:                    { iconName: 'inv_ability_monk_weaponsoforder', emoji: '✨', displayName: 'Zenith' },
   combo_strikes:             { iconName: 'ability_monk_palmstrike',       emoji: '🥋', displayName: 'Combo Strikes', hideTimer: true },
   hit_combo:                 { iconName: 'ability_monk_palmstrike',       emoji: '🔗', displayName: 'Hit Combo' },
-  blackout_reinforcement:    { iconName: 'ability_monk_roundhousekick',   emoji: '👊', displayName: 'Blackout Kick!' },
+  combo_breaker:    { iconName: 'ability_monk_roundhousekick',   emoji: '👊', displayName: 'Blackout Kick!' },
   dance_of_chi_ji:           { iconName: 'ability_monk_quitornado',       emoji: '🌀', displayName: 'Dance of Chi-Ji' },
   rushing_wind_kick:         { iconName: 'inv12_ability_monk_rushingwindkick', emoji: '🌪️', displayName: 'Rushing Wind Kick' },
   flurry_charge:             { iconName: 'inv_ability_shadopanmonk_flurrystrikes', emoji: '💨', displayName: 'Flurry Charges', hideTimer: true },

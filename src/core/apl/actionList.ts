@@ -129,9 +129,10 @@ const VARIABLE_OPS = new Set<string>([
  * // Floating-point numeric segments are not supported (rare in practice)
  */
 function preprocessExpr(expr: string): string {
-  return expr
-    .replace(/\.(\d+)\./g, (_m, n: string) => `.slot${n}.`)
-    .replace(/\.(\d+)$/, (_m, n: string) => `.slot${n}`);
+  return expr.replace(
+    /([A-Za-z_][A-Za-z0-9_]*)\.(\d+)(?=\.|$)/g,
+    (_m, ident: string, n: string) => `${ident}.slot${n}`,
+  );
 }
 
 /**

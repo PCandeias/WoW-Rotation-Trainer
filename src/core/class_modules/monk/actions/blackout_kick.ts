@@ -41,14 +41,14 @@ export class BlackoutKickAction extends MonkMeleeAction {
   }
 
   /**
-   * Chi cost is 0 when combo_breaker (blackout_reinforcement) is active — SimC
+   * Chi cost is 0 when combo_breaker is active — SimC
    * applies the buff's -100% chi cost reduction at cost-check time, so BK is
    * free and castable even at chi=0.  Otherwise the base cost is 1.
    *
    * Executor applies the Zenith global -1 on top of this value (clamped to 0).
    */
   override chiCost(): number {
-    return this.p.isBuffActive('blackout_reinforcement') ? 0 : 1;
+    return this.p.isBuffActive('combo_breaker') ? 0 : 1;
   }
 
   override execute(
@@ -56,10 +56,10 @@ export class BlackoutKickAction extends MonkMeleeAction {
     rng: RngInstance,
     isComboStrike: boolean,
   ): ActionResult {
-    // blackout_reinforcement active before cast → this is a free BoK (cost=0).
-    // Executor consumes the BR stack AFTER the dispatch shim returns, so the
+    // combo_breaker active before cast → this is a free BoK (cost=0).
+    // Executor consumes the proc stack AFTER the dispatch shim returns, so the
     // buff is still present here. Free casts must NOT trigger dance_of_chi_ji.
-    const isFree = this.p.isBuffActive('blackout_reinforcement');
+    const isFree = this.p.isBuffActive('combo_breaker');
 
     const result = super.execute(queue, rng, isComboStrike);
 
@@ -80,26 +80,26 @@ export class BlackoutKickAction extends MonkMeleeAction {
     }
 
     // -------------------------------------------------------------------------
-    // Blackout Reinforcement stack consume
+    // Combo Breaker stack consume
     // chiCost() already returns 0 when the buff is active, so the executor
     // spent 0 chi. We just need to consume the BR stack and emit the event.
     // -------------------------------------------------------------------------
     if (isFree) {
-      const stacksBefore = this.p.getBuffStacks('blackout_reinforcement');
-      this.p.removeBuffStack('blackout_reinforcement');
+      const stacksBefore = this.p.getBuffStacks('combo_breaker');
+      this.p.removeBuffStack('combo_breaker');
       if (stacksBefore <= 1) {
         // Last stack consumed — buff fully expired
         result.newEvents.push({
           type: EventType.BUFF_EXPIRE,
           time: this.p.currentTime,
-          buffId: 'blackout_reinforcement',
+          buffId: 'combo_breaker',
         });
       } else {
         // Still stacks remaining — emit stack change
         result.newEvents.push({
           type: EventType.BUFF_STACK_CHANGE,
           time: this.p.currentTime,
-          buffId: 'blackout_reinforcement',
+          buffId: 'combo_breaker',
           stacks: stacksBefore - 1,
           prevStacks: stacksBefore,
         });

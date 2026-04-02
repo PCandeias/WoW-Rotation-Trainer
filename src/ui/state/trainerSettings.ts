@@ -1,8 +1,18 @@
 import { useCallback, useState } from 'react';
 import { cloneLoadout, type CharacterLoadout } from '@core/data/loadout';
-import { WW_ACTION_BAR } from '@ui/components/ActionBar';
+import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
+import {
+  getDefaultPlayableTrainerSpecId,
+  getTrainerSpecDefinition,
+  getTrainerSpecUiDefaults,
+  getPlayableTrainerSpecs,
+  isTrainerSpecId,
+  isTrainerSpecPlayable,
+  type TrainerSpecId,
+  type SpecActionBarConfigDefault,
+  type SpecTrackerGroupDefaults,
+} from '@ui/specs/specCatalog';
 
-export type TrainerSpecId = 'monk-windwalker';
 export type TrainerMode = 'practice' | 'test' | 'tutorial' | 'challenge';
 export type ChallengeDifficulty = 'easy' | 'hard';
 export type PracticeSpeedMultiplier = 0.25 | 0.5 | 0.75 | 1;
@@ -106,6 +116,14 @@ export interface AudioSettings {
   musicVolume: number;
 }
 
+export interface TrainerSpecProfileSettings {
+  talents: string[];
+  talentRanks: Record<string, number>;
+  loadout: CharacterLoadout;
+  hud: HudSettings;
+  actionBars: ActionBarSettings;
+}
+
 /**
  * Persisted trainer configuration shared between the setup flow and the encounter.
  *
@@ -122,6 +140,7 @@ export interface TrainerSettings {
   /** Number of active enemies (1–8). Defaults to 1 (single-target patchwerk). */
   nTargets: number;
   audio: AudioSettings;
+  specProfiles: Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>>;
   talents: string[];
   talentRanks: Record<string, number>;
   loadout: CharacterLoadout;
@@ -172,99 +191,239 @@ export function getDefaultHudLayoutSettings(): HudLayoutSettings {
   };
 }
 
-function createDefaultActionButtons(spellIds: readonly string[]): ActionBarButtonSettings[] {
-  return Array.from({ length: 12 }, (_, index) => ({
-    spellIds: spellIds[index] ? [spellIds[index]] : [],
-    keybind: WW_ACTION_BAR[index]?.defaultKey ?? '',
-  }));
-}
-
-function createActionBarConfig(
-  spellIds: readonly string[],
-  enabled: boolean,
-  buttonCount: number,
-  buttonsPerRow: number,
-): ActionBarConfig {
+function cloneActionBarConfigDefaults(defaults: SpecActionBarConfigDefault): ActionBarConfig {
   return {
-    enabled,
-    buttonCount,
-    buttonsPerRow,
-    buttons: createDefaultActionButtons(spellIds),
+    enabled: defaults.enabled,
+    buttonCount: defaults.buttonCount,
+    buttonsPerRow: defaults.buttonsPerRow,
+    buttons: defaults.buttons.map((button) => ({
+      spellIds: [...button.spellIds],
+      keybind: button.keybind,
+    })),
   };
 }
 
-function createDefaultActionBarSettings(): ActionBarSettings {
+function cloneTrackerEntryOptions(
+  entryOptions: SpecTrackerGroupDefaults['entryOptions'],
+): Record<string, TrackerEntrySettings> {
+  return Object.fromEntries(
+    Object.entries(entryOptions).map(([key, value]) => [
+      key,
+      {
+        glowWhenReady: value.glowWhenReady,
+        disableProcGlow: value.disableProcGlow,
+        cooldownGroup: value.cooldownGroup,
+      },
+    ]),
+  );
+}
+
+function createTrackerGroupFromDefaults(
+  defaults: SpecTrackerGroupDefaults,
+  displayMode: 'icons' | 'bars',
+): TrackerGroupSettings {
+  return {
+    ...createDefaultTrackerGroupSettings(displayMode, true, [...defaults.trackedEntryIds], defaults.iconsPerRow),
+    entryOptions: cloneTrackerEntryOptions(defaults.entryOptions),
+  };
+}
+
+function createDefaultActionBarSettings(selectedSpec: TrainerSpecId): ActionBarSettings {
+  const defaults = getTrainerSpecUiDefaults(selectedSpec).actionBars;
   return {
     bars: {
-      bar1: {
-        enabled: true,
-        buttonCount: 10,
-        buttonsPerRow: 10,
-        buttons: [
-          { spellIds: ['tiger_palm'], keybind: '1' },
-          { spellIds: ['blackout_kick'], keybind: '2' },
-          { spellIds: ['rising_sun_kick'], keybind: '3' },
-          { spellIds: ['fists_of_fury'], keybind: '4' },
-          { spellIds: ['whirling_dragon_punch'], keybind: '5' },
-          { spellIds: ['spinning_crane_kick'], keybind: '6' },
-          { spellIds: [], keybind: '7' },
-          { spellIds: [], keybind: '8' },
-          { spellIds: [], keybind: '9' },
-          { spellIds: [], keybind: '0' },
-          { spellIds: ['touch_of_karma'], keybind: 'shift+r' },
-          { spellIds: [], keybind: 'ctrl+4' },
-        ],
-      },
-      bar2: {
-        enabled: true,
-        buttonCount: 10,
-        buttonsPerRow: 10,
-        buttons: [
-          { spellIds: ['berserking', 'zenith'], keybind: 'shift+1' },
-          { spellIds: ['potion', 'algethar_puzzle_box'], keybind: 'shift+2' },
-          { spellIds: ['touch_of_death'], keybind: 'shift+3' },
-          { spellIds: [], keybind: 'shift+4' },
-          { spellIds: [], keybind: 'shift+5' },
-          { spellIds: [], keybind: 'shift+6' },
-          { spellIds: [], keybind: 'shift+7' },
-          { spellIds: [], keybind: 'shift+8' },
-          { spellIds: [], keybind: '9' },
-          { spellIds: [], keybind: 'shift+0' },
-          { spellIds: [], keybind: '=' },
-          { spellIds: [], keybind: '0' },
-        ],
-      },
-      bar3: {
-        enabled: true,
-        buttonCount: 10,
-        buttonsPerRow: 10,
-        buttons: [
-          { spellIds: [], keybind: '1' },
-          { spellIds: [], keybind: '2' },
-          { spellIds: [], keybind: '3' },
-          { spellIds: [], keybind: '4' },
-          { spellIds: [], keybind: '5' },
-          { spellIds: [], keybind: '6' },
-          { spellIds: [], keybind: '7' },
-          { spellIds: [], keybind: '8' },
-          { spellIds: [], keybind: '9' },
-          { spellIds: [], keybind: ']' },
-          { spellIds: [], keybind: '=' },
-          { spellIds: [], keybind: '0' },
-        ],
-      },
-      bar4: createActionBarConfig([], false, 12, 12),
-      bar5: createActionBarConfig([], false, 12, 12),
+      bar1: cloneActionBarConfigDefaults(defaults.bar1),
+      bar2: cloneActionBarConfigDefaults(defaults.bar2),
+      bar3: cloneActionBarConfigDefaults(defaults.bar3),
+      bar4: cloneActionBarConfigDefaults(defaults.bar4),
+      bar5: cloneActionBarConfigDefaults(defaults.bar5),
     },
+  };
+}
+
+function cloneTrackerEntrySettings(value: TrackerEntrySettings): TrackerEntrySettings {
+  return {
+    glowWhenReady: value.glowWhenReady,
+    disableProcGlow: value.disableProcGlow,
+    cooldownGroup: value.cooldownGroup,
+  };
+}
+
+function cloneTrackerGroupSettings(value: TrackerGroupSettings): TrackerGroupSettings {
+  return {
+    enabled: value.enabled,
+    blacklistSpellIds: [...value.blacklistSpellIds],
+    trackedSpellIds: [...value.trackedSpellIds],
+    trackedEntryIds: [...value.trackedEntryIds],
+    displayMode: value.displayMode,
+    iconsPerRow: value.iconsPerRow,
+    entryOptions: Object.fromEntries(
+      Object.entries(value.entryOptions).map(([key, entry]) => [key, cloneTrackerEntrySettings(entry)]),
+    ),
+  };
+}
+
+function cloneHudLayoutSettings(value: HudLayoutSettings): HudLayoutSettings {
+  return {
+    enemyIcon: { ...value.enemyIcon },
+    essentialCooldowns: { ...value.essentialCooldowns },
+    utilityCooldowns: { ...value.utilityCooldowns },
+    buffIcons: { ...value.buffIcons },
+    buffBars: { ...value.buffBars },
+    consumables: { ...value.consumables },
+    challengePlayfield: { ...value.challengePlayfield },
+    playerFrame: { ...value.playerFrame },
+    resourceFrame: { ...value.resourceFrame },
+    targetFrame: { ...value.targetFrame },
+    castBar: { ...value.castBar },
+    actionBar1: { ...value.actionBar1 },
+    actionBar2: { ...value.actionBar2 },
+    actionBar3: { ...value.actionBar3 },
+    actionBar4: { ...value.actionBar4 },
+    actionBar5: { ...value.actionBar5 },
+  };
+}
+
+function cloneHudSettings(value: HudSettings): HudSettings {
+  return {
+    layout: cloneHudLayoutSettings(value.layout),
+    general: { ...value.general },
+    cooldowns: {
+      essential: cloneTrackerGroupSettings(value.cooldowns.essential),
+      utility: cloneTrackerGroupSettings(value.cooldowns.utility),
+    },
+    buffs: {
+      iconTracker: cloneTrackerGroupSettings(value.buffs.iconTracker),
+      barTracker: cloneTrackerGroupSettings(value.buffs.barTracker),
+    },
+    targetDebuffs: cloneTrackerGroupSettings(value.targetDebuffs),
+    consumables: cloneTrackerGroupSettings(value.consumables),
+  };
+}
+
+function cloneActionBarSettings(value: ActionBarSettings): ActionBarSettings {
+  return {
+    bars: Object.fromEntries(
+      ACTION_BAR_IDS.map((barId) => [
+        barId,
+        {
+          enabled: value.bars[barId].enabled,
+          buttonCount: value.bars[barId].buttonCount,
+          buttonsPerRow: value.bars[barId].buttonsPerRow,
+          buttons: value.bars[barId].buttons.map((button) => ({
+            spellIds: [...button.spellIds],
+            keybind: button.keybind,
+          })),
+        },
+      ]),
+    ) as Record<ActionBarId, ActionBarConfig>,
+  };
+}
+
+function cloneTrainerSpecProfileSettings(value: TrainerSpecProfileSettings): TrainerSpecProfileSettings {
+  return {
+    talents: [...value.talents],
+    talentRanks: { ...value.talentRanks },
+    loadout: cloneLoadout(value.loadout),
+    hud: cloneHudSettings(value.hud),
+    actionBars: cloneActionBarSettings(value.actionBars),
+  };
+}
+
+function createDefaultTrainerSpecProfileSettings(selectedSpec: TrainerSpecId): TrainerSpecProfileSettings {
+  const uiDefaults = getTrainerSpecUiDefaults(selectedSpec);
+  const profileSpec = getTrainerSpecDefinition(selectedSpec).profileSpec;
+  const defaultProfile = getDefaultProfileForSpec(profileSpec);
+  const sortedTalents = [...defaultProfile.talents].sort();
+  const talentRanks = Object.fromEntries(
+    [...defaultProfile.talentRanks.entries()].sort(([left], [right]) => left.localeCompare(right)),
+  );
+
+  return {
+    talents: sortedTalents,
+    talentRanks,
+    loadout: cloneLoadout(defaultProfile.loadout),
+    hud: {
+      layout: getDefaultHudLayoutSettings(),
+      general: {
+        showEnemyIcon: false,
+        showMeleeSwingDamage: false,
+        showDamageText: true,
+        layoutScale: 1,
+      },
+      cooldowns: {
+        essential: createTrackerGroupFromDefaults(uiDefaults.cooldowns.essential, 'icons'),
+        utility: createTrackerGroupFromDefaults(uiDefaults.cooldowns.utility, 'icons'),
+      },
+      buffs: {
+        iconTracker: createTrackerGroupFromDefaults(uiDefaults.buffs.iconTracker, 'icons'),
+        barTracker: createTrackerGroupFromDefaults(uiDefaults.buffs.barTracker, 'bars'),
+      },
+      targetDebuffs: createDefaultTrackerGroupSettings('icons'),
+      consumables: createDefaultTrackerGroupSettings('icons', true, [...uiDefaults.consumables.trackedEntryIds]),
+    },
+    actionBars: createDefaultActionBarSettings(selectedSpec),
+  };
+}
+
+function createDefaultSpecProfiles(): Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>> {
+  return Object.fromEntries(
+    getPlayableTrainerSpecs().map((spec) => [spec.id, createDefaultTrainerSpecProfileSettings(spec.id)]),
+  ) as Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>>;
+}
+
+function resolveSelectedSpecProfile(
+  settings: Pick<TrainerSettings, 'selectedSpec' | 'specProfiles'>,
+): TrainerSpecProfileSettings {
+  const selected = settings.specProfiles[settings.selectedSpec];
+  return selected
+    ? cloneTrainerSpecProfileSettings(selected)
+    : createDefaultTrainerSpecProfileSettings(settings.selectedSpec);
+}
+
+function syncActiveSpecIntoProfiles(settings: TrainerSettings): TrainerSettings {
+  const specProfiles: Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>> = {
+    ...settings.specProfiles,
+    [settings.selectedSpec]: {
+      talents: [...settings.talents],
+      talentRanks: { ...settings.talentRanks },
+      loadout: cloneLoadout(settings.loadout),
+      hud: cloneHudSettings(settings.hud),
+      actionBars: cloneActionBarSettings(settings.actionBars),
+    },
+  };
+
+  return {
+    ...settings,
+    specProfiles,
+  };
+}
+
+function applySelectedSpecProfile(settings: TrainerSettings): TrainerSettings {
+  const selectedProfile = resolveSelectedSpecProfile(settings);
+
+  return {
+    ...settings,
+    talents: [...selectedProfile.talents],
+    talentRanks: { ...selectedProfile.talentRanks },
+    loadout: cloneLoadout(selectedProfile.loadout),
+    hud: cloneHudSettings(selectedProfile.hud),
+    actionBars: cloneActionBarSettings(selectedProfile.actionBars),
   };
 }
 
 /**
  * Returns the shipped default trainer settings.
  */
-export function getDefaultTrainerSettings(): TrainerSettings {
+export function getDefaultTrainerSettings(selectedSpec: TrainerSpecId = getDefaultPlayableTrainerSpecId()): TrainerSettings {
+  const effectiveSelectedSpec = isTrainerSpecPlayable(selectedSpec)
+    ? selectedSpec
+    : getDefaultPlayableTrainerSpecId();
+  const specProfiles = createDefaultSpecProfiles();
+  const activeProfile = specProfiles[effectiveSelectedSpec] ?? createDefaultTrainerSpecProfileSettings(effectiveSelectedSpec);
+
   return {
-    selectedSpec: 'monk-windwalker',
+    selectedSpec: effectiveSelectedSpec,
     mode: 'test',
     practiceSpeedMultiplier: 1,
     challenge: {
@@ -277,428 +436,12 @@ export function getDefaultTrainerSettings(): TrainerSettings {
     audio: {
       musicVolume: 1,
     },
-    talents: [
-      'against_all_odds',
-      'ancient_arts',
-      'ascension',
-      'calming_presence',
-      'celerity',
-      'chi_proficiency',
-      'combat_stance',
-      'combat_wisdom',
-      'combo_breaker',
-      'cyclones_drift',
-      'dance_of_chi_ji',
-      'dance_of_the_wind',
-      'detox',
-      'disable',
-      'drinking_horn_cover',
-      'dual_threat',
-      'echo_technique',
-      'efficient_training',
-      'energy_burst',
-      'fast_feet',
-      'fatal_touch',
-      'ferociousness',
-      'ferocity_of_xuen',
-      'fists_of_fury',
-      'flow_of_chi',
-      'flurry_strikes',
-      'fortifying_brew',
-      'glory_of_the_dawn',
-      'grace_of_the_crane',
-      'hit_combo',
-      'improved_touch_of_death',
-      'ironshell_brew',
-      'jade_walk',
-      'jadefire_stomp',
-      'lighter_than_air',
-      'martial_agility',
-      'martial_instincts',
-      'martial_precision',
-      'memory_of_the_monastery',
-      'midnight_season_1_2pc',
-      'midnight_season_1_4pc',
-      'momentum_boost',
-      'obsidian_spiral',
-      'one_versus_many',
-      'paralysis',
-      'pride_of_pandaria',
-      'ring_of_peace',
-      'rising_star',
-      'rising_sun_kick',
-      'rushing_wind_kick',
-      'sequenced_strikes',
-      'shado_over_the_battlefield',
-      'sharp_reflexes',
-      'singularly_focused_jade',
-      'spear_hand_strike',
-      'stand_ready',
-      'stillstep_coil',
-      'strength_of_spirit',
-      'sunfire_spiral',
-      'teachings_of_the_monastery',
-      'tiger_fang',
-      'tiger_tail_sweep',
-      'tigereye_brew',
-      'tigers_lust',
-      'transcendence',
-      'veterans_eye',
-      'vigilant_watch',
-      'vivacious_vivification',
-      'weapon_of_wind',
-      'weapons_of_the_wall',
-      'whirling_dragon_punch',
-      'whirling_steel',
-      'windwalking',
-      'wisdom_of_the_wall',
-      'xuens_battlegear',
-      'yulons_grace',
-      'zenith',
-      'zenith_stomp',
-    ],
-    talentRanks: {
-      against_all_odds: 1,
-      ancient_arts: 2,
-      ascension: 1,
-      calming_presence: 1,
-      celerity: 1,
-      chi_proficiency: 2,
-      combat_stance: 1,
-      combat_wisdom: 1,
-      combo_breaker: 1,
-      cyclones_drift: 1,
-      dance_of_chi_ji: 1,
-      dance_of_the_wind: 1,
-      detox: 1,
-      disable: 1,
-      drinking_horn_cover: 1,
-      dual_threat: 1,
-      echo_technique: 1,
-      efficient_training: 1,
-      energy_burst: 1,
-      fast_feet: 1,
-      fatal_touch: 1,
-      ferociousness: 2,
-      ferocity_of_xuen: 2,
-      fists_of_fury: 1,
-      flow_of_chi: 1,
-      flurry_strikes: 1,
-      fortifying_brew: 1,
-      glory_of_the_dawn: 1,
-      grace_of_the_crane: 1,
-      hit_combo: 1,
-      improved_touch_of_death: 1,
-      ironshell_brew: 1,
-      jade_walk: 1,
-      jadefire_stomp: 1,
-      lighter_than_air: 1,
-      martial_agility: 1,
-      martial_instincts: 2,
-      martial_precision: 1,
-      memory_of_the_monastery: 1,
-      momentum_boost: 1,
-      obsidian_spiral: 1,
-      one_versus_many: 1,
-      paralysis: 1,
-      pride_of_pandaria: 1,
-      ring_of_peace: 1,
-      rising_star: 1,
-      rising_sun_kick: 1,
-      rushing_wind_kick: 1,
-      sequenced_strikes: 1,
-      shado_over_the_battlefield: 1,
-      sharp_reflexes: 1,
-      singularly_focused_jade: 1,
-      spear_hand_strike: 1,
-      stand_ready: 1,
-      stillstep_coil: 1,
-      strength_of_spirit: 1,
-      sunfire_spiral: 1,
-      teachings_of_the_monastery: 1,
-      tiger_fang: 1,
-      tiger_tail_sweep: 1,
-      tigereye_brew: 4,
-      tigers_lust: 1,
-      transcendence: 1,
-      veterans_eye: 1,
-      vigilant_watch: 1,
-      vivacious_vivification: 1,
-      weapon_of_wind: 1,
-      weapons_of_the_wall: 1,
-      whirling_dragon_punch: 1,
-      whirling_steel: 1,
-      windwalking: 1,
-      wisdom_of_the_wall: 1,
-      xuens_battlegear: 1,
-      yulons_grace: 1,
-      zenith: 1,
-      zenith_stomp: 1,
-    },
-    loadout: {
-      consumables: {
-        potion: 'potion_of_recklessness_2',
-        flask: 'flask_of_the_blood_knights_2',
-        food: 'harandar_celebration',
-        augmentation: 'void_touched',
-        temporaryEnchants: [
-          { slot: 'main_hand', enchantName: 'thalassian_phoenix_oil_2' },
-          { slot: 'off_hand', enchantName: 'thalassian_phoenix_oil_2' },
-        ],
-      },
-      externalBuffs: {
-        bloodlust: true,
-        battleShout: true,
-        arcaneIntellect: true,
-        markOfTheWild: true,
-        powerWordFortitude: true,
-        skyfury: true,
-        mysticTouch: true,
-        chaosBrand: true,
-        huntersMark: true,
-      },
-      gear: [
-        {
-          slot: 'head',
-          itemName: 'fearsome_visage_of_radens_chosen',
-          itemId: 250015,
-          enchantId: 8017,
-          gemIds: [240983],
-          bonusIds: [1808, 6652, 12667, 12676, 12806, 13335, 13338, 13575],
-          craftedStats: [],
-          raw: 'head=fearsome_visage_of_radens_chosen,id=250015,bonus_id=1808/6652/12667/12676/12806/13335/13338/13575,gem_id=240983,enchant_id=8017',
-        },
-        {
-          slot: 'neck',
-          itemName: 'amulet_of_the_abyssal_hymn',
-          itemId: 250247,
-          gemIds: [240892, 240892],
-          bonusIds: [3170, 4786, 4800, 12806, 13668],
-          craftedStats: [],
-          raw: 'neck=amulet_of_the_abyssal_hymn,id=250247,bonus_id=3170/4786/4800/12806/13668,gem_id=240892/240892',
-        },
-        {
-          slot: 'shoulders',
-          itemName: 'aurastones_of_radens_chosen',
-          itemId: 250013,
-          enchantId: 8001,
-          gemIds: [],
-          bonusIds: [6652, 12675, 12806, 13335, 13340, 13574],
-          craftedStats: [],
-          raw: 'shoulders=aurastones_of_radens_chosen,id=250013,bonus_id=6652/12675/12806/13335/13340/13574,enchant_id=8001',
-        },
-        {
-          slot: 'back',
-          itemName: 'windwrap_of_radens_chosen',
-          itemId: 250010,
-          gemIds: [],
-          bonusIds: [6652, 12806, 13335],
-          craftedStats: [],
-          raw: 'back=windwrap_of_radens_chosen,id=250010,bonus_id=6652/12806/13335',
-        },
-        {
-          slot: 'chest',
-          itemName: 'battle_garb_of_radens_chosen',
-          itemId: 250018,
-          enchantId: 7987,
-          gemIds: [],
-          bonusIds: [6652, 12676, 12806, 13335, 13336, 13575],
-          craftedStats: [],
-          raw: 'chest=battle_garb_of_radens_chosen,id=250018,bonus_id=6652/12676/12806/13335/13336/13575,enchant_id=7987',
-        },
-        {
-          slot: 'wrists',
-          itemName: 'voidskinned_bracers',
-          itemId: 249327,
-          gemIds: [240892],
-          bonusIds: [3157, 4786, 4800, 11307, 12802, 12806],
-          craftedStats: [],
-          raw: 'wrists=voidskinned_bracers,id=249327,bonus_id=3157/4786/4800/11307/12802/12806,gem_id=240892',
-        },
-        {
-          slot: 'hands',
-          itemName: 'vaelgors_fearsome_grasp',
-          itemId: 249321,
-          gemIds: [],
-          bonusIds: [12806, 13577],
-          craftedStats: [],
-          raw: 'hands=vaelgors_fearsome_grasp,id=249321,bonus_id=12806/13577',
-        },
-        {
-          slot: 'waist',
-          itemName: 'snapvine_cinch',
-          itemId: 251082,
-          gemIds: [240892],
-          bonusIds: [3190, 4786, 11307, 12806],
-          craftedStats: [],
-          raw: 'waist=snapvine_cinch,id=251082,bonus_id=3190/4786/11307/12806,gem_id=240892',
-        },
-        {
-          slot: 'legs',
-          itemName: 'swiftsweepers_of_radens_chosen',
-          itemId: 250014,
-          enchantId: 8159,
-          gemIds: [],
-          bonusIds: [6652, 12676, 12806, 13335, 13339, 13575],
-          craftedStats: [],
-          raw: 'legs=swiftsweepers_of_radens_chosen,id=250014,bonus_id=6652/12676/12806/13335/13339/13575,enchant_id=8159',
-        },
-        {
-          slot: 'feet',
-          itemName: 'storm_crashers_of_radens_chosen',
-          itemId: 250017,
-          enchantId: 7963,
-          gemIds: [],
-          bonusIds: [6652, 12806, 13335],
-          craftedStats: [],
-          raw: 'feet=storm_crashers_of_radens_chosen,id=250017,bonus_id=6652/12806/13335,enchant_id=7963',
-        },
-        {
-          slot: 'finger1',
-          itemName: 'loa_worshipers_band',
-          itemId: 251513,
-          enchantId: 7967,
-          gemIds: [240892],
-          bonusIds: [8960, 12066, 12214, 13622, 12497],
-          craftedStats: [],
-          raw: 'finger1=loa_worshipers_band,id=251513,bonus_id=8960/12066/12214/13622/12497,gem_id=240892,enchant_id=7967',
-        },
-        {
-          slot: 'finger2',
-          itemName: 'eye_of_midnight',
-          itemId: 249920,
-          enchantId: 7967,
-          gemIds: [240892, 240892],
-          bonusIds: [6652, 12806, 13335, 13534],
-          craftedStats: [],
-          raw: 'finger2=eye_of_midnight,id=249920,bonus_id=6652/12806/13335/13534,gem_id=240892/240892,enchant_id=7967',
-        },
-        {
-          slot: 'trinket1',
-          itemName: 'gaze_of_the_alnseer',
-          itemId: 249343,
-          gemIds: [],
-          bonusIds: [6652, 12806, 13335],
-          craftedStats: [],
-          raw: 'trinket1=gaze_of_the_alnseer,id=249343,bonus_id=6652/12806/13335',
-        },
-        {
-          slot: 'trinket2',
-          itemName: 'algethar_puzzle_box',
-          itemId: 193701,
-          gemIds: [],
-          bonusIds: [6652, 12699, 12801, 12806, 13440],
-          craftedStats: [],
-          raw: 'trinket2=algethar_puzzle_box,id=193701,bonus_id=6652/12699/12801/12806/13440',
-        },
-        {
-          slot: 'main_hand',
-          itemName: 'shadowslash_slicer',
-          itemId: 251122,
-          enchantId: 7981,
-          gemIds: [],
-          bonusIds: [3190, 4786, 12806],
-          craftedStats: [],
-          raw: 'main_hand=shadowslash_slicer,id=251122,bonus_id=3190/4786/12806,enchant_id=7981',
-        },
-        {
-          slot: 'off_hand',
-          itemName: 'bloomforged_claw',
-          itemId: 237845,
-          enchantId: 7981,
-          gemIds: [],
-          bonusIds: [8960, 12066, 12214, 12693, 13622, 12497],
-          craftedStats: [36, 49],
-          raw: 'off_hand=bloomforged_claw,id=237845,bonus_id=8960/12066/12214/12693/13622/12497,enchant_id=7981,crafted_stats=36/49',
-        },
-      ],
-    },
-    hud: {
-      layout: getDefaultHudLayoutSettings(),
-      general: {
-        showEnemyIcon: false,
-        showMeleeSwingDamage: false,
-        showDamageText: true,
-        layoutScale: 1,
-      },
-      cooldowns: {
-        essential: {
-          ...createDefaultTrackerGroupSettings('icons', true, [
-            'tiger_palm',
-            'blackout_kick',
-            'rising_sun_kick',
-            'fists_of_fury',
-            'whirling_dragon_punch',
-            'touch_of_death',
-            'zenith',
-            'spinning_crane_kick',
-          ], 5),
-          entryOptions: {
-            slicing_winds: { glowWhenReady: false, disableProcGlow: false, cooldownGroup: 'utility' },
-            touch_of_death: { glowWhenReady: false, disableProcGlow: false, cooldownGroup: 'essential' },
-          },
-        },
-        utility: {
-          ...createDefaultTrackerGroupSettings('icons', true, ['touch_of_karma']),
-          entryOptions: {
-            slicing_winds: { glowWhenReady: false, disableProcGlow: false, cooldownGroup: 'utility' },
-            touch_of_death: { glowWhenReady: false, disableProcGlow: false, cooldownGroup: 'essential' },
-          },
-        },
-      },
-      buffs: {
-        iconTracker: {
-          ...createDefaultTrackerGroupSettings('icons', true, [
-            'berserking',
-            'algethar_puzzle',
-            'flurry_charge',
-            'teachings_of_the_monastery',
-            'momentum_boost',
-            'hit_combo',
-            'blackout_reinforcement',
-            'dance_of_chi_ji',
-          ]),
-          entryOptions: {
-            combo_strikes: { glowWhenReady: false, disableProcGlow: false },
-            blackout_reinforcement: { glowWhenReady: false, disableProcGlow: false },
-            dance_of_chi_ji: { glowWhenReady: false, disableProcGlow: false },
-            momentum_boost: { glowWhenReady: false, disableProcGlow: false },
-            hit_combo: { glowWhenReady: false, disableProcGlow: false },
-            zenith: { glowWhenReady: false, disableProcGlow: false },
-            rushing_wind_kick: { glowWhenReady: false, disableProcGlow: false },
-            pressure_point: { glowWhenReady: false, disableProcGlow: false },
-            stand_ready: { glowWhenReady: false, disableProcGlow: false },
-            teachings_of_the_monastery: { glowWhenReady: false, disableProcGlow: false },
-            memory_of_the_monastery: { glowWhenReady: false, disableProcGlow: false },
-            flurry_charge: { glowWhenReady: false, disableProcGlow: false },
-            tigereye_brew_3: { glowWhenReady: false, disableProcGlow: false },
-            tigereye_brew_1: { glowWhenReady: false, disableProcGlow: false },
-          },
-        },
-        barTracker: {
-          ...createDefaultTrackerGroupSettings('bars', true, ['berserking', 'algethar_puzzle']),
-          entryOptions: {
-            combo_strikes: { glowWhenReady: false, disableProcGlow: false },
-            blackout_reinforcement: { glowWhenReady: false, disableProcGlow: false },
-            dance_of_chi_ji: { glowWhenReady: false, disableProcGlow: false },
-            momentum_boost: { glowWhenReady: false, disableProcGlow: false },
-            hit_combo: { glowWhenReady: false, disableProcGlow: false },
-            zenith: { glowWhenReady: false, disableProcGlow: false },
-            rushing_wind_kick: { glowWhenReady: false, disableProcGlow: false },
-            pressure_point: { glowWhenReady: false, disableProcGlow: false },
-            stand_ready: { glowWhenReady: false, disableProcGlow: false },
-            teachings_of_the_monastery: { glowWhenReady: false, disableProcGlow: false },
-            memory_of_the_monastery: { glowWhenReady: false, disableProcGlow: false },
-            flurry_charge: { glowWhenReady: false, disableProcGlow: false },
-            tigereye_brew_3: { glowWhenReady: false, disableProcGlow: false },
-            tigereye_brew_1: { glowWhenReady: false, disableProcGlow: false },
-          },
-        },
-      },
-      targetDebuffs: createDefaultTrackerGroupSettings('icons'),
-      consumables: createDefaultTrackerGroupSettings('icons', true, []),
-    },
-    actionBars: createDefaultActionBarSettings(),
+    specProfiles,
+    talents: [...activeProfile.talents],
+    talentRanks: { ...activeProfile.talentRanks },
+    loadout: cloneLoadout(activeProfile.loadout),
+    hud: cloneHudSettings(activeProfile.hud),
+    actionBars: cloneActionBarSettings(activeProfile.actionBars),
   };
 }
 
@@ -1009,7 +752,11 @@ function sanitizeActionBarConfig(value: unknown, fallback: ActionBarConfig): Act
   };
 }
 
-function sanitizeActionBarSettings(value: unknown, fallback: ActionBarSettings): ActionBarSettings {
+function sanitizeActionBarSettings(
+  value: unknown,
+  fallback: ActionBarSettings,
+  selectedSpec: TrainerSpecId,
+): ActionBarSettings {
   if (!isRecord(value)) {
     return {
       bars: Object.fromEntries(
@@ -1027,7 +774,7 @@ function sanitizeActionBarSettings(value: unknown, fallback: ActionBarSettings):
     };
   }
 
-  const migrated = createDefaultActionBarSettings();
+  const migrated = createDefaultActionBarSettings(selectedSpec);
   const legacyEnabled = typeof value.enabled === 'boolean' ? value.enabled : true;
   const legacySlotsPerRow = typeof value.slotsPerRow === 'number' && Number.isFinite(value.slotsPerRow)
     ? Math.min(12, Math.max(1, Math.floor(value.slotsPerRow)))
@@ -1045,7 +792,7 @@ function sanitizeActionBarSettings(value: unknown, fallback: ActionBarSettings):
     remainingButtons = Math.max(0, remainingButtons - 12);
   });
 
-  return sanitizeActionBarSettings(migrated, fallback);
+  return sanitizeActionBarSettings(migrated, fallback, selectedSpec);
 }
 
 function sanitizeLoadout(value: unknown, fallback: CharacterLoadout): CharacterLoadout {
@@ -1102,6 +849,37 @@ function sanitizeLoadout(value: unknown, fallback: CharacterLoadout): CharacterL
   return next;
 }
 
+function sanitizeSpecProfileSettings(
+  value: unknown,
+  fallback: TrainerSpecProfileSettings,
+  selectedSpec: TrainerSpecId,
+): TrainerSpecProfileSettings {
+  return {
+    talents: sanitizeStringArray(isRecord(value) ? value.talents : undefined).length > 0
+      ? sanitizeStringArray(isRecord(value) ? value.talents : undefined)
+      : [...fallback.talents],
+    talentRanks: sanitizeTalentRanks(isRecord(value) ? value.talentRanks : undefined, fallback.talentRanks),
+    loadout: sanitizeLoadout(isRecord(value) ? value.loadout : undefined, fallback.loadout),
+    hud: sanitizeHudSettings(isRecord(value) ? value.hud : undefined, fallback.hud),
+    actionBars: sanitizeActionBarSettings(isRecord(value) ? value.actionBars : undefined, fallback.actionBars, selectedSpec),
+  };
+}
+
+function sanitizeSpecProfiles(
+  value: unknown,
+  fallback: Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>>,
+): Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>> {
+  const rawProfiles = isRecord(value) ? value : {};
+  const next: Partial<Record<TrainerSpecId, TrainerSpecProfileSettings>> = {};
+
+  for (const spec of getPlayableTrainerSpecs()) {
+    const fallbackProfile = fallback[spec.id] ?? createDefaultTrainerSpecProfileSettings(spec.id);
+    next[spec.id] = sanitizeSpecProfileSettings(rawProfiles[spec.id], fallbackProfile, spec.id);
+  }
+
+  return next;
+}
+
 /**
  * Normalizes a partially valid storage payload into a complete `TrainerSettings` object.
  */
@@ -1111,8 +889,26 @@ export function normalizeTrainerSettings(value: unknown): TrainerSettings {
     return fallback;
   }
 
+  const selectedSpec = isTrainerSpecId(value.selectedSpec) && isTrainerSpecPlayable(value.selectedSpec)
+    ? value.selectedSpec
+    : fallback.selectedSpec;
+
+  const specProfiles = sanitizeSpecProfiles(value.specProfiles, fallback.specProfiles);
+  specProfiles[selectedSpec] = sanitizeSpecProfileSettings(
+    {
+      talents: value.talents,
+      talentRanks: value.talentRanks,
+      loadout: value.loadout,
+      hud: value.hud,
+      actionBars: value.actionBars,
+    },
+    specProfiles[selectedSpec] ?? fallback.specProfiles[selectedSpec] ?? createDefaultTrainerSpecProfileSettings(selectedSpec),
+    selectedSpec,
+  );
+  const activeProfile = specProfiles[selectedSpec] ?? createDefaultTrainerSpecProfileSettings(selectedSpec);
+
   return {
-    selectedSpec: value.selectedSpec === 'monk-windwalker' ? value.selectedSpec : fallback.selectedSpec,
+    selectedSpec,
     mode: value.mode === 'practice' || value.mode === 'test' || value.mode === 'tutorial' || value.mode === 'challenge'
       ? value.mode
       : fallback.mode,
@@ -1123,11 +919,12 @@ export function normalizeTrainerSettings(value: unknown): TrainerSettings {
       ? value.nTargets
       : fallback.nTargets,
     audio: sanitizeAudioSettings(value.audio, fallback.audio),
-    talents: sanitizeStringArray(value.talents).length > 0 ? sanitizeStringArray(value.talents) : [...fallback.talents],
-    talentRanks: sanitizeTalentRanks(value.talentRanks, fallback.talentRanks),
-    loadout: sanitizeLoadout(value.loadout, fallback.loadout),
-    hud: sanitizeHudSettings(value.hud, fallback.hud),
-    actionBars: sanitizeActionBarSettings(value.actionBars, fallback.actionBars),
+    specProfiles,
+    talents: [...activeProfile.talents],
+    talentRanks: { ...activeProfile.talentRanks },
+    loadout: sanitizeLoadout(activeProfile.loadout, activeProfile.loadout),
+    hud: sanitizeHudSettings(activeProfile.hud, activeProfile.hud),
+    actionBars: sanitizeActionBarSettings(activeProfile.actionBars, activeProfile.actionBars, selectedSpec),
   };
 }
 
@@ -1237,13 +1034,76 @@ function applyLegacyBrowserDefaults(settings: TrainerSettings): TrainerSettings 
       }
     }
 
-    return {
+    return syncActiveSpecIntoProfiles({
       ...settings,
       actionBars: { bars },
-    };
+    });
   } catch {
     return settings;
   }
+}
+
+export function switchTrainerSpec(settings: TrainerSettings, nextSpec: TrainerSpecId): TrainerSettings {
+  if (!isTrainerSpecPlayable(nextSpec)) {
+    return settings;
+  }
+
+  const synced = syncActiveSpecIntoProfiles(settings);
+  const nextProfile = synced.specProfiles[nextSpec] ?? createDefaultTrainerSpecProfileSettings(nextSpec);
+
+  return {
+    ...synced,
+    selectedSpec: nextSpec,
+    talents: [...nextProfile.talents],
+    talentRanks: { ...nextProfile.talentRanks },
+    loadout: cloneLoadout(nextProfile.loadout),
+    hud: cloneHudSettings(nextProfile.hud),
+    actionBars: cloneActionBarSettings(nextProfile.actionBars),
+  };
+}
+
+export function copyActionBarLayoutAndKeybindsFromSpec(
+  settings: TrainerSettings,
+  sourceSpec: TrainerSpecId,
+): TrainerSettings {
+  if (!isTrainerSpecPlayable(sourceSpec) || sourceSpec === settings.selectedSpec) {
+    return settings;
+  }
+
+  const synced = syncActiveSpecIntoProfiles(settings);
+  const sourceProfile = synced.specProfiles[sourceSpec];
+  if (!sourceProfile) {
+    return settings;
+  }
+
+  const nextActionBars = cloneActionBarSettings(synced.actionBars);
+  for (const barId of ACTION_BAR_IDS) {
+    const sourceBar = sourceProfile.actionBars.bars[barId];
+    const targetBar = nextActionBars.bars[barId];
+    nextActionBars.bars[barId] = {
+      ...targetBar,
+      enabled: sourceBar.enabled,
+      buttonCount: sourceBar.buttonCount,
+      buttonsPerRow: sourceBar.buttonsPerRow,
+      buttons: targetBar.buttons.map((button, index) => ({
+        spellIds: [...button.spellIds],
+        keybind: sourceBar.buttons[index]?.keybind ?? button.keybind,
+      })),
+    };
+  }
+
+  const nextHud = cloneHudSettings(synced.hud);
+  nextHud.layout.actionBar1 = { ...sourceProfile.hud.layout.actionBar1 };
+  nextHud.layout.actionBar2 = { ...sourceProfile.hud.layout.actionBar2 };
+  nextHud.layout.actionBar3 = { ...sourceProfile.hud.layout.actionBar3 };
+  nextHud.layout.actionBar4 = { ...sourceProfile.hud.layout.actionBar4 };
+  nextHud.layout.actionBar5 = { ...sourceProfile.hud.layout.actionBar5 };
+
+  return applySelectedSpecProfile(syncActiveSpecIntoProfiles({
+    ...synced,
+    hud: nextHud,
+    actionBars: nextActionBars,
+  }));
 }
 
 /**
@@ -1254,7 +1114,8 @@ export function useTrainerSettings(): [TrainerSettings, (next: TrainerSettingsUp
 
   const setSettings = useCallback((next: TrainerSettingsUpdater): void => {
     setSettingsState((current) => {
-      const resolved = typeof next === 'function' ? next(current) : next;
+      const updated = typeof next === 'function' ? next(current) : next;
+      const resolved = normalizeTrainerSettings(syncActiveSpecIntoProfiles(updated));
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(resolved));
       } catch {

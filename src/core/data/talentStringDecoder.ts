@@ -2,6 +2,10 @@ import {
   MONK_WINDWALKER_SIMC_LAYOUT_POSITIONS,
   type SimcTalentLayoutPosition,
 } from './monkWindwalkerSimcLayout';
+import {
+  DEFAULT_SHAMAN_ENHANCEMENT_SIMC_TALENT_METADATA_TALENT_STRING,
+  SHAMAN_ENHANCEMENT_SIMC_TALENT_METADATA,
+} from './generated/shamanEnhancementTalentMetadata';
 
 const BASE64_CHARACTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 const LOADOUT_SERIALIZATION_VERSION = 2;
@@ -34,7 +38,7 @@ interface SerializedTalentNodeDefinition {
   tree: DecodedTalentTreeInternal | null;
   nodeType: number;
   maxRank: number;
-  appliesToWindwalker: boolean;
+  isVisibleToCurrentSpec: boolean;
   names: readonly string[];
   internalIds: readonly string[];
 }
@@ -65,7 +69,40 @@ export interface TalentLoadoutDefinition {
   heroTreeChoices: readonly HeroTalentChoiceDefinition[];
   heroTreeSelectionOrder?: readonly string[];
   serializedNodes: readonly SerializedTalentNodeDefinition[];
-  nodes: readonly MonkWindwalkerTalentNodeDefinition[];
+  nodes: readonly TalentNodeDefinition[];
+}
+
+export interface GeneratedSimcTalentNodeEntry {
+  entryId: number;
+  name: string;
+  selectionIndex: number;
+  maxRank: number;
+  spellId: number;
+}
+
+export interface GeneratedSimcTalentNodeGroup {
+  order: number;
+  nodeId: number;
+  treeIndex: number;
+  treeId: string | null;
+  nodeType: number;
+  maxRank: number;
+  row: number;
+  col: number;
+  subTreeId: number;
+  granted: boolean;
+  entries: readonly GeneratedSimcTalentNodeEntry[];
+}
+
+export interface GeneratedSimcTalentLoadoutMetadata {
+  id: string;
+  version: number;
+  specId: number;
+  trees: readonly TalentTreeDefinition[];
+  heroTreeChoices: readonly HeroTalentChoiceDefinition[];
+  heroTreeSelectionOrder: readonly string[];
+  rawNodeGroups: readonly GeneratedSimcTalentNodeGroup[];
+  activeSpellIds: readonly number[];
 }
 
 /**
@@ -74,10 +111,10 @@ export interface TalentLoadoutDefinition {
 export type DecodedTalentTree = DecodedTalentTreeInternal;
 
 /**
- * Static metadata for a Windwalker talent node.
+ * Static metadata for a trainer talent node.
  * Choice nodes retain every branch name so UIs can resolve the active branch.
  */
-export interface MonkWindwalkerTalentNodeDefinition {
+export interface TalentNodeDefinition {
   order: number;
   tree: DecodedTalentTree;
   treeId: string;
@@ -92,6 +129,8 @@ export interface MonkWindwalkerTalentNodeDefinition {
   detached?: boolean;
   granted?: boolean;
 }
+
+export type MonkWindwalkerTalentNodeDefinition = TalentNodeDefinition;
 
 const MONK_WW_TALENT_NODES: readonly MonkWindwalkerTalentNode[] = [
   [2, 0, 2, true, ['Ferociousness']],
@@ -538,11 +577,26 @@ const MONK_WINDWALKER_EXPLICIT_PARENT_IDS: Readonly<Record<string, readonly stri
  * The catalog includes all class, specialization, and hero nodes that can
  * apply to Windwalker, including both branches for choice nodes.
  */
-export function getMonkWindwalkerTalentCatalog(): MonkWindwalkerTalentNodeDefinition[] {
+export function getMonkWindwalkerTalentCatalog(): TalentNodeDefinition[] {
   return getTalentCatalog(MONK_WINDWALKER_TALENT_LOADOUT);
 }
 
-export function getTalentCatalog(definition: TalentLoadoutDefinition): MonkWindwalkerTalentNodeDefinition[] {
+export function getTalentLoadoutForProfileSpec(spec: string): TalentLoadoutDefinition {
+  switch (spec) {
+    case 'monk':
+      return MONK_WINDWALKER_TALENT_LOADOUT;
+    case 'shaman':
+      return SHAMAN_ENHANCEMENT_TALENT_LOADOUT;
+    default:
+      throw new Error(`No talent loadout registered for profile spec '${spec}'`);
+  }
+}
+
+export function getTalentCatalogForProfileSpec(spec: string): TalentNodeDefinition[] {
+  return getTalentCatalog(getTalentLoadoutForProfileSpec(spec));
+}
+
+export function getTalentCatalog(definition: TalentLoadoutDefinition): TalentNodeDefinition[] {
   return [...definition.nodes];
 }
 
@@ -556,8 +610,19 @@ export function decodeMonkWindwalkerTalentString(talentString: string): DecodedT
   return decodeTalentLoadoutString(MONK_WINDWALKER_TALENT_LOADOUT, talentString);
 }
 
+export function decodeShamanEnhancementTalentString(talentString: string): DecodedTalent[] {
+  return decodeTalentLoadoutString(SHAMAN_ENHANCEMENT_TALENT_LOADOUT, talentString);
+}
+
+export function decodeTalentStringForProfileSpec(spec: string, talentString: string): DecodedTalent[] {
+  return decodeTalentLoadoutString(getTalentLoadoutForProfileSpec(spec), talentString);
+}
+
 export const DEFAULT_MONK_WINDWALKER_APL_TALENT_STRING =
   'C0QAAAAAAAAAAAAAAAAAAAAAAMzYw2wwsMzMbzAAAAAAAAAAAAsMMCzYbYAzYYmZmhZZYGmlZCAYzMbzMMmZGAAbAwsMLNzMzCAGYmBAWGDxAG';
+
+export const DEFAULT_SHAMAN_ENHANCEMENT_APL_TALENT_STRING =
+  DEFAULT_SHAMAN_ENHANCEMENT_SIMC_TALENT_METADATA_TALENT_STRING;
 
 export function decodeTalentLoadoutString(
   definition: TalentLoadoutDefinition,
@@ -699,20 +764,83 @@ function getTreeName(treeIndex: number): DecodedTalentTreeInternal | null {
   return null;
 }
 
-function buildMonkWindwalkerSerializedNodes(): SerializedTalentNodeDefinition[] {
-  return MONK_WW_TALENT_NODES.map(([treeIndex, nodeType, maxRank, appliesToWindwalker, names], order) => {
-    const validNames = names.filter((name) => name && name !== '0');
+function buildTalentLoadoutFromSimcMetadata(
+  metadata: GeneratedSimcTalentLoadoutMetadata,
+): TalentLoadoutDefinition {
+  const activeSpellIds = new Set(metadata.activeSpellIds);
+  const serializedNodes: SerializedTalentNodeDefinition[] = metadata.rawNodeGroups.map((group) => {
+    const validNames = group.entries
+      .map((entry) => entry.name)
+      .filter((name) => name && name !== '0');
+
     return {
-      order,
-      treeIndex,
-      tree: getTreeName(treeIndex),
-      nodeType,
-      maxRank,
-      appliesToWindwalker,
+      order: group.order,
+      treeIndex: group.treeIndex,
+      tree: getTreeName(group.treeIndex),
+      nodeType: group.nodeType,
+      maxRank: group.maxRank,
+      isVisibleToCurrentSpec: true,
       names: validNames,
       internalIds: validNames.map((name) => toInternalTalentId(name)),
     };
   });
+
+  const nodes: TalentNodeDefinition[] = metadata.rawNodeGroups
+    .filter((group) => group.treeIndex !== TREE_INDEX_HERO_SELECTION && group.treeId !== null)
+    .map((group) => {
+      const names = group.entries.map((entry) => entry.name).filter((name) => name && name !== '0');
+      const internalIds = names.map((name) => toInternalTalentId(name));
+      const tree = getTreeName(group.treeIndex);
+      if (!tree || !group.treeId) {
+        throw new Error(`Generated SimC metadata contains an invalid visible node for '${metadata.id}'`);
+      }
+
+      return {
+        order: group.order,
+        tree,
+        treeId: group.treeId,
+        pointPool: tree,
+        nodeType: group.nodeType,
+        visualType:
+          group.nodeType === 2
+            ? 'choice'
+            : group.entries.some((entry) => activeSpellIds.has(entry.spellId))
+              ? 'active'
+              : 'passive',
+        maxRank: group.maxRank,
+        names,
+        internalIds,
+        layoutPosition: group.row > 0 && group.col > 0 ? { row: group.row, col: group.col } : undefined,
+        granted: group.granted,
+      };
+    });
+
+  return {
+    id: metadata.id,
+    version: metadata.version,
+    specId: metadata.specId,
+    trees: metadata.trees,
+    heroTreeChoices: metadata.heroTreeChoices,
+    heroTreeSelectionOrder: metadata.heroTreeSelectionOrder,
+    serializedNodes,
+    nodes,
+  };
+}
+
+function buildMonkWindwalkerSerializedNodes(): SerializedTalentNodeDefinition[] {
+  return MONK_WW_TALENT_NODES.map(([treeIndex, nodeType, maxRank, appliesToWindwalker, names], order) => {
+    const validNames = names.filter((name) => name && name !== '0');
+      return {
+        order,
+        treeIndex,
+        tree: getTreeName(treeIndex),
+        nodeType,
+        maxRank,
+        isVisibleToCurrentSpec: appliesToWindwalker,
+        names: validNames,
+        internalIds: validNames.map((name) => toInternalTalentId(name)),
+      };
+    });
 }
 
 function buildMonkWindwalkerTalentNodes(
@@ -721,7 +849,7 @@ function buildMonkWindwalkerTalentNodes(
   const nodes: MonkWindwalkerTalentNodeDefinition[] = [];
 
   for (const node of serializedNodes) {
-    if (!node.appliesToWindwalker || !node.tree || node.names.length === 0) {
+    if (!node.isVisibleToCurrentSpec || !node.tree || node.names.length === 0) {
       continue;
     }
 
@@ -861,6 +989,10 @@ const MONK_WINDWALKER_ACTIVE_TALENTS = new Set([
 ]);
 
 const MONK_WINDWALKER_SERIALIZED_NODES = buildMonkWindwalkerSerializedNodes();
+
+export const SHAMAN_ENHANCEMENT_TALENT_LOADOUT = buildTalentLoadoutFromSimcMetadata(
+  SHAMAN_ENHANCEMENT_SIMC_TALENT_METADATA,
+);
 
 export const MONK_WINDWALKER_TALENT_LOADOUT: TalentLoadoutDefinition = {
   id: 'monk-windwalker',

@@ -79,6 +79,12 @@ export interface ActionBarSlotProps {
   activeBuffRemaining?: number;
   /** @deprecated Use charges prop instead. Number of available charges. */
   chargeCount?: number;
+  /** Hover tooltip content shown by the browser. */
+  tooltipText?: string;
+  /** Stronger highlight used by tutorial mode. */
+  learningHighlighted?: boolean;
+  /** Dim the slot while tutorial mode spotlights a different button. */
+  dimmed?: boolean;
 }
 
 /**
@@ -111,6 +117,9 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
   gcdTotal = 1.5,
   activeBuffRemaining = 0,
   chargeCount,
+  tooltipText,
+  learningHighlighted = false,
+  dimmed = false,
 }: ActionBarSlotProps): React.ReactElement {
   const onCooldown = cdRemaining > 0;
   const onGcd = gcdRemaining > 0;
@@ -120,7 +129,7 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
   const atMaxCharges = charges !== undefined && charges.current === charges.max && charges.max > 1;
 
   // Inject keyframes if any animated state is active
-  if (recommended || procced || atMaxCharges || buffActive) {
+  if (recommended || procced || atMaxCharges || buffActive || learningHighlighted) {
     ensurePulseKeyframes();
   }
 
@@ -136,9 +145,11 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
     width: `${size}px`,
     height: `${size}px`,
     background: `linear-gradient(180deg, rgba(14, 22, 36, 0.98), ${T.bgSlot})`,
-    border: recommended
-      ? `1px solid ${T.accent}`
-      : procced
+     border: learningHighlighted
+       ? '2px solid #f7f4a3'
+       : recommended
+       ? `1px solid ${T.accent}`
+       : procced
         ? `1px solid ${T.gold}`
         : buffActive
           ? '1px solid #60baff'
@@ -148,37 +159,44 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
     cursor: onClick ? 'pointer' : 'default',
     transition: 'transform 0.08s, box-shadow 0.16s ease, border-color 0.16s ease',
     transform: pressed ? 'scale(0.92)' : 'none',
-    boxShadow: recommended
-      ? `0 0 10px ${T.glowStrong}, inset 0 0 8px ${T.glow}`
+     boxShadow: learningHighlighted
+       ? '0 0 18px rgba(247, 244, 163, 0.95), 0 0 34px rgba(247, 244, 163, 0.45), inset 0 0 12px rgba(247, 244, 163, 0.22)'
+       : recommended
+       ? `0 0 10px ${T.glowStrong}, inset 0 0 8px ${T.glow}`
       : procced
         ? undefined  // handled by animation
         : buffActive
           ? '0 0 8px rgba(96, 186, 255, 0.45), inset 0 0 8px rgba(96, 186, 255, 0.15)'
           : atMaxCharges ? undefined : 'inset 0 1px 0 rgba(255,255,255,0.05), 0 8px 18px rgba(0,0,0,0.28)',
-    animation: procced && !recommended
-      ? 'proc-glow 0.9s ease-in-out infinite'
+     animation: learningHighlighted
+       ? 'pulse 1s ease-in-out infinite'
+       : procced && !recommended
+       ? 'proc-glow 0.9s ease-in-out infinite'
       : buffActive && !recommended
         ? 'active-buff-glow 1.2s ease-in-out infinite'
       : atMaxCharges && !recommended
         ? 'max-charges-glow 1.2s ease-in-out infinite'
         : undefined,
-    display: 'block',
-    padding: 0,
-    userSelect: 'none',
-  };
+     display: 'block',
+     padding: 0,
+     userSelect: 'none',
+     opacity: dimmed ? 0.3 : 1,
+   };
 
   // Icon wrapper style — desaturate on cooldown; dim when resources are insufficient
   const iconWrapperStyle: CSSProperties = {
     width: '100%',
     height: '100%',
-    filter: onCooldown
-      ? 'grayscale(0.7) brightness(0.5)'
-      : !usable
+       filter: dimmed
+       ? 'grayscale(0.8) brightness(0.4)'
+       : onCooldown
+        ? 'grayscale(0.7) brightness(0.5)'
+        : !usable
         ? 'grayscale(0.5) brightness(0.55) saturate(0.4)'
         : buffActive
           ? 'brightness(1.06) saturate(1.08)'
         : 'none',
-    opacity: !onCooldown && !usable ? 0.65 : 1,
+     opacity: dimmed ? 0.45 : !onCooldown && !usable ? 0.65 : 1,
   };
 
   // CD sweep overlay style using conic-gradient
@@ -271,6 +289,9 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
       style={slotStyle}
       onClick={onClick}
       data-testid="action-bar-slot"
+      data-learning-highlighted={learningHighlighted ? 'true' : 'false'}
+      data-dimmed={dimmed ? 'true' : 'false'}
+      title={tooltipText}
     >
       {/* Layer 1: Icon */}
       <div
@@ -315,7 +336,7 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
       )}
 
       {/* Layer 5: Recommended pulse border */}
-      {recommended && (
+      {(recommended || learningHighlighted) && (
         <div data-testid="recommended-pulse" style={pulseStyle} />
       )}
 

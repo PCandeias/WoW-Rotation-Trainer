@@ -2,7 +2,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react';
 import { AbilityIcon } from './AbilityIcon';
 import { SearchableTextInput, type SearchSuggestion } from './SearchableTextInput';
-import { ActionBar, SPELL_ICONS, WW_ACTION_BAR, type ActionBarButtonAssignment, type ActionBarSlotDef } from './ActionBar';
+import {
+  ActionBar,
+  augmentActionBarSlots,
+  getVisibleActionBarSlots,
+  resolveActionBarButtonSpellIds,
+  SPELL_ICONS,
+  type ActionBarButtonAssignment,
+  type ActionBarSlotDef,
+} from './ActionBar';
 import { PlayerFrame } from './PlayerFrame';
 import { EnergyChiDisplay } from './EnergyChiDisplay';
 import { CooldownManager } from './CooldownManager';
@@ -16,7 +24,9 @@ import { FONTS, T } from '@ui/theme/elvui';
 import { buildControlStyle, buildHudFrameStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
 import type { GameStateSnapshot } from '@core/engine/gameState';
 import type { SpellInputStatus } from '@core/engine/spell_input';
-import { MONK_BUFF_REGISTRY, resolveMonkBuffIconName } from '@core/class_modules/monk/monk_buff_registry';
+import { getBuffbookForProfileSpec } from '@core/data/specBuffbook';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
+import type { SpellDef } from '@core/data/spells';
 import {
   ACTION_BAR_IDS,
   type ActionBarId,
@@ -28,12 +38,16 @@ import {
   type TrackerGroupSettings,
   type TrainerSettingsUpdater,
 } from '@ui/state/trainerSettings';
-import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import { createEmptyChallengeStats, type ChallengeNoteRuntime, type ChallengePlayfield } from '@ui/challenge/noteTypes';
-import { TRACKED_BUFF_SPELL_IDS, buildTrackerBlacklist } from './trackerSpellIds';
+import { buildTrackerBlacklist, TRACKED_BUFF_SPELL_IDS } from './trackerSpellIds';
 import { MODIFIER_ONLY_KEYS, SYSTEM_KEYS, normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 import { FIXED_SCENE_HEIGHT, FIXED_SCENE_WIDTH, useFixedSceneScale } from '@ui/utils/layoutScaling';
+import {
+  getBuffIconNameResolverForProfileSpec,
+  getBuffPresentationRegistryForProfileSpec,
+} from '@ui/specs/specBuffPresentation';
+import { getCooldownTrackerDefinitionsForProfileSpec } from '@ui/specs/specCooldownPresentation';
 
 type HudLayoutGroupKey = keyof HudLayoutSettings;
 
@@ -81,6 +95,10 @@ interface ButtonEditorState {
 }
 
 export interface HudLayoutPreviewProps {
+  profileSpec: string;
+  buffSpellIds: Readonly<Record<string, number>>;
+  actionBarSlots: readonly ActionBarSlotDef[];
+  currentTalents?: ReadonlySet<string>;
   layout: HudLayoutSettings;
   layoutScale?: number;
   actionBars: ActionBarSettings;
@@ -110,8 +128,8 @@ const GROUPS: readonly Omit<LayoutGroup, 'visible'>[] = [
   { key: 'enemyIcon', label: 'Enemy Icon', accent: '#ffb866' },
   { key: 'essentialCooldowns', label: 'Essential CDs', accent: T.classMonk },
   { key: 'utilityCooldowns', label: 'Utility CDs', accent: T.accent },
-  { key: 'buffIcons', label: 'WW Buff Icons', accent: T.gold },
-  { key: 'buffBars', label: 'WW Buff Bars', accent: '#44aaff' },
+  { key: 'buffIcons', label: 'Buff Icons', accent: T.gold },
+  { key: 'buffBars', label: 'Buff Bars', accent: '#44aaff' },
   { key: 'consumables', label: 'Consumables', accent: '#cc88ff' },
   { key: 'challengePlayfield', label: 'Challenge Playfield', accent: T.red },
   { key: 'playerFrame', label: 'Player Frame', accent: '#53d38c' },
@@ -233,7 +251,7 @@ const PREVIEW_GAME_STATE: GameStateSnapshot = {
     ['zenith', { expiresAt: PREVIEW_CURRENT_TIME + 8.2, stacks: 1, stackTimers: [PREVIEW_CURRENT_TIME + 8.2] }],
     ['teachings_of_the_monastery', { expiresAt: PREVIEW_CURRENT_TIME + 10.4, stacks: 2, stackTimers: [PREVIEW_CURRENT_TIME + 10.4, PREVIEW_CURRENT_TIME + 8.6] }],
     ['dance_of_chi_ji', { expiresAt: PREVIEW_CURRENT_TIME + 5.1, stacks: 1, stackTimers: [PREVIEW_CURRENT_TIME + 5.1] }],
-    ['blackout_reinforcement', { expiresAt: PREVIEW_CURRENT_TIME + 4.3, stacks: 1, stackTimers: [PREVIEW_CURRENT_TIME + 4.3] }],
+    ['combo_breaker', { expiresAt: PREVIEW_CURRENT_TIME + 4.3, stacks: 1, stackTimers: [PREVIEW_CURRENT_TIME + 4.3] }],
     ['hit_combo', { expiresAt: PREVIEW_CURRENT_TIME + 12, stacks: 4, stackTimers: [PREVIEW_CURRENT_TIME + 12, PREVIEW_CURRENT_TIME + 12, PREVIEW_CURRENT_TIME + 12, PREVIEW_CURRENT_TIME + 12] }],
     ['rushing_wind_kick', { expiresAt: PREVIEW_CURRENT_TIME + 2.4, stacks: 1, stackTimers: [PREVIEW_CURRENT_TIME + 2.4] }],
   ]),
@@ -250,6 +268,7 @@ const PREVIEW_GAME_STATE: GameStateSnapshot = {
     ['algethar_puzzle_box', { readyAt: PREVIEW_CURRENT_TIME + 41 }],
     ['potion', { readyAt: PREVIEW_CURRENT_TIME + 150 }],
   ]),
+  numericState: new Map(),
   talents: new Set([
     'whirling_dragon_punch',
     'strike_of_the_windlord',
@@ -309,6 +328,10 @@ const PREVIEW_SPELL_INPUT_STATUS: ReadonlyMap<string, SpellInputStatus> = new Ma
  * Layout editor launcher plus a full-screen encounter-style preview for HUD groups.
  */
 export function HudLayoutPreview({
+  profileSpec,
+  buffSpellIds,
+  actionBarSlots,
+  currentTalents,
   layout,
   layoutScale = 1,
   actionBars,
@@ -323,6 +346,11 @@ export function HudLayoutPreview({
   onEditorClose,
   onOpenEditor,
 }: HudLayoutPreviewProps): React.ReactElement {
+  const spellbook = useMemo(() => getSpellbookForProfileSpec(profileSpec), [profileSpec]);
+  const buffbook = useMemo(() => getBuffbookForProfileSpec(profileSpec), [profileSpec]);
+  const buffRegistry = useMemo(() => getBuffPresentationRegistryForProfileSpec(profileSpec), [profileSpec]);
+  const buffIconNameResolver = useMemo(() => getBuffIconNameResolverForProfileSpec(profileSpec), [profileSpec]);
+  const cooldownDefinitions = useMemo(() => getCooldownTrackerDefinitionsForProfileSpec(profileSpec), [profileSpec]);
   const [isEditing, setIsEditing] = useState(() => launchRequest !== null);
   const [showGrid, setShowGrid] = useState(true);
   const [snapEnabled, setSnapEnabled] = useState(true);
@@ -339,6 +367,23 @@ export function HudLayoutPreview({
   const launchNonceRef = useRef<number | null>(launchRequest?.nonce ?? null);
   const editorSceneScale = useFixedSceneScale({ paddingX: 20, paddingY: 116 });
   const defaultLayout = useMemo(() => getDefaultHudLayoutSettings(), []);
+  const availableActionBarSlots = useMemo(
+    () => getVisibleActionBarSlots({ talents: new Set(currentTalents ?? []) }, actionBarSlots, spellbook),
+    [actionBarSlots, currentTalents, spellbook],
+  );
+  const searchableActionBarSlots = useMemo(() => {
+    const sharedSlots: ActionBarSlotDef[] = [...SHARED_PLAYER_SPELLS.values()].map((spell) => ({
+      spellId: spell.name,
+      defaultKey: '',
+      cdTotal: spell.cooldown,
+      isOffGcd: spell.isOnGcd === false,
+    }));
+    return augmentActionBarSlots(availableActionBarSlots, sharedSlots.map((slot) => ({ spellIds: [slot.spellId], keybind: slot.defaultKey })));
+  }, [availableActionBarSlots]);
+  const availableActionBarSpellIds = useMemo(
+    () => new Set(availableActionBarSlots.map((slot) => slot.spellId)),
+    [availableActionBarSlots],
+  );
 
   useEffect(() => {
     if (!isEditing) {
@@ -364,8 +409,8 @@ export function HudLayoutPreview({
       ...(buffTracking?.barTracker.blacklistSpellIds ?? []),
     ];
 
-    return buildTrackerBlacklist(TRACKED_BUFF_SPELL_IDS, [...new Set(combined)]);
-  }, [buffTracking?.barTracker.blacklistSpellIds, buffTracking?.iconTracker.blacklistSpellIds]);
+    return buildTrackerBlacklist(buffSpellIds, [...new Set(combined)]);
+  }, [buffSpellIds, buffTracking?.barTracker.blacklistSpellIds, buffTracking?.iconTracker.blacklistSpellIds]);
 
   const shellStyle: CSSProperties = {
     ...buildPanelStyle({ elevated: true, density: 'compact' }),
@@ -636,8 +681,8 @@ export function HudLayoutPreview({
     };
   }, [buttonEditor, isEditing, listeningForKeybind]);
 
-  const spellSuggestions = useMemo<SearchSuggestion[]>(() => WW_ACTION_BAR.map((slot) => {
-    const spell = MONK_WW_SPELLS.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
+  const spellSuggestions = useMemo<SearchSuggestion[]>(() => searchableActionBarSlots.map((slot) => {
+    const spell = spellbook.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
     const displayName = spell?.displayName ?? slot.spellId;
     return {
       id: `action-bar-spell-${slot.spellId}`,
@@ -645,7 +690,7 @@ export function HudLayoutPreview({
       label: `${displayName} (${slot.spellId})`,
       keywords: [displayName, slot.defaultKey],
     };
-  }), []);
+  }), [searchableActionBarSlots, spellbook]);
 
   return (
     <>
@@ -837,12 +882,21 @@ export function HudLayoutPreview({
                 {visibleGroups.map((group) => renderGroupCard({
                   group,
                   position: draftLayout[group.key],
+                  profileSpec,
+                  actionBarSlots,
                   actionBars: draftActionBars,
                   trackerRows: draftTrackerRows,
                   cooldownTracking,
                   buffTracking,
                   consumableTracking,
                   previewBuffBlacklist,
+                  spellbook,
+                  availableActionBarSlots,
+                  availableActionBarSpellIds,
+                  buffbook,
+                  buffRegistry,
+                  buffIconNameResolver,
+                  cooldownDefinitions,
                   keybindMode,
                   onMouseDown: (event): void => {
                     const rect = event.currentTarget.getBoundingClientRect();
@@ -1138,9 +1192,13 @@ export function HudLayoutPreview({
                     {buttonEditor.spellSequenceDraft.length > 0 ? (
                       <div style={{ display: 'grid', gap: 8 }}>
                         {buttonEditor.spellSequenceDraft.map((spellId, index) => {
-                          const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
-                          const displayName = spell?.displayName ?? spellId;
-                          const icons = SPELL_ICONS[spellId] ?? { iconName: 'inv_misc_questionmark', emoji: '?' };
+                          const replacementSlot = availableActionBarSlots.find((slot) => slot.replacesSpellId === spellId);
+                          const effectiveSpellId = replacementSlot?.spellId ?? spellId;
+                          const spell = spellbook.get(effectiveSpellId) ?? SHARED_PLAYER_SPELLS.get(effectiveSpellId);
+                          const displayName = spell?.displayName ?? effectiveSpellId;
+                          const icons = SPELL_ICONS[effectiveSpellId] ?? { iconName: 'inv_misc_questionmark', emoji: '?' };
+                          const isKnownSpecSpell = actionBarSlots.some((slot) => slot.spellId === spellId);
+                          const isAvailable = !isKnownSpecSpell || availableActionBarSpellIds.has(effectiveSpellId);
                           return (
                             <div
                               key={`sequence-${spellId}`}
@@ -1149,14 +1207,18 @@ export function HudLayoutPreview({
                                 gridTemplateColumns: '34px minmax(0, 1fr) 64px 32px',
                                 gap: 8,
                                 alignItems: 'center',
-                                border: `1px solid ${T.border}`,
+                                border: `1px solid ${isAvailable ? T.border : T.red}`,
                                 borderRadius: 10,
                                 padding: 6,
-                                background: 'rgba(255,255,255,0.03)',
+                                background: isAvailable ? 'rgba(255,255,255,0.03)' : 'rgba(140, 48, 48, 0.18)',
+                                opacity: isAvailable ? 1 : 0.68,
                               }}
                             >
                               <AbilityIcon iconName={icons.iconName} emoji={icons.emoji} size={30} alt={displayName} style={{ borderRadius: 8 }} />
-                              <span style={{ fontFamily: FONTS.ui, fontSize: '0.74rem', color: T.textBright }}>{displayName}</span>
+                              <span style={{ fontFamily: FONTS.ui, fontSize: '0.74rem', color: T.textBright }}>
+                                {displayName}
+                                {!isAvailable ? ' (Unavailable)' : ''}
+                              </span>
                               <select
                                 aria-label={`Spell order ${displayName}`}
                                 value={index + 1}
@@ -1207,7 +1269,7 @@ export function HudLayoutPreview({
                           addSpellDraft: nextValue,
                         } : current)}
                         onSuggestionSelect={(suggestion): void => {
-                          const spellId = resolveActionBarSpellId(suggestion.value);
+                          const spellId = resolveActionBarSpellId(suggestion.value, searchableActionBarSlots, spellbook);
                           if (spellId) {
                             appendSpellToButtonEditor(spellId);
                           }
@@ -1219,7 +1281,7 @@ export function HudLayoutPreview({
                         aria-label="Add spell to keybind"
                         style={{ ...controlButton(true), width: 36, height: 36, padding: 0, fontSize: '1.05rem', lineHeight: 1 }}
                         onClick={(): void => {
-                          const spellId = resolveActionBarSpellId(buttonEditor.addSpellDraft);
+                          const spellId = resolveActionBarSpellId(buttonEditor.addSpellDraft, searchableActionBarSlots, spellbook);
                           if (!spellId) {
                             return;
                           }
@@ -1299,12 +1361,21 @@ export function HudLayoutPreview({
 function renderGroupCard({
   group,
   position,
+  profileSpec,
+  actionBarSlots,
   actionBars,
   trackerRows,
   cooldownTracking,
   buffTracking,
   consumableTracking,
   previewBuffBlacklist,
+  spellbook,
+  availableActionBarSlots,
+  availableActionBarSpellIds,
+  buffbook,
+  buffRegistry,
+  buffIconNameResolver,
+  cooldownDefinitions,
   keybindMode,
   onMouseDown,
   onResizeMouseDown,
@@ -1313,12 +1384,21 @@ function renderGroupCard({
 }: {
   group: LayoutGroup;
   position: HudGroupLayout;
+  profileSpec: string;
+  actionBarSlots: readonly ActionBarSlotDef[];
   actionBars: ActionBarSettings;
   trackerRows: Record<TrackerRowGroupKey, number>;
   cooldownTracking?: HudLayoutPreviewProps['cooldownTracking'];
   buffTracking?: HudLayoutPreviewProps['buffTracking'];
   consumableTracking?: HudLayoutPreviewProps['consumableTracking'];
   previewBuffBlacklist: string[];
+  spellbook: ReadonlyMap<string, SpellDef>;
+  availableActionBarSlots: readonly ActionBarSlotDef[];
+  availableActionBarSpellIds: ReadonlySet<string>;
+  buffbook: ReturnType<typeof getBuffbookForProfileSpec>;
+  buffRegistry: ReturnType<typeof getBuffPresentationRegistryForProfileSpec>;
+  buffIconNameResolver: ReturnType<typeof getBuffIconNameResolverForProfileSpec>;
+  cooldownDefinitions: ReturnType<typeof getCooldownTrackerDefinitionsForProfileSpec>;
   keybindMode: boolean;
   onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void;
   onResizeMouseDown: (event: React.MouseEvent<HTMLButtonElement>) => void;
@@ -1375,12 +1455,21 @@ function renderGroupCard({
       </span>
       <MockGroupContent
         groupKey={group.key}
+        profileSpec={profileSpec}
+        actionBarSlots={actionBarSlots}
         actionBars={actionBars}
         trackerRows={trackerRows}
         cooldownTracking={cooldownTracking}
         buffTracking={buffTracking}
         consumableTracking={consumableTracking}
         previewBuffBlacklist={previewBuffBlacklist}
+        spellbook={spellbook}
+        availableActionBarSlots={availableActionBarSlots}
+        availableActionBarSpellIds={availableActionBarSpellIds}
+        buffbook={buffbook}
+        buffRegistry={buffRegistry}
+        buffIconNameResolver={buffIconNameResolver}
+        cooldownDefinitions={cooldownDefinitions}
         keybindMode={keybindMode}
         onActionBarButtonClick={onActionBarButtonClick}
       />
@@ -1505,22 +1594,40 @@ function MockTargetFrame(): React.ReactElement {
 
 function MockGroupContent({
   groupKey,
+  profileSpec,
+  actionBarSlots,
   actionBars,
   trackerRows,
   cooldownTracking,
   buffTracking,
   consumableTracking,
   previewBuffBlacklist,
+  spellbook,
+  availableActionBarSlots,
+  availableActionBarSpellIds,
+  buffbook,
+  buffRegistry,
+  buffIconNameResolver,
+  cooldownDefinitions,
   keybindMode,
   onActionBarButtonClick,
 }: {
   groupKey: HudLayoutGroupKey;
+  profileSpec: string;
+  actionBarSlots: readonly ActionBarSlotDef[];
   actionBars: ActionBarSettings;
   trackerRows: Record<TrackerRowGroupKey, number>;
   cooldownTracking?: HudLayoutPreviewProps['cooldownTracking'];
   buffTracking?: HudLayoutPreviewProps['buffTracking'];
   consumableTracking?: HudLayoutPreviewProps['consumableTracking'];
   previewBuffBlacklist: string[];
+  spellbook: ReadonlyMap<string, SpellDef>;
+  availableActionBarSlots: readonly ActionBarSlotDef[];
+  availableActionBarSpellIds: ReadonlySet<string>;
+  buffbook: ReturnType<typeof getBuffbookForProfileSpec>;
+  buffRegistry: ReturnType<typeof getBuffPresentationRegistryForProfileSpec>;
+  buffIconNameResolver: ReturnType<typeof getBuffIconNameResolverForProfileSpec>;
+  cooldownDefinitions: ReturnType<typeof getCooldownTrackerDefinitionsForProfileSpec>;
   keybindMode: boolean;
   onActionBarButtonClick: (
     actionBarId: ActionBarId,
@@ -1529,6 +1636,7 @@ function MockGroupContent({
     event: React.MouseEvent<HTMLButtonElement>,
   ) => void;
 }): React.ReactElement {
+  void profileSpec;
   const previewShellStyle: CSSProperties = {
     pointerEvents: 'none',
   };
@@ -1536,7 +1644,7 @@ function MockGroupContent({
   if (groupKey === 'playerFrame') {
     return (
       <div style={previewShellStyle}>
-        <PlayerFrame gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} showResources={false} />
+        <PlayerFrame gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} profileSpec={profileSpec} showResources={false} />
       </div>
     );
   }
@@ -1544,7 +1652,7 @@ function MockGroupContent({
   if (groupKey === 'resourceFrame') {
     return (
       <div style={previewShellStyle}>
-        <EnergyChiDisplay gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} />
+        <EnergyChiDisplay gameState={PREVIEW_GAME_STATE} currentTime={PREVIEW_CURRENT_TIME} profileSpec={profileSpec} />
       </div>
     );
   }
@@ -1605,7 +1713,7 @@ function MockGroupContent({
       return <></>;
     }
 
-    const { buttons, slots } = buildPreviewActionBarAssignments(actionBar);
+    const { buttons, slots } = buildPreviewActionBarAssignments(actionBar, availableActionBarSlots);
     const overlayColumnCount = Math.max(1, Math.min(actionBar.buttonCount, actionBar.buttonsPerRow));
     const overlayButtons = actionBar.buttons.slice(0, actionBar.buttonCount);
 
@@ -1613,7 +1721,7 @@ function MockGroupContent({
       <div style={{ position: 'relative', width: `${overlayColumnCount * 52 + Math.max(0, overlayColumnCount - 1) * 4}px` }}>
         <div style={previewShellStyle}>
           <ActionBar
-            gameState={buildPreviewActionBarGameState(slots)}
+            gameState={buildPreviewActionBarGameState(slots, spellbook)}
             spellInputStatus={PREVIEW_SPELL_INPUT_STATUS}
             recommendedAbility="blackout_kick"
             showRecommendations
@@ -1625,25 +1733,37 @@ function MockGroupContent({
             enabled={actionBar.enabled}
             rows={Math.max(1, Math.ceil(actionBar.buttonCount / Math.max(1, actionBar.buttonsPerRow)))}
             slotsPerRow={actionBar.buttonsPerRow}
+            spellbook={spellbook}
             ariaLabel={getActionBarLabel(actionBarId)}
           />
         </div>
         {keybindMode && (
           <div style={buildActionBarOverlayStyle(overlayColumnCount)}>
             {overlayButtons.map((button, index) => {
-              const primarySpellId = button.spellIds[0];
-              const spell = primarySpellId ? (MONK_WW_SPELLS.get(primarySpellId) ?? SHARED_PLAYER_SPELLS.get(primarySpellId)) : undefined;
+              const primarySpellId = resolveActionBarButtonSpellIds(
+                button.spellIds,
+                availableActionBarSlots,
+                new Map(availableActionBarSlots.map((slot) => [slot.spellId, slot])),
+              )[0];
+              const spell = primarySpellId ? (spellbook.get(primarySpellId) ?? SHARED_PLAYER_SPELLS.get(primarySpellId)) : undefined;
               const displayName = spell?.displayName ?? primarySpellId ?? `Empty ${index + 1}`;
+              const isKnownSpecSpell = primarySpellId ? actionBarSlots.some((slot) => slot.spellId === primarySpellId) : false;
+              const isAvailable = !isKnownSpecSpell || (primarySpellId ? availableActionBarSpellIds.has(primarySpellId) : true);
 
               return (
                 <button
                   key={`actionbar-slot-${groupKey}-${index}`}
                   type="button"
                   data-testid={`hud-layout-action-button-${actionBarId}-${index}`}
-                  aria-label={`Edit ${displayName}`}
+                  aria-label={`Edit ${displayName}${isAvailable ? '' : ' unavailable'}`}
                   onMouseDown={(event): void => event.stopPropagation()}
                   onClick={(event): void => onActionBarButtonClick(actionBarId, index, button, event)}
-                  style={actionBarOverlayButtonStyle}
+                  style={{
+                    ...actionBarOverlayButtonStyle,
+                    borderColor: isAvailable ? actionBarOverlayButtonStyle.borderColor : T.red,
+                    background: isAvailable ? actionBarOverlayButtonStyle.background : 'rgba(140, 48, 48, 0.18)',
+                    boxShadow: isAvailable ? actionBarOverlayButtonStyle.boxShadow : `inset 0 0 0 1px ${T.red}55`,
+                  }}
                 />
               );
             })}
@@ -1659,6 +1779,10 @@ function MockGroupContent({
         <BuffBarTracker
           gameState={PREVIEW_GAME_STATE}
           currentTime={PREVIEW_CURRENT_TIME}
+          registry={buffRegistry}
+          buffbook={buffbook}
+          iconNameResolver={buffIconNameResolver}
+          spellIdsByBuffId={TRACKED_BUFF_SPELL_IDS}
           blacklist={previewBuffBlacklist}
           whitelist={buffTracking?.barTracker.trackedEntryIds}
           containerStyle={{ width: 320 }}
@@ -1673,8 +1797,9 @@ function MockGroupContent({
         <BuffTracker
           gameState={PREVIEW_GAME_STATE}
           currentTime={PREVIEW_CURRENT_TIME}
-          registry={MONK_BUFF_REGISTRY}
-          iconNameResolver={resolveMonkBuffIconName}
+          registry={buffRegistry}
+          iconNameResolver={buffIconNameResolver}
+          spellIdsByBuffId={TRACKED_BUFF_SPELL_IDS}
           blacklist={previewBuffBlacklist}
           whitelist={buffTracking?.iconTracker.trackedEntryIds}
           maxPerRow={trackerRows.buffIcons}
@@ -1692,6 +1817,8 @@ function MockGroupContent({
           currentTime={PREVIEW_CURRENT_TIME}
           showEssential
           showUtility={false}
+          spellbook={spellbook}
+          cooldownDefinitions={cooldownDefinitions}
           essentialTrackedIds={cooldownTracking?.essential.trackedEntryIds}
           essentialIconsPerRow={trackerRows.essentialCooldowns}
           spellInputStatus={PREVIEW_SPELL_INPUT_STATUS}
@@ -1708,6 +1835,8 @@ function MockGroupContent({
           currentTime={PREVIEW_CURRENT_TIME}
           showEssential={false}
           showUtility
+          spellbook={spellbook}
+          cooldownDefinitions={cooldownDefinitions}
           utilityTrackedIds={cooldownTracking?.utility.trackedEntryIds}
           utilityIconsPerRow={trackerRows.utilityCooldowns}
           spellInputStatus={PREVIEW_SPELL_INPUT_STATUS}
@@ -1732,15 +1861,19 @@ function MockGroupContent({
   return <></>;
 }
 
-function buildPreviewActionBarAssignments(actionBar: ActionBarSettings['bars'][ActionBarId]): {
+function buildPreviewActionBarAssignments(
+  actionBar: ActionBarSettings['bars'][ActionBarId],
+  actionBarSlots: readonly ActionBarSlotDef[],
+): {
   buttons: ActionBarButtonAssignment[];
-  slots: typeof WW_ACTION_BAR;
+  slots: ActionBarSlotDef[];
 } {
-  const slotBySpellId = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot]));
+  const augmentedSlots = augmentActionBarSlots(actionBarSlots, actionBar.buttons);
+  const slotBySpellId = new Map(augmentedSlots.map((slot) => [slot.spellId, slot]));
   const preservedButtons = actionBar.buttons
     .slice(0, actionBar.buttonCount)
     .map((button) => {
-      const primarySpellId = button.spellIds[0];
+      const primarySpellId = resolveActionBarButtonSpellIds(button.spellIds, augmentedSlots, slotBySpellId)[0];
       const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
 
       return {
@@ -1750,7 +1883,7 @@ function buildPreviewActionBarAssignments(actionBar: ActionBarSettings['bars'][A
     });
 
   const visibleSlots = preservedButtons.flatMap((button) => {
-    const primarySpellId = button.spellIds[0];
+    const primarySpellId = resolveActionBarButtonSpellIds(button.spellIds, augmentedSlots, slotBySpellId)[0];
     const slot = primarySpellId ? slotBySpellId.get(primarySpellId) : undefined;
     return slot ? [slot] : [];
   });
@@ -1761,11 +1894,14 @@ function buildPreviewActionBarAssignments(actionBar: ActionBarSettings['bars'][A
   };
 }
 
-function buildPreviewActionBarGameState(slots: readonly ActionBarSlotDef[]): GameStateSnapshot {
+function buildPreviewActionBarGameState(
+  slots: readonly ActionBarSlotDef[],
+  spellbook: ReadonlyMap<string, { talentRequired?: string }>,
+): GameStateSnapshot {
   const previewTalents = new Set(PREVIEW_GAME_STATE.talents);
 
   slots.forEach((slot) => {
-    const spell = MONK_WW_SPELLS.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
+    const spell = spellbook.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
     const requiredTalent = slot.talentRequired ?? spell?.talentRequired;
     if (requiredTalent) {
       previewTalents.add(requiredTalent);
@@ -1805,20 +1941,24 @@ function getActionBarLabel(actionBarId: ActionBarId): string {
   return `Action Bar ${Number.parseInt(actionBarId.replace('bar', ''), 10)}`;
 }
 
-function resolveActionBarSpellId(value: string): string | null {
+function resolveActionBarSpellId(
+  value: string,
+  actionBarSlots: readonly ActionBarSlotDef[],
+  spellbook: ReadonlyMap<string, { displayName?: string }>,
+): string | null {
   const needle = value.trim().toLowerCase();
   if (needle.length === 0) {
     return null;
   }
 
-  const exactSlot = WW_ACTION_BAR.find((slot) => slot.spellId === needle);
+  const exactSlot = actionBarSlots.find((slot) => slot.spellId === needle);
   if (exactSlot) {
     return exactSlot.spellId;
   }
 
-  const displayMatch = WW_ACTION_BAR.find((slot) => {
-    const spell = MONK_WW_SPELLS.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
-    return spell?.displayName.toLowerCase() === needle;
+  const displayMatch = actionBarSlots.find((slot) => {
+    const spell = spellbook.get(slot.spellId) ?? SHARED_PLAYER_SPELLS.get(slot.spellId);
+    return spell?.displayName?.toLowerCase() === needle;
   });
 
   return displayMatch?.spellId ?? null;

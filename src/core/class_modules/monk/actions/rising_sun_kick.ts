@@ -23,7 +23,6 @@ const XUENS_BATTLEGEAR_SPELL = requireMonkSpellData(392993);
 const XUENS_BATTLEGEAR_FOF_REDUCTION_SECONDS = XUENS_BATTLEGEAR_SPELL.effectN(2).time_value() / 1000;
 const SKYFIRE_HEEL_SPLASH_PERCENT = SKYFIRE_HEEL_TALENT.effectN(1).percent(); // 0.10
 const SKYFIRE_HEEL_REDUCED_AOE_TARGETS = SKYFIRE_HEEL_TALENT.effectN(2).base_value(); // 5
-
 export class RisingSunKickAction extends MonkMeleeAction {
   readonly name: string = 'rising_sun_kick';
   readonly spellData = requireMonkSpellData(107428);
@@ -46,6 +45,10 @@ export class RisingSunKickAction extends MonkMeleeAction {
    */
   override chiCost(): number {
     return this.p.hasTalent('knowledge_of_the_broken_temple') ? 1 : 2;
+  }
+
+  override preCastFailReason(): 'not_available' | undefined {
+    return this.p.isBuffActive('rushing_wind_kick') ? 'not_available' : undefined;
   }
 
   protected applyRisingStarModifiers(damage: number, isCrit: boolean): number {

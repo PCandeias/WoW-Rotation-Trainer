@@ -432,8 +432,8 @@ const BUFFS: BuffDef[] = [
     isHarmful: false,
   },
   {
-    id: 'blackout_reinforcement',
-    displayName: 'Blackout Reinforcement',
+    id: 'combo_breaker',
+    displayName: 'Combo Breaker',
     duration: 15,
     maxStacks: 2,
     isHarmful: false,

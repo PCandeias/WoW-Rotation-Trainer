@@ -27,6 +27,8 @@ export interface BuffTrackerProps {
   blacklist?: string[];
   /** Max icons per row before wrapping. Default: 12. Each cell is 36px wide. */
   maxPerRow?: number;
+  /** Optional numeric spell ids keyed by buffId for hover tooltip text. */
+  spellIdsByBuffId?: Readonly<Record<string, number>>;
   /** Optional positioning/style overrides for the tracker container. */
   containerStyle?: CSSProperties;
 }
@@ -64,6 +66,7 @@ export function BuffTracker({
   whitelist,
   blacklist,
   maxPerRow = 12,
+  spellIdsByBuffId,
   containerStyle: trackerContainerStyle,
 }: BuffTrackerProps): React.ReactElement {
   const [hover, setHover] = useState<HoverState | null>(null);
@@ -211,7 +214,11 @@ export function BuffTracker({
           style={tooltipStyle}
         >
           <div style={tooltipNameStyle}>{hoveredEntry.displayName}</div>
-          <div style={tooltipIdStyle}>{hover.buffId}</div>
+          <div style={tooltipIdStyle}>
+            {spellIdsByBuffId?.[hover.buffId] !== undefined
+              ? `Spell ID: ${spellIdsByBuffId[hover.buffId]}`
+              : hover.buffId}
+          </div>
         </div>
       )}
 
@@ -224,6 +231,7 @@ export function BuffTracker({
             key={buffId}
             data-testid={`buff-cell-${buffId}`}
             style={cellStyle}
+            title={spellIdsByBuffId?.[buffId] !== undefined ? `${displayName}\nSpell ID: ${spellIdsByBuffId[buffId]}` : displayName}
             onMouseEnter={(e) => {
               const rect = e.currentTarget.getBoundingClientRect();
               setHover({ buffId, displayName, cellCenterX: rect.left + rect.width / 2, cellTop: rect.top });

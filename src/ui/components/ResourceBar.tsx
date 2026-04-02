@@ -43,6 +43,8 @@ export function ResourceBar({
   const resolvedValueText = valueText ?? `${Math.round(fillPct)}%`;
 
   const outerStyle: CSSProperties = {
+    width: '100%',
+    boxSizing: 'border-box',
     height: `${height}px`,
     background: trackColor,
     border: `1px solid ${borderColor}`,

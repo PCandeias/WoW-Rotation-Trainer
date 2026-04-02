@@ -1,31 +1,35 @@
 import type { BuffDef, SpellDef } from '../data/spells';
-import { applyStatDR } from '../data/profileParser';
+import {
+  applyStatDR,
+  convertSecondaryRatingToPercent,
+  getSecondaryRatingPerPercent,
+} from '../data/profileParser';
 import type { GameState } from '../engine/gameState';
 import type { IGameState } from '../engine/i_game_state';
 
-const CRIT_RATING_PER_PCT = 35;
-const HASTE_RATING_PER_PCT = 33;
-const MASTERY_RATING_PER_PCT = 35;
-const VERSATILITY_RATING_PER_PCT = 40;
-const RECKLESSNESS_POTION_HASTE_PCT = 934.5676 / 33;
-const RECKLESSNESS_POTION_VERS_PENALTY_PCT = 125.6926 / 40;
+const RECKLESSNESS_POTION_HASTE_RATING = 934.5676;
+const RECKLESSNESS_POTION_VERS_PENALTY_RATING = 125.6926;
 /**
  * Algeth'ar Puzzle Box mastery bonus computed dynamically via
  * {@link computePuzzleMasteryDelta}. This legacy constant is the fallback when
  * the profile's base mastery rating is unavailable.
  */
-const ALGETHAR_PUZZLE_MASTERY_PCT_FALLBACK = 480.5574 / 35;
+const ALGETHAR_PUZZLE_MASTERY_RATING_FALLBACK = 480.5574;
 /** Mastery rating granted by Algeth'ar Puzzle Box at ilevel 289 (SimC debug verified). */
 const ALGETHAR_PUZZLE_MASTERY_RATING = 861;
 /**
- * WW Monk Combo Strikes mastery coefficient (spell 115636 effectN(1)).
- * mastery_value = composite_mastery_points × coefficient.
- * Derived: 65.863125 / (8 + 841/35 + 2) ≈ 1.9355.
- * Only used as a fallback when the coefficient can't be derived from seed stats.
+ * Baseline player mastery points before rating-driven DR and external buffs.
+ *
+ * The trainer seeds mastery from SimC-style percent snapshots, so the Puzzle Box
+ * delta needs the generic "base + DR(rating) + external points" shape that WoW
+ * mastery uses. Our current modeled specs all use the standard 8-point baseline.
  */
-const WW_MASTERY_COEFFICIENT = 1.9355;
-/** WW Monk base mastery points (8 mastery points before rating and buffs). */
-const WW_MASTERY_BASE_POINTS = 8;
+const BASE_MASTERY_POINTS = 8;
+/**
+ * Fallback mastery coefficient only used when the seed cannot derive one from
+ * profile stats. This remains a compatibility fallback, not the preferred path.
+ */
+const DEFAULT_MASTERY_COEFFICIENT = 1.9355;
 /** Skyfury adds 2 mastery points (included in SimC buffed_stats seed). */
 const SKYFURY_MASTERY_POINTS = 2;
 const BLOODLUST_HASTE_PCT = 30;
@@ -42,18 +46,42 @@ const HUNTERS_MARK_DAMAGE_TAKEN_PCT = 3;
  */
 const GAZE_ALNSEER_AGI_PER_STACK = 34;
 const LOA_CAPYBARA_PRIMARY_STAT = 31.60888;
-const AKILZONS_CRY_OF_VICTORY_HASTE_PCT = 74.62438 / HASTE_RATING_PER_PCT;
-const HUNT_EMBELLISHMENT_STAT_PCT = 198.7753 / HASTE_RATING_PER_PCT;
-const HUNT_EMBELLISHMENT_CRIT_PCT = 198.7753 / CRIT_RATING_PER_PCT;
-const HUNT_EMBELLISHMENT_MASTERY_PCT = 198.7753 / MASTERY_RATING_PER_PCT;
-const HUNT_EMBELLISHMENT_VERS_PCT = 198.7753 / VERSATILITY_RATING_PER_PCT;
-const HUNT_TRINKET_STAT_PCT = 119.1912 / HASTE_RATING_PER_PCT;
-const HUNT_TRINKET_CRIT_PCT = 119.1912 / CRIT_RATING_PER_PCT;
-const HUNT_TRINKET_MASTERY_PCT = 119.1912 / MASTERY_RATING_PER_PCT;
-const HUNT_TRINKET_VERS_PCT = 119.1912 / VERSATILITY_RATING_PER_PCT;
-const PRECISION_OF_THE_DRAGONHAWK_CRIT_PCT = 82.91601 / CRIT_RATING_PER_PCT;
+const AKILZONS_CRY_OF_VICTORY_HASTE_RATING = 74.62438;
+const HUNT_EMBELLISHMENT_STAT_RATING = 198.7753;
+const HUNT_TRINKET_STAT_RATING = 119.1912;
+const PRECISION_OF_THE_DRAGONHAWK_CRIT_RATING = 82.91601;
+
+function getSecondaryBonusPercent(
+  state: Pick<IGameState, 'characterLevel'>,
+  stat: 'crit' | 'haste' | 'mastery' | 'versatility',
+  rating: number,
+): number {
+  return convertSecondaryRatingToPercent(rating, stat, state.characterLevel);
+}
 
 const SHARED_PLAYER_SPELL_DEFS: SpellDef[] = [
+  {
+    id: 2825,
+    name: 'bloodlust',
+    displayName: 'Bloodlust',
+    energyCost: 0,
+    chiCost: 0,
+    chiGain: 0,
+    cooldown: 600,
+    hasteScalesCooldown: false,
+    isChanneled: false,
+    channelDuration: 0,
+    channelTicks: 0,
+    isOnGcd: false,
+    apCoefficient: 0,
+    baseDmgMin: 0,
+    baseDmgMax: 0,
+    requiresComboStrike: false,
+    isWdp: false,
+    isZenith: false,
+    isExecute: false,
+    executeHpDamage: 0,
+  },
   {
     id: 1236994,
     name: 'potion',
@@ -106,6 +134,28 @@ const SHARED_PLAYER_SPELL_DEFS: SpellDef[] = [
     chiCost: 0,
     chiGain: 0,
     cooldown: 180,
+    hasteScalesCooldown: false,
+    isChanneled: false,
+    channelDuration: 0,
+    channelTicks: 0,
+    isOnGcd: false,
+    apCoefficient: 0,
+    baseDmgMin: 0,
+    baseDmgMax: 0,
+    requiresComboStrike: false,
+    isWdp: false,
+    isZenith: false,
+    isExecute: false,
+    executeHpDamage: 0,
+  },
+  {
+    id: 33697,
+    name: 'blood_fury',
+    displayName: 'Blood Fury',
+    energyCost: 0,
+    chiCost: 0,
+    chiGain: 0,
+    cooldown: 120,
     hasteScalesCooldown: false,
     isChanneled: false,
     channelDuration: 0,
@@ -302,12 +352,12 @@ const ENERGY_REGEN_BUFFS = new Set([
 export function getSharedPlayerCritBonus(state: IGameState): number {
   let crit = 0;
   if (state.isBuffActive('precision_of_the_dragonhawk')) {
-    crit += PRECISION_OF_THE_DRAGONHAWK_CRIT_PCT;
+    crit += getSecondaryBonusPercent(state, 'crit', PRECISION_OF_THE_DRAGONHAWK_CRIT_RATING);
   }
   if (state.isBuffActive('focused_hunt')) {
     const huntCritPct = state.getBuffStacks('focused_hunt') > 1
-      ? HUNT_TRINKET_CRIT_PCT
-      : HUNT_EMBELLISHMENT_CRIT_PCT;
+      ? getSecondaryBonusPercent(state, 'crit', HUNT_TRINKET_STAT_RATING)
+      : getSecondaryBonusPercent(state, 'crit', HUNT_EMBELLISHMENT_STAT_RATING);
     crit += huntCritPct;
   }
   return crit;
@@ -319,18 +369,18 @@ export function getSharedPlayerHasteBonus(state: IGameState): number {
     multiplier *= percentToMultiplier(BLOODLUST_HASTE_PCT);
   }
   if (state.isBuffActive('potion_of_recklessness_haste')) {
-    multiplier *= percentToMultiplier(RECKLESSNESS_POTION_HASTE_PCT);
+    multiplier *= percentToMultiplier(getSecondaryBonusPercent(state, 'haste', RECKLESSNESS_POTION_HASTE_RATING));
   }
   if (state.isBuffActive('berserking')) {
     multiplier *= percentToMultiplier(15);
   }
   if (state.isBuffActive('akilzons_cry_of_victory')) {
-    multiplier *= percentToMultiplier(AKILZONS_CRY_OF_VICTORY_HASTE_PCT);
+    multiplier *= percentToMultiplier(getSecondaryBonusPercent(state, 'haste', AKILZONS_CRY_OF_VICTORY_HASTE_RATING));
   }
   if (state.isBuffActive('hasty_hunt')) {
     const huntHastePct = state.getBuffStacks('hasty_hunt') > 1
-      ? HUNT_TRINKET_STAT_PCT
-      : HUNT_EMBELLISHMENT_STAT_PCT;
+      ? getSecondaryBonusPercent(state, 'haste', HUNT_TRINKET_STAT_RATING)
+      : getSecondaryBonusPercent(state, 'haste', HUNT_EMBELLISHMENT_STAT_RATING);
     multiplier *= percentToMultiplier(huntHastePct);
   }
   return (multiplier - 1) * 100;
@@ -343,14 +393,14 @@ export function getSharedPlayerVersatilityBonus(state: IGameState): number {
   }
   if (state.isBuffActive('versatile_hunt')) {
     const huntVersPct = state.getBuffStacks('versatile_hunt') > 1
-      ? HUNT_TRINKET_VERS_PCT
-      : HUNT_EMBELLISHMENT_VERS_PCT;
+      ? getSecondaryBonusPercent(state, 'versatility', HUNT_TRINKET_STAT_RATING)
+      : getSecondaryBonusPercent(state, 'versatility', HUNT_EMBELLISHMENT_STAT_RATING);
     versatility += huntVersPct;
   }
   if (!state.isBuffActive('potion_of_recklessness_penalty_vers')) {
     return versatility;
   }
-  return versatility - RECKLESSNESS_POTION_VERS_PENALTY_PCT;
+  return versatility - getSecondaryBonusPercent(state, 'versatility', RECKLESSNESS_POTION_VERS_PENALTY_RATING);
 }
 
 /**
@@ -364,13 +414,19 @@ export function getSharedPlayerVersatilityBonus(state: IGameState): number {
  *
  * When the base mastery rating is unknown, falls back to the legacy constant.
  */
-function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: number, skyfuryPointsInBase: number): number {
+function computePuzzleMasteryDelta(
+  baseMasteryRating: number,
+  baseMasteryPct: number,
+  skyfuryPointsInBase: number,
+  characterLevel: number,
+): number {
+  const masteryRatingPerPct = getSecondaryRatingPerPercent('mastery', characterLevel);
   if (baseMasteryRating <= 0) {
-    return ALGETHAR_PUZZLE_MASTERY_PCT_FALLBACK;
+    return convertSecondaryRatingToPercent(ALGETHAR_PUZZLE_MASTERY_RATING_FALLBACK, 'mastery', characterLevel);
   }
 
-  const baseRaw = baseMasteryRating / MASTERY_RATING_PER_PCT;
-  const totalRaw = (baseMasteryRating + ALGETHAR_PUZZLE_MASTERY_RATING) / MASTERY_RATING_PER_PCT;
+  const baseRaw = baseMasteryRating / masteryRatingPerPct;
+  const totalRaw = (baseMasteryRating + ALGETHAR_PUZZLE_MASTERY_RATING) / masteryRatingPerPct;
   const baseDR = applyStatDR(baseRaw);
   const totalDR = applyStatDR(totalRaw);
 
@@ -379,8 +435,10 @@ function computePuzzleMasteryDelta(baseMasteryRating: number, baseMasteryPct: nu
   // skyfuryPointsInBase should be SKYFURY_MASTERY_POINTS when the seed
   // already contains skyfury (e.g. simc_buffed_snapshot with skyfury enabled),
   // or 0 when skyfury is absent from the seed.
-  const baseComposite = WW_MASTERY_BASE_POINTS + baseDR + skyfuryPointsInBase;
-  const coefficient = (baseComposite > 0 && baseMasteryPct > 0) ? baseMasteryPct / baseComposite : WW_MASTERY_COEFFICIENT;
+  const baseComposite = BASE_MASTERY_POINTS + baseDR + skyfuryPointsInBase;
+  const coefficient = (baseComposite > 0 && baseMasteryPct > 0)
+    ? baseMasteryPct / baseComposite
+    : DEFAULT_MASTERY_COEFFICIENT;
 
   const deltaPoints = totalDR - baseDR;
   return deltaPoints * coefficient;
@@ -397,15 +455,15 @@ export function getSharedPlayerMasteryBonus(state: IGameState): number {
     // a SimC buffed snapshot that had skyfury enabled.
     const skyfuryInSeed = statsSeedIncludesPassiveBonuses && state.isBuffActive('skyfury');
     const skyfuryPoints = skyfuryInSeed ? SKYFURY_MASTERY_POINTS : 0;
-    mastery += computePuzzleMasteryDelta(baseMasteryRating, baseMasteryPct, skyfuryPoints);
+    mastery += computePuzzleMasteryDelta(baseMasteryRating, baseMasteryPct, skyfuryPoints, state.characterLevel);
   }
   if (state.isBuffActive('skyfury') && !statsSeedIncludesPassiveBonuses) {
     mastery += SKYFURY_MASTERY_PCT;
   }
   if (state.isBuffActive('masterful_hunt')) {
     const huntMasteryPct = state.getBuffStacks('masterful_hunt') > 1
-      ? HUNT_TRINKET_MASTERY_PCT
-      : HUNT_EMBELLISHMENT_MASTERY_PCT;
+      ? getSecondaryBonusPercent(state, 'mastery', HUNT_TRINKET_STAT_RATING)
+      : getSecondaryBonusPercent(state, 'mastery', HUNT_EMBELLISHMENT_STAT_RATING);
     mastery += huntMasteryPct;
   }
   return mastery;

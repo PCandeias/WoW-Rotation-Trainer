@@ -40,7 +40,9 @@ export interface LoadoutGearItem {
   slot: GearSlot;
   itemName: string;
   itemId?: number;
+  itemLevel?: number;
   enchantId?: number;
+  enchantName?: string;
   gemIds: number[];
   bonusIds: number[];
   craftedStats: number[];
@@ -149,6 +151,10 @@ export function isGearSlot(key: string): key is GearSlot {
 
 /** Parses SimC-style temporary enchant strings into the loadout model. */
 export function parseTemporaryEnchants(value: string): CharacterLoadout['consumables']['temporaryEnchants'] {
+  if (value.trim() === '' || value.trim() === 'disabled') {
+    return [];
+  }
+
   return value
     .split('/')
     .map((entry) => entry.trim())
@@ -182,7 +188,7 @@ export function upsertGearItem(loadout: CharacterLoadout, slot: GearSlot, value:
   const rawSegments = value.split(',').map((segment) => segment.trim());
   const itemName = rawSegments[0] ?? '';
   const segments = rawSegments.slice(1).filter(Boolean);
-  const allowedKeys = new Set(['id', 'enchant_id', 'gem_id', 'bonus_id', 'crafted_stats']);
+  const allowedKeys = new Set(['id', 'ilevel', 'enchant', 'enchant_id', 'gem_id', 'bonus_id', 'crafted_stats']);
   const kv = new Map<string, string>();
   for (const segment of segments) {
     const [segmentKey, ...rest] = segment.split('=');
@@ -214,7 +220,9 @@ export function upsertGearItem(loadout: CharacterLoadout, slot: GearSlot, value:
     slot,
     itemName,
     itemId: parseOptionalInt('id', kv.get('id')),
+    itemLevel: parseOptionalInt('ilevel', kv.get('ilevel')),
     enchantId: parseOptionalInt('enchant_id', kv.get('enchant_id')),
+    enchantName: kv.get('enchant'),
     gemIds: parseList('gem_id', kv.get('gem_id')),
     bonusIds: parseList('bonus_id', kv.get('bonus_id')),
     craftedStats: parseList('crafted_stats', kv.get('crafted_stats')),
@@ -235,8 +243,14 @@ export function stringifyGearItemValue(item: LoadoutGearItem): string {
   if (item.itemId !== undefined) {
     segments.push(`id=${item.itemId}`);
   }
+  if (item.itemLevel !== undefined) {
+    segments.push(`ilevel=${item.itemLevel}`);
+  }
   if (item.enchantId !== undefined) {
     segments.push(`enchant_id=${item.enchantId}`);
+  }
+  if (item.enchantName) {
+    segments.push(`enchant=${item.enchantName}`);
   }
   if (item.gemIds.length > 0) {
     segments.push(`gem_id=${item.gemIds.join('/')}`);

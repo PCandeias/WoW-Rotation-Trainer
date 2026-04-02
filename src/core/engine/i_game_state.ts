@@ -47,6 +47,8 @@ export interface IGameState {
   getVersatilityPercent(): number;
   /** Returns current attack power. */
   getAttackPower(): number;
+  /** Returns current spell power after spec-owned bonuses and AP→SP bridges. */
+  getSpellPower?(): number;
   /**
    * Returns effective attack power for WEAPON_MAINHAND spells
    * (SimC attack_power_type::WEAPON_MAINHAND).
@@ -54,6 +56,13 @@ export interface IGameState {
    * Optional for lightweight test stubs; callers fall back to getAttackPower().
    */
   getWeaponMainHandAttackPower?(): number;
+  /**
+   * Returns effective attack power for WEAPON_OFF_HAND spells.
+   *
+   * Mirrors SimC's off-hand weapon AP path: base AP plus the off-hand weapon AP
+   * term. Returns 0 when no off-hand weapon is equipped.
+   */
+  getWeaponOffHandAttackPower?(): number;
   /**
    * Returns effective attack power for WEAPON_BOTH spells (SimC attack_power_type::WEAPON_BOTH).
    *
@@ -88,7 +97,13 @@ export interface IGameState {
   getAutoAttackHastePercent(): number;
   /** Additional multiplicative auto-attack speed scaling for true speed effects such as Momentum Boost. */
   getAutoAttackSpeedMultiplier(): number;
+  getBuffRemains?(buffId: string): number;
   getBuffStacks(buffId: string): number;
+  getNumericState?(stateId: string): number;
+  isTargetDebuffActive?(debuffId: string, targetId?: number): boolean;
+  getTargetDebuffRemains?(debuffId: string, targetId?: number): number;
+  getTargetDebuffStacks?(debuffId: string, targetId?: number): number;
+  getTargetDebuffInstanceId?(debuffId: string, targetId?: number): number;
   isCooldownReady(spellId: string): boolean;
   getCooldownRemains(spellId: string): number;
 
@@ -97,12 +112,18 @@ export interface IGameState {
   spendChi(amount: number): void;
   addDamage(amount: number, targetIndex?: number): void;
   applyBuff(id: string, duration: number, stacks?: number): void;
+  applyTargetDebuff?(debuffId: string, duration: number, targetId?: number, stacks?: number): number;
   expireBuff(id: string): void;
+  expireTargetDebuff?(debuffId: string, targetId?: number): void;
   removeBuffStack(id: string): void;
+  setNumericState?(stateId: string, value: number): void;
+  adjustNumericState?(stateId: string, delta: number): number;
   settleEnergy(): void;
   recomputeEnergyRegenRate(): void;
   startCooldown(spellId: string, duration: number): void;
   adjustCooldown(spellId: string, delta: number): void;
+  resetCooldown?(spellId: string): void;
+  restoreCooldownCharge?(spellId: string): void;
   recordPendingSpellStat(
     spellId: string,
     damage: number,

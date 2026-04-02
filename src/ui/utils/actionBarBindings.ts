@@ -1,9 +1,18 @@
-import { WW_ACTION_BAR } from '@ui/components/ActionBar';
+import { ENHANCEMENT_ACTION_BAR, WW_ACTION_BAR } from '@ui/components/ActionBar';
 import type { ActionBarButtonSettings, ActionBarId, ActionBarSettings } from '@ui/state/trainerSettings';
 import type { Keybinds } from './useKeybinds';
 
-const ACTION_BAR_SPELL_IDS = new Set(WW_ACTION_BAR.map((slot) => slot.spellId));
-const DEFAULT_KEY_BY_SPELL_ID = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot.defaultKey]));
+const DEFAULT_ACTION_BAR_SLOTS = [...WW_ACTION_BAR, ...ENHANCEMENT_ACTION_BAR];
+const DEFAULT_KEY_BY_SPELL_ID = new Map(DEFAULT_ACTION_BAR_SLOTS.map((slot) => [slot.spellId, slot.defaultKey]));
+
+function getConfiguredSpellIds(actionBars: ActionBarSettings): Set<string> {
+  return new Set(
+    Object.values(actionBars.bars)
+      .flatMap((bar) => bar.buttons)
+      .flatMap((button) => button.spellIds)
+      .filter((spellId) => spellId.length > 0),
+  );
+}
 
 function getDefaultKeybind(button: ActionBarButtonSettings): string {
   const defaultSpellId = button.spellIds.find((spellId) => DEFAULT_KEY_BY_SPELL_ID.has(spellId));
@@ -39,8 +48,9 @@ export function syncActionBarsWithKeybinds(actionBars: ActionBarSettings, keybin
 }
 
 export function syncKeybindsFromActionBars(actionBars: ActionBarSettings, previousKeybinds: Keybinds): Keybinds {
+  const configuredSpellIds = getConfiguredSpellIds(actionBars);
   const next: Keybinds = Object.fromEntries(
-    Object.entries(previousKeybinds).filter(([spellId]) => !ACTION_BAR_SPELL_IDS.has(spellId)),
+    Object.entries(previousKeybinds).filter(([spellId]) => !configuredSpellIds.has(spellId)),
   );
 
   for (const barId of Object.keys(actionBars.bars) as ActionBarId[]) {
@@ -51,7 +61,7 @@ export function syncKeybindsFromActionBars(actionBars: ActionBarSettings, previo
       }
 
       button.spellIds.forEach((spellId, order) => {
-        if (!ACTION_BAR_SPELL_IDS.has(spellId)) {
+        if (spellId.length === 0) {
           return;
         }
 

@@ -57,6 +57,7 @@ export class LiveTraceCollector {
   private readonly damageBySpell: Record<string, AnalysisSpellStats> = {};
   private readonly recommendations: RecommendationRecord[] = [];
   private readonly buffStacksTimelineBySecond: Record<string, number[]> = {};
+  private readonly targetDebuffStacksTimelineBySecond: Record<string, number[]> = {};
   private readonly cooldownTimelineBySecond: Record<string, number[]> = {};
   private readonly damageTimelineBySecond: number[];
   private readonly cumulativeDamageBySecond: number[];
@@ -64,6 +65,8 @@ export class LiveTraceCollector {
   private readonly chiTimelineBySecond: number[];
   private readonly energyWasteTimelineBySecond: number[];
   private readonly chiWasteTimelineBySecond: number[];
+  private readonly primaryTargetDebuffStart = new Map<string, number>();
+  private readonly primaryTargetDebuffUptimeAccum = new Map<string, number>();
   private lastRecommendationSignature = '';
 
   constructor(
@@ -101,6 +104,33 @@ export class LiveTraceCollector {
       }
     }
 
+    const primaryTarget = snapshot.targets[0];
+    const activePrimaryTargetDebuffIds = new Set<string>();
+    for (const [debuffId, debuff] of primaryTarget?.debuffs ?? []) {
+      activePrimaryTargetDebuffIds.add(debuffId);
+      const timeline = this.targetDebuffStacksTimelineBySecond[debuffId]
+        ?? (this.targetDebuffStacksTimelineBySecond[debuffId] = Array<number>(this.timelineLength).fill(Number.NaN));
+      timeline[second] = Math.max(1, debuff.stacks ?? 1);
+      if (!this.primaryTargetDebuffStart.has(debuffId)) {
+        this.primaryTargetDebuffStart.set(debuffId, snapshot.currentTime);
+      }
+    }
+
+    for (const [debuffId, timeline] of Object.entries(this.targetDebuffStacksTimelineBySecond)) {
+      if (activePrimaryTargetDebuffIds.has(debuffId)) {
+        continue;
+      }
+      timeline[second] = 0;
+      const startedAt = this.primaryTargetDebuffStart.get(debuffId);
+      if (startedAt !== undefined) {
+        this.primaryTargetDebuffUptimeAccum.set(
+          debuffId,
+          (this.primaryTargetDebuffUptimeAccum.get(debuffId) ?? 0) + Math.max(0, snapshot.currentTime - startedAt),
+        );
+        this.primaryTargetDebuffStart.delete(debuffId);
+      }
+    }
+
     for (const [spellId, cooldown] of snapshot.cooldowns.entries()) {
       const timeline = this.cooldownTimelineBySecond[spellId]
         ?? (this.cooldownTimelineBySecond[spellId] = Array<number>(this.timelineLength).fill(Number.NaN));
@@ -119,7 +149,7 @@ export class LiveTraceCollector {
       time,
       spellId,
       recommendedSpellId: this.getRecommendationAt(time),
-      preCastState: this.buildPreCastState(preCastSnapshot, time),
+      preCastState: buildAnalysisDecisionState(preCastSnapshot, this.getRecommendationsAt(time), time),
     });
   }
 
@@ -159,9 +189,20 @@ export class LiveTraceCollector {
     for (const timeline of Object.values(this.buffStacksTimelineBySecond)) {
       fillTimelineGaps(timeline);
     }
+    for (const timeline of Object.values(this.targetDebuffStacksTimelineBySecond)) {
+      fillTimelineGaps(timeline);
+    }
     for (const timeline of Object.values(this.cooldownTimelineBySecond)) {
       fillTimelineGaps(timeline);
     }
+
+    for (const [debuffId, startedAt] of this.primaryTargetDebuffStart) {
+      this.primaryTargetDebuffUptimeAccum.set(
+        debuffId,
+        (this.primaryTargetDebuffUptimeAccum.get(debuffId) ?? 0) + Math.max(0, simTime - startedAt),
+      );
+    }
+    this.primaryTargetDebuffStart.clear();
 
     return {
       source: 'player',
@@ -177,6 +218,9 @@ export class LiveTraceCollector {
       buffStacksTimelineBySecond: Object.fromEntries(
         Object.entries(this.buffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
       ),
+      targetDebuffStacksTimelineBySecond: Object.fromEntries(
+        Object.entries(this.targetDebuffStacksTimelineBySecond).map(([buffId, timeline]) => [buffId, [...timeline]]),
+      ),
       cooldownTimelineBySecond: Object.fromEntries(
         Object.entries(this.cooldownTimelineBySecond).map(([spellId, timeline]) => [spellId, [...timeline]]),
       ),
@@ -189,6 +233,7 @@ export class LiveTraceCollector {
         chi: [...this.chiWasteTimelineBySecond],
       },
       waitingTime: estimateWaitingTime(this.casts, simTime),
+      targetDebuffUptimes: Object.fromEntries(this.primaryTargetDebuffUptimeAccum),
     };
   }
 
@@ -208,31 +253,36 @@ export class LiveTraceCollector {
     return current?.spellIds ?? [];
   }
 
-  private buildPreCastState(snapshot: GameStateSnapshot, time: number): AnalysisDecisionState {
-    const activeBuffs = [...snapshot.buffs.entries()]
-      .map(([buffId, buff]) => ({
-        buffId,
-        stacks: Math.max(1, buff.stacks ?? 1),
-        remaining: buff.expiresAt > 0 ? Math.max(0, buff.expiresAt - time) : undefined,
-      }))
-      .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId));
+}
 
-    const activeCooldowns = [...snapshot.cooldowns.entries()]
-      .map(([spellId, cooldown]) => ({
-        spellId,
-        remaining: Math.max(0, (cooldown.readyAt ?? time) - time),
-      }))
-      .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId));
+export function buildAnalysisDecisionState(
+  snapshot: GameStateSnapshot,
+  recommendationSpellIds: readonly string[],
+  time = snapshot.currentTime,
+): AnalysisDecisionState {
+  const activeBuffs = [...snapshot.buffs.entries()]
+    .map(([buffId, buff]) => ({
+      buffId,
+      stacks: Math.max(1, buff.stacks ?? 1),
+      remaining: buff.expiresAt > 0 ? Math.max(0, buff.expiresAt - time) : undefined,
+    }))
+    .sort((left, right) => right.stacks - left.stacks || left.buffId.localeCompare(right.buffId));
 
-    return {
-      chi: snapshot.chi,
-      energy: snapshot.energyAtLastUpdate,
-      previousAbility: snapshot.prevGcdAbility,
-      topRecommendations: this.getRecommendationsAt(time).slice(0, 3),
-      activeBuffs,
-      activeCooldowns,
-    };
-  }
+  const activeCooldowns = [...snapshot.cooldowns.entries()]
+    .map(([spellId, cooldown]) => ({
+      spellId,
+      remaining: Math.max(0, (cooldown.readyAt ?? time) - time),
+    }))
+    .sort((left, right) => right.remaining - left.remaining || left.spellId.localeCompare(right.spellId));
+
+  return {
+    chi: snapshot.chi,
+    energy: snapshot.energyAtLastUpdate,
+    previousAbility: snapshot.prevGcdAbility,
+    topRecommendations: [...recommendationSpellIds].slice(0, 3),
+    activeBuffs,
+    activeCooldowns,
+  };
 }
 
 function estimateWaitingTime(casts: RawRunTrace['casts'], simTime: number): number {

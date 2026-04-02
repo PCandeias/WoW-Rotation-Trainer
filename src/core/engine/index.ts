@@ -19,6 +19,8 @@ export { initAutoAttacks, processAutoAttack, swingInterval } from './autoAttack'
 
 export { processChannelTick, processChannelEnd } from './channel';
 export type { ChannelTickEvent } from './channel';
+export { processDotTickDetailed } from './dot';
+export type { DotTickEvent } from './dot';
 
 export { createRppmTracker, attemptProc } from './rppm';
 export type { RppmTracker } from './rppm';

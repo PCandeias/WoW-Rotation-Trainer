@@ -5,7 +5,7 @@
  * so that UI components receive fresh snapshots each frame.
  */
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createGameState } from '@core/engine/gameState';
 import type { GameState, GameStateSnapshot } from '@core/engine/gameState';
 import { SimEventQueue, EventType } from '@core/engine/eventQueue';
@@ -16,12 +16,13 @@ import { createRng } from '@core/engine/rng';
 import type { RngInstance } from '@core/engine/rng';
 import { cloneLoadout, type CharacterLoadout } from '@core/data/loadout';
 import type { CharacterProfile } from '@core/data/profileParser';
-import { getDefaultMonkWindwalkerProfile } from '@core/data/defaultProfile';
-import { getMonkWindwalkerTalentCatalog } from '@core/data/talentStringDecoder';
+import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
+import { getTalentCatalogForProfileSpec } from '@core/data/talentStringDecoder';
+import { resolveSpecRuntime } from '@core/runtime/spec_registry';
 import type { DamageEvent } from '@ui/components/FloatingCombatText';
 import { createSimEventProcessor } from './simEventProcessor';
 import { getTopNRecommendations } from './aplRecommender';
-import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
 import type { SpellInputStatus } from '@core/engine/spell_input';
 import { buildSpellInputStatusMap } from '@core/engine/spell_input';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
@@ -32,26 +33,25 @@ import {
   type RawRunTrace,
 } from '@core/analysis';
 import { usesCompetitiveTrainerRules, type TrainerMode } from '@ui/state/trainerSettings';
+import { getTrainerSpecDefinition, type TrainerSpecId } from '@ui/specs/specCatalog';
+import { buildTutorialReadyPrompt, type TutorialPrompt } from './tutorialGuidance';
 
 // ---------------------------------------------------------------------------
 // Default profile
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PROFILE: CharacterProfile = getDefaultMonkWindwalkerProfile();
-
-const TALENT_TREE_BY_ID = new Map(
-  getMonkWindwalkerTalentCatalog().flatMap((node) => node.internalIds.map((internalId) => [internalId, node.tree] as const)),
-);
-
-export const DEFAULT_TALENT_POINT_BUDGETS = ((): Record<'class' | 'specialization' | 'hero', number> => {
+function buildDefaultTalentPointBudgets(profile: CharacterProfile): Record<'class' | 'specialization' | 'hero', number> {
+  const talentTreeById = new Map(
+    getTalentCatalogForProfileSpec(profile.spec).flatMap((node) => node.internalIds.map((internalId) => [internalId, node.tree] as const)),
+  );
   const totals = {
     class: 0,
     specialization: 0,
     hero: 0,
   };
 
-  for (const [internalId, rank] of DEFAULT_PROFILE.talentRanks.entries()) {
-    const tree = TALENT_TREE_BY_ID.get(internalId);
+  for (const [internalId, rank] of profile.talentRanks.entries()) {
+    const tree = talentTreeById.get(internalId);
     if (!tree) {
       continue;
     }
@@ -60,13 +60,18 @@ export const DEFAULT_TALENT_POINT_BUDGETS = ((): Record<'class' | 'specializatio
   }
 
   return totals;
-})();
+}
+
+const DEFAULT_PROFILE: CharacterProfile = getDefaultProfileForSpec('monk');
+
+export const DEFAULT_TALENT_POINT_BUDGETS = buildDefaultTalentPointBudgets(DEFAULT_PROFILE);
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 export interface UseSimulationOptions {
+  selectedSpec?: TrainerSpecId;
   mode: TrainerMode;
   speedMultiplier?: number;
   encounterDuration?: number;
@@ -102,6 +107,7 @@ export interface SimulationState {
   };
   damageEvents: DamageEvent[];
   procHighlight: boolean;
+  tutorialPrompt: TutorialPrompt | null;
   endReason: SimulationEndReason | null;
   finalDuration: number | null;
 }
@@ -115,6 +121,7 @@ export interface UseSimulationResult {
   cancelChannel: () => void;
   updateTalents: (talents: ReadonlySet<string>, talentRanks: ReadonlyMap<string, number>) => void;
   updateLoadout: (loadout: CharacterLoadout) => void;
+  dismissTutorialPrompt: () => void;
   pause: () => void;
   resume: () => void;
   togglePause: () => void;
@@ -136,11 +143,25 @@ const PRE_PULL_GO_DISPLAY_MS = 700;
 // ---------------------------------------------------------------------------
 
 export function useSimulation(options: UseSimulationOptions): UseSimulationResult {
+  const selectedSpec = options.selectedSpec ?? 'monk-windwalker';
   const { mode, encounterDuration = 90, nTargets = 1 } = options;
+  const selectedSpecDefinition = getTrainerSpecDefinition(selectedSpec);
+  const defaultProfile = useMemo(
+    () => getDefaultProfileForSpec(selectedSpecDefinition.profileSpec),
+    [selectedSpecDefinition.profileSpec],
+  );
+  const runtime = useMemo(
+    () => resolveSpecRuntime(defaultProfile),
+    [defaultProfile],
+  );
+  const spellbook = useMemo(
+    () => runtime.spells ?? getSpellbookForProfileSpec(defaultProfile.spec),
+    [defaultProfile.spec, runtime],
+  );
   const defaultSpeed = options.speedMultiplier ?? (mode === 'practice' ? 0.75 : 1.0);
-  const initialTalents = options.initialTalents ?? DEFAULT_PROFILE.talents;
-  const initialTalentRanks = options.initialTalentRanks ?? DEFAULT_PROFILE.talentRanks;
-  const initialLoadout = options.initialLoadout ?? DEFAULT_PROFILE.loadout;
+  const initialTalents = options.initialTalents ?? defaultProfile.talents;
+  const initialTalentRanks = options.initialTalentRanks ?? defaultProfile.talentRanks;
+  const initialLoadout = options.initialLoadout ?? defaultProfile.loadout;
 
   // Mutable refs for engine objects (not React state — no re-render on mutation)
   const stateRef = useRef<GameState | null>(null);
@@ -155,6 +176,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
   const channelRef = useRef<{ spellId: string; startTime: number; duration: number } | null>(null);
   const prevRecommendationsRef = useRef<string[]>([]);
   const analysisCollectorRef = useRef<LiveTraceCollector | null>(null);
+  const tutorialPromptRef = useRef<TutorialPrompt | null>(null);
 
   // React state drives renders
   const [simState, setSimState] = useState<SimulationState>({
@@ -172,6 +194,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     channelInfo: { isChanneling: false, spellId: '', spellName: '', totalTime: 0, progress: 0, remainingTime: 0 },
     damageEvents: [],
     procHighlight: false,
+    tutorialPrompt: null,
     endReason: null,
     finalDuration: null,
   });
@@ -185,6 +208,13 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
 
   const talentSignature = buildTalentStateSignature(talents, talentRanks);
   const loadoutSignature = buildLoadoutSignature(loadout);
+  const spellInputEntries = useMemo(
+    () => [
+      ...spellbook.values(),
+      ...SHARED_PLAYER_SPELLS.values(),
+    ],
+    [spellbook],
+  );
 
   // Build / teardown sim on mount or restart
   useEffect(() => {
@@ -232,7 +262,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     }
 
     const profile: CharacterProfile = {
-      ...DEFAULT_PROFILE,
+      ...defaultProfile,
       talents: new Set(talents),
       talentRanks: new Map(talentRanks),
       loadout: cloneLoadout(loadout),
@@ -241,7 +271,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     const state = createGameState(profile, {
       duration: encounterDuration,
       activeEnemies: nTargets,
-    });
+    }, runtime);
     const derivedTargetMaxHealth = deriveTargetMaxHealthForKillRange(state.getMaxHealth());
     state.initializeTargetHealth(derivedTargetMaxHealth);
     const queue = new SimEventQueue();
@@ -254,10 +284,14 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     damageIdRef.current = 0;
     damageEventsRef.current = [];
     endReasonRef.current = null;
+    tutorialPromptRef.current = null;
 
     channelRef.current = null;
 
     const processEvents = createSimEventProcessor(state, queue, rng, {
+      runtime,
+      spellbook,
+      classModule: runtime.module,
       onDamage: (spellId: string, amount: number, isCrit: boolean, time: number) => {
         damageIdRef.current += 1;
         const evt: DamageEvent = {
@@ -275,8 +309,8 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       onEncounterEnd: () => {
         // handled by GameLoop.onEncounterEnd
       },
-      onSuccessfulCast: (spellId: string, time: number, preCastSnapshot) => {
-        analysisCollectorRef.current?.recordCast(spellId, time, preCastSnapshot);
+      onSuccessfulCast: (_spellId: string, _time: number, preCastSnapshot, _preCastRecommendations) => {
+        analysisCollectorRef.current?.recordCast(_spellId, _time, preCastSnapshot);
       },
       onCombatEvent: (event) => {
         analysisCollectorRef.current?.recordCombatEvent(event);
@@ -304,14 +338,29 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
         const snapshot = state.snapshot();
         const dps = snapshot.totalDamage / Math.max(0.1, simTime);
 
-        const analysisRecommendations = getTopNRecommendations(state, 4);
+        const analysisRecommendations = getTopNRecommendations(state, 4, runtime);
         const recommendations =
           usesCompetitiveTrainerRules(mode) ? [] : analysisRecommendations;
         analysisCollectorRef.current?.recordFrame(snapshot, analysisRecommendations);
-        const spellInputStatus = buildSpellInputStatusMap(state, [
-          ...MONK_WW_SPELLS.values(),
-          ...SHARED_PLAYER_SPELLS.values(),
-        ]);
+        const spellInputStatus = buildSpellInputStatusMap(state, spellInputEntries);
+        if (mode === 'tutorial' && tutorialPromptRef.current === null && loop.running && !loop.paused) {
+          const expectedSpellId = analysisRecommendations[0] ?? null;
+        const prompt = (
+          expectedSpellId !== null
+          && spellInputStatus.get(expectedSpellId)?.failReason === undefined
+        )
+          ? buildTutorialReadyPrompt({
+            analysisSpecId: selectedSpecDefinition.analysisSpecId,
+            talents,
+            snapshot,
+            recommendations: analysisRecommendations,
+          })
+          : null;
+          if (prompt !== null) {
+            tutorialPromptRef.current = prompt;
+            loop.pause(performance.now());
+          }
+        }
 
         // Compute proc highlight: slot 0 changed unexpectedly from what was predicted as slot 1
         const prevRecs = prevRecommendationsRef.current;
@@ -327,7 +376,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
         const ch = channelRef.current;
         const isChanneling = ch !== null && simTime < ch.startTime + ch.duration;
         const elapsed = isChanneling && ch ? simTime - ch.startTime : 0;
-        const spellDef = isChanneling && ch ? MONK_WW_SPELLS.get(ch.spellId) : null;
+        const spellDef = isChanneling && ch ? spellbook.get(ch.spellId) : null;
 
         // Prune old damage events
         const now = Date.now();
@@ -357,6 +406,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
           },
           damageEvents: [...damageEventsRef.current],
           procHighlight,
+          tutorialPrompt: tutorialPromptRef.current,
           endReason: null,
           finalDuration: null,
         });
@@ -371,20 +421,18 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
           ...prev,
           snapshot,
           analysisTrace,
-          spellInputStatus: buildSpellInputStatusMap(state, [
-            ...MONK_WW_SPELLS.values(),
-            ...SHARED_PLAYER_SPELLS.values(),
-          ]),
+          spellInputStatus: buildSpellInputStatusMap(state, spellInputEntries),
           simTime,
           dps: snapshot.totalDamage / Math.max(0.1, simTime),
           countdownValue: null,
           hasStarted: true,
           isRunning: false,
           isPaused: false,
-          isEnded: true,
-          damageEvents: [...damageEventsRef.current],
-          endReason: endReasonRef.current ?? 'encounter_complete',
-          finalDuration: simTime,
+            isEnded: true,
+            damageEvents: [...damageEventsRef.current],
+            tutorialPrompt: tutorialPromptRef.current,
+            endReason: endReasonRef.current ?? 'encounter_complete',
+            finalDuration: simTime,
         }));
       },
     });
@@ -392,13 +440,40 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     loopRef.current = loop;
     loop.start(performance.now());
 
+    const initialSnapshot = state.snapshot();
+    const initialRecommendations = getTopNRecommendations(state, 4, runtime);
+    const initialSpellInputStatus = buildSpellInputStatusMap(state, spellInputEntries);
+    const initialExpectedSpellId = initialRecommendations[0] ?? null;
+    const initialTutorialPrompt = (
+      mode === 'tutorial'
+      && initialExpectedSpellId !== null
+      && initialSpellInputStatus.get(initialExpectedSpellId)?.failReason === undefined
+    )
+      ? buildTutorialReadyPrompt({
+        analysisSpecId: selectedSpecDefinition.analysisSpecId,
+        talents,
+        snapshot: initialSnapshot,
+        recommendations: initialRecommendations,
+      })
+      : null;
+    if (initialTutorialPrompt !== null) {
+      tutorialPromptRef.current = initialTutorialPrompt;
+      loop.pause(performance.now());
+    }
+
     setSimState((prev) => ({
       ...prev,
+      snapshot: initialSnapshot,
+      spellInputStatus: initialSpellInputStatus,
+      recommendations: usesCompetitiveTrainerRules(mode) ? [] : initialRecommendations,
+      simTime: initialSnapshot.currentTime,
+      dps: initialSnapshot.totalDamage / Math.max(0.1, initialSnapshot.currentTime),
       countdownValue: null,
       hasStarted: true,
       isRunning: true,
-      isPaused: false,
+      isPaused: initialTutorialPrompt !== null,
       isEnded: false,
+      tutorialPrompt: initialTutorialPrompt,
       endReason: null,
       finalDuration: null,
     }));
@@ -408,20 +483,61 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       analysisCollectorRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countdownValue, encounterDuration, loadout, loadoutSignature, mode, nTargets, restartVersion, speed, talentSignature, talents, talentRanks]);
+  }, [countdownValue, defaultProfile, encounterDuration, loadout, loadoutSignature, mode, nTargets, restartVersion, runtime, selectedSpecDefinition.analysisSpecId, speed, spellInputEntries, spellbook, talentSignature, talents, talentRanks]);
 
   // Inject input
   const injectInput = useCallback((spellId: string): void => {
-    if (loopRef.current?.paused) {
-      return;
-    }
-
     if (countdownValue !== null) {
       return;
     }
 
-    loopRef.current?.injectInput(spellId);
-  }, [countdownValue]);
+    const loop = loopRef.current;
+    const state = stateRef.current;
+    if (!loop || !state) {
+      return;
+    }
+
+    if (loop.paused) {
+      return;
+    }
+
+    if (mode === 'tutorial') {
+      const snapshot = state.snapshot();
+      const recommendations = getTopNRecommendations(state, 4, runtime);
+      const spellInputStatus = buildSpellInputStatusMap(state, spellInputEntries);
+      const expectedSpellId = recommendations[0] ?? null;
+      const tutorialPrompt = (
+        expectedSpellId !== null
+        && spellInputStatus.get(expectedSpellId)?.failReason === undefined
+      )
+        ? buildTutorialReadyPrompt({
+          analysisSpecId: selectedSpecDefinition.analysisSpecId,
+          talents,
+          snapshot,
+          recommendations,
+        })
+        : null;
+
+      if (tutorialPrompt !== null && spellId !== tutorialPrompt.expectedSpellId) {
+        tutorialPromptRef.current = tutorialPrompt;
+        loop.pause(performance.now());
+        setSimState((prev) => ({
+          ...prev,
+          snapshot,
+          spellInputStatus,
+          recommendations,
+          simTime: snapshot.currentTime,
+          dps: snapshot.totalDamage / Math.max(0.1, snapshot.currentTime),
+          isPaused: true,
+          isRunning: loop.running,
+          tutorialPrompt,
+        }));
+        return;
+      }
+    }
+
+    loop.injectInput(spellId);
+  }, [countdownValue, mode, runtime, selectedSpecDefinition.analysisSpecId, spellInputEntries, spellbook, talents]);
 
   const cancelChannel = useCallback((): void => {
     if (loopRef.current?.paused) {
@@ -442,6 +558,11 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
 
   const updateLoadout = useCallback((nextLoadout: CharacterLoadout): void => {
     setLoadout(cloneLoadout(nextLoadout));
+  }, []);
+
+  const dismissTutorialPrompt = useCallback((): void => {
+    tutorialPromptRef.current = null;
+    setSimState((prev) => ({ ...prev, tutorialPrompt: null }));
   }, []);
 
   const pause = useCallback((): void => {
@@ -491,6 +612,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     prevRecommendationsRef.current = [];
     damageEventsRef.current = [];
     endReasonRef.current = null;
+    tutorialPromptRef.current = null;
     setRestartVersion((current) => current + 1);
     setCountdownValue(PRE_PULL_COUNTDOWN_SECONDS);
     // Force re-run of the effect by updating a state key
@@ -509,6 +631,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       channelInfo: { isChanneling: false, spellId: '', spellName: '', totalTime: 0, progress: 0, remainingTime: 0 },
       damageEvents: [],
       procHighlight: false,
+      tutorialPrompt: null,
       endReason: null,
       finalDuration: null,
     });
@@ -538,7 +661,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       snapshot: finalSnapshot,
       analysisTrace,
       spellInputStatus: buildSpellInputStatusMap(state, [
-        ...MONK_WW_SPELLS.values(),
+        ...spellbook.values(),
         ...SHARED_PLAYER_SPELLS.values(),
       ]),
       simTime,
@@ -549,10 +672,11 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       isPaused: false,
       isEnded: true,
       damageEvents: [...damageEventsRef.current],
+      tutorialPrompt: tutorialPromptRef.current,
       endReason: reason,
       finalDuration: simTime,
     }));
-  }, [countdownValue, encounterDuration, simState.hasStarted, simState.isEnded]);
+  }, [countdownValue, encounterDuration, simState.hasStarted, simState.isEnded, spellbook]);
 
   return {
     simState,
@@ -563,6 +687,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     cancelChannel,
     updateTalents,
     updateLoadout,
+    dismissTutorialPrompt,
     pause,
     resume,
     togglePause,

@@ -35,6 +35,8 @@ export interface BuffState {
   expiresAt: number;
   /** Count of stacks at last mutation time. Use stackTimers for accurate real-time count. */
   stacks: number;
+  /** Optional stable token for refresh-invalidated effects such as periodic debuffs. */
+  instanceId?: number;
   /**
    * Per-stack expiration timestamps (independent-timer model).
    * Each entry is a sim time when that stack expires. 0 = permanent.
@@ -75,6 +77,7 @@ export interface GameState {
   encounterDuration: number;
   activeEnemies: number;
   targetHealthPct: number;
+  targets?: readonly { debuffs: Map<string, BuffState> }[];
 
   // GCD history
   prevGcdAbility: SpellId | null;
@@ -88,6 +91,16 @@ export interface GameState {
   buffs: Map<string, BuffState>;
   cooldowns: Map<string, CooldownState>;
   talents: Set<string>;
+  executionHooks?: {
+    resolveSpellDef?(state: GameState, spellId: string): {
+      isOnGcd: boolean;
+    } | undefined;
+    getCooldownStateForQuery?(
+      state: GameState,
+      spellId: SpellId,
+      baseState: CooldownState | undefined,
+    ): CooldownState | undefined;
+  };
 
   /**
    * Returns gcd.max: haste-scaled base GCD (SimC: base_gcd × attack_haste,
@@ -147,7 +160,13 @@ function getZenithBuffState(state: GameState): BuffState | undefined {
 function resolveCooldown(
   cooldown: CooldownState | undefined,
   currentTime: number
-): { isReady: boolean; remains: number; fullRechargeTime: number; duration: number } {
+): {
+  isReady: boolean;
+  remains: number;
+  fullRechargeTime: number;
+  duration: number;
+  chargesFractional: number;
+} {
   const lockoutRemains = Math.max(0, (cooldown?.readyAt ?? currentTime) - currentTime);
 
   if (cooldown?.readyTimes && cooldown.maxCharges !== undefined) {
@@ -155,15 +174,23 @@ function resolveCooldown(
     const charges = cooldown.maxCharges - readyTimes.length;
     const nextReadyAt = readyTimes[0];
     const fullReadyAt = readyTimes[readyTimes.length - 1];
+    const nextChargeRemains = nextReadyAt === undefined ? 0 : nextReadyAt - currentTime;
     const rechargeRemains =
-      charges > 0 || nextReadyAt === undefined ? 0 : nextReadyAt - currentTime;
+      charges > 0 || nextReadyAt === undefined ? 0 : nextChargeRemains;
+    const rechargeDuration = cooldown.rechargeDuration ?? 0;
+    const partialCharge = charges < cooldown.maxCharges
+      && nextReadyAt !== undefined
+      && rechargeDuration > 0
+      ? 1 - (nextChargeRemains / rechargeDuration)
+      : 0;
 
     return {
       isReady: charges > 0 && lockoutRemains === 0,
       remains: Math.max(lockoutRemains, rechargeRemains),
       fullRechargeTime:
         readyTimes.length === 0 || fullReadyAt === undefined ? 0 : fullReadyAt - currentTime,
-      duration: cooldown.rechargeDuration ?? 0,
+      duration: rechargeDuration,
+      chargesFractional: Math.min(cooldown.maxCharges, charges + partialCharge),
     };
   }
 
@@ -174,7 +201,13 @@ function resolveCooldown(
     remains: isReady ? 0 : lockoutRemains,
     fullRechargeTime: isReady ? 0 : lockoutRemains,
     duration: cooldown?.rechargeDuration ?? 0,
+    chargesFractional: isReady ? 1 : 0,
   };
+}
+
+function resolveCooldownStateForQuery(state: GameState, spellId: SpellId): CooldownState | undefined {
+  const baseState = state.cooldowns.get(spellId);
+  return state.executionHooks?.getCooldownStateForQuery?.(state, spellId, baseState) ?? baseState;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +298,84 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
   }
 
   // -------------------------------------------------------------------------
+  // debuff.<name>.<property>
+  // Current trainer semantics: query the current primary target (target 0).
+  // -------------------------------------------------------------------------
+  if (root === 'debuff') {
+    if (rest.length < 2) {
+      throw new AplError(`Incomplete debuff path: ${path.join('.')}`);
+    }
+    const [name, prop, ...extra] = rest;
+    if (extra.length > 0) {
+      throw new AplError(`Too many segments in debuff path: ${path.join('.')}`);
+    }
+
+    const debuff = state.targets?.[0]?.debuffs.get(name);
+    const active = isBuffActive(debuff, state.currentTime);
+
+    switch (prop) {
+      case 'up':
+        return active ? 1 : 0;
+      case 'remains':
+        return active && debuff !== undefined
+          ? (debuff.expiresAt === 0 ? 0 : debuff.expiresAt - state.currentTime)
+          : 0;
+      case 'stack':
+        if (!active || !debuff) return 0;
+        return debuff.stackTimers.filter(t => t === 0 || t > state.currentTime).length;
+      default:
+        throw new AplError(`Unknown debuff property '${prop}' in path: ${path.join('.')}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // dot.<name>.<property>
+  // SimC alias for the current target's DoT/debuff state.
+  // -------------------------------------------------------------------------
+  if (root === 'dot') {
+    if (rest.length < 2) {
+      throw new AplError(`Incomplete dot path: ${path.join('.')}`);
+    }
+    const [name, prop, ...extra] = rest;
+    if (extra.length > 0) {
+      throw new AplError(`Too many segments in dot path: ${path.join('.')}`);
+    }
+
+    const dot = state.targets?.[0]?.debuffs.get(name);
+    const active = isBuffActive(dot, state.currentTime);
+
+    switch (prop) {
+      case 'up':
+      case 'ticking':
+        return active ? 1 : 0;
+      case 'remains':
+        return active && dot !== undefined
+          ? (dot.expiresAt === 0 ? 0 : dot.expiresAt - state.currentTime)
+          : 0;
+      case 'stack':
+        if (!active || !dot) return 0;
+        return dot.stackTimers.filter(t => t === 0 || t > state.currentTime).length;
+      default:
+        throw new AplError(`Unknown dot property '${prop}' in path: ${path.join('.')}`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // active_dot.<name>
+  // Number of targets with an active copy of the named DoT/debuff.
+  // -------------------------------------------------------------------------
+  if (root === 'active_dot') {
+    if (rest.length !== 1) {
+      throw new AplError(`Invalid active_dot path: ${path.join('.')}`);
+    }
+    const [name] = rest;
+    return state.targets?.reduce((count, target) => {
+      const dot = target.debuffs.get(name);
+      return count + (isBuffActive(dot, state.currentTime) ? 1 : 0);
+    }, 0) ?? 0;
+  }
+
+  // -------------------------------------------------------------------------
   // cooldown.<name>.<property>
   // -------------------------------------------------------------------------
   if (root === 'cooldown') {
@@ -275,7 +386,7 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
     if (extra.length > 0) {
       throw new AplError(`Too many segments in cooldown path: ${path.join('.')}`);
     }
-    const resolved = resolveCooldown(state.cooldowns.get(name), state.currentTime);
+    const resolved = resolveCooldown(resolveCooldownStateForQuery(state, name), state.currentTime);
 
     switch (prop) {
       case 'ready':
@@ -287,9 +398,28 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
         return resolved.duration;
       case 'full_recharge_time':
         return resolved.fullRechargeTime;
+      case 'charges_fractional':
+        return resolved.chargesFractional;
       default:
         throw new AplError(`Unknown cooldown property '${prop}' in path: ${path.join('.')}`);
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // charges_fractional
+  // Candidate-action shorthand used by SimC APLs for charge-based abilities.
+  // -------------------------------------------------------------------------
+  if (root === 'charges_fractional') {
+    if (rest.length !== 0) {
+      throw new AplError(`Unexpected segments after charges_fractional: ${path.join('.')}`);
+    }
+    if (ctx.candidateAbility === undefined) {
+      throw new AplError('charges_fractional requires ctx.candidateAbility to be set');
+    }
+    return resolveCooldown(
+      resolveCooldownStateForQuery(state, ctx.candidateAbility),
+      state.currentTime,
+    ).chargesFractional;
   }
 
   // -------------------------------------------------------------------------
@@ -319,6 +449,21 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
     // last *combo-strike-eligible* action (including off-GCD abilities like
     // zenith), not the last GCD action. (sc_monk.cpp:331-345)
     return ctx.candidateAbility !== state.lastComboStrikeAbility ? 1 : 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // ticking
+  // SimC action-local alias used by DoT spells like flame_shock,if=!ticking.
+  // -------------------------------------------------------------------------
+  if (root === 'ticking') {
+    if (rest.length !== 0) {
+      throw new AplError(`Unexpected segments after ticking: ${path.join('.')}`);
+    }
+    if (ctx.candidateAbility === undefined) {
+      throw new AplError('ticking requires ctx.candidateAbility to be set');
+    }
+    const debuff = state.targets?.[0]?.debuffs.get(ctx.candidateAbility);
+    return isBuffActive(debuff, state.currentTime) ? 1 : 0;
   }
 
   // -------------------------------------------------------------------------
@@ -492,9 +637,22 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
   // pet.<name>.<property>
   // -------------------------------------------------------------------------
   if (root === 'pet') {
-    // pet.<name>.active — return 0 (pets not modelled beyond buff tracking)
-    if (rest.length === 2 && rest[1] === 'active') {
-      return 0;
+    if (rest.length === 2) {
+      const [petName, property] = rest;
+      const petBuff = state.buffs.get(petName);
+
+      if (property === 'active') {
+        return petBuff !== undefined && (petBuff.expiresAt === 0 || petBuff.expiresAt > state.currentTime)
+          ? 1
+          : 0;
+      }
+
+      if (property === 'remains') {
+        if (petBuff === undefined || petBuff.expiresAt === 0 || petBuff.expiresAt <= state.currentTime) {
+          return 0;
+        }
+        return Math.max(0, petBuff.expiresAt - state.currentTime);
+      }
     }
     throw new AplError(`Unknown pet property: ${path.join('.')}`);
   }
@@ -595,8 +753,6 @@ export function evaluate(node: AstNode, state: GameState, ctx: EvalContext): num
 
 export function normalizeAplBuffName(name: string): string {
   switch (name) {
-    case 'combo_breaker':
-      return 'blackout_reinforcement';
     case 'dance_of_chiji':
       return 'dance_of_chi_ji';
     case 'zenith':

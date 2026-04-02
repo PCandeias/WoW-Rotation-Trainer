@@ -3,12 +3,14 @@ import type { CSSProperties } from 'react';
 import { T, FONTS } from '@ui/theme/elvui';
 import { buildHudFrameStyle } from '@ui/theme/stylePrimitives';
 import type { GameStateSnapshot } from '@core/engine/gameState';
-import { ChiOrbs } from './ChiOrbs';
+import { getResourcePresentationForProfileSpec } from '@ui/specs/specResourcePresentation';
 import { ResourceBar } from './ResourceBar';
+import { SegmentedResourceBar } from './SegmentedResourceBar';
 
 export interface PlayerFrameProps {
   gameState: GameStateSnapshot;
   currentTime: number;
+  profileSpec?: string;
   healthOverride?: {
     current: number;
     max: number;
@@ -31,19 +33,14 @@ export interface PlayerFrameProps {
 export function PlayerFrame({
   gameState,
   currentTime,
+  profileSpec = 'monk',
   healthOverride,
   playerName = 'Windwalker',
   showResources = true,
 }: PlayerFrameProps): React.ReactElement {
-  // Calculate current energy with regen
-  const energyMax = gameState.energyMax;
-  const currentEnergy = Math.floor(
-    Math.min(
-      energyMax,
-      gameState.energyAtLastUpdate +
-        gameState.energyRegenRate * (currentTime - gameState.energyLastUpdated)
-    )
-  );
+  const resourcePresentation = getResourcePresentationForProfileSpec(profileSpec);
+  const topResource = resourcePresentation.top;
+  const bottomResource = resourcePresentation.bottom;
 
   const panelStyle: CSSProperties = {
     ...buildHudFrameStyle({ highlighted: true }),
@@ -61,7 +58,7 @@ export function PlayerFrame({
 
   const nameStyle: CSSProperties = {
     fontSize: '11px',
-    color: T.classMonk,
+    color: resourcePresentation.accentColor,
     fontFamily: FONTS.ui,
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
@@ -70,8 +67,6 @@ export function PlayerFrame({
   const healthCurrent = healthOverride?.current ?? 100;
   const healthMax = healthOverride?.max ?? 100;
   const healthPercent = healthMax > 0 ? Math.round((healthCurrent / healthMax) * 100) : 0;
-  const energyPercent = energyMax > 0 ? Math.round((currentEnergy / energyMax) * 100) : 0;
-
   return (
     <div style={panelStyle}>
       <div style={nameRowStyle}>
@@ -89,21 +84,42 @@ export function PlayerFrame({
       {showResources && (
         <>
           <div style={{ height: '3px' }} />
-          <ChiOrbs current={gameState.chi} max={gameState.chiMax} width="100%" height={14} />
-          <div style={{ height: '2px' }} />
-          <ResourceBar
-            value={currentEnergy}
-            max={energyMax}
-            color="#c2cb5f"
-            height={14}
-            valueText={`${energyPercent}%`}
-            transitionMs={120}
-            trackColor="#07131e"
-            borderColor="#193548"
-            trackStyle={{ borderRadius: 0, boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.05)' }}
-            fillStyle={{ background: 'linear-gradient(90deg, #d4dc7b 0%, #c2cb5f 45%, #b0ba50 100%)' }}
-            valueTextStyle={{ color: '#20a4ff', fontSize: '10px', letterSpacing: '0.02em', borderRadius: 0 }}
-          />
+          {topResource && (
+            <SegmentedResourceBar
+              current={topResource.current(gameState)}
+              max={topResource.max(gameState)}
+              width="100%"
+              height={14}
+              activeGradient={topResource.activeGradient}
+              inactiveGradient={topResource.inactiveGradient}
+              borderColor={topResource.borderColor}
+              backgroundColor={topResource.backgroundColor}
+              glowColor={topResource.glowColor}
+              testIdPrefix={topResource.testIdPrefix}
+            />
+          )}
+          {bottomResource && (
+            <div style={{ marginTop: topResource ? '-1px' : undefined }}>
+              <ResourceBar
+                value={bottomResource.current(gameState, currentTime)}
+                max={bottomResource.max(gameState, currentTime)}
+                color={bottomResource.color}
+                height={14}
+                label={bottomResource.label}
+                showValueText={bottomResource.showValueText}
+                valueText={bottomResource.valueText?.(
+                  bottomResource.current(gameState, currentTime),
+                  bottomResource.max(gameState, currentTime),
+                )}
+                transitionMs={120}
+                trackColor={bottomResource.trackColor}
+                borderColor={bottomResource.borderColor}
+                trackStyle={bottomResource.trackStyle}
+                fillStyle={bottomResource.fillStyle}
+                valueTextStyle={bottomResource.valueTextStyle}
+              />
+            </div>
+          )}
         </>
       )}
     </div>

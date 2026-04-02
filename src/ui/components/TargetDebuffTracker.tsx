@@ -6,11 +6,12 @@ import { AbilityIcon } from './AbilityIcon';
 import type { GameStateSnapshot, BuffState } from '@core/engine/gameState';
 import { clampTooltipLeft } from './BuffTracker';
 import { TARGET_DEBUFF_SPELL_IDS, buildTrackerBlacklist } from './trackerSpellIds';
+import { getBuffPresentationRegistryForProfileSpec } from '@ui/specs/specBuffPresentation';
 
 interface TargetDebuffDef {
-  buffId: keyof typeof TARGET_DEBUFF_SPELL_IDS;
+  buffId: string;
   spellId: number;
-  iconName: string;
+  iconName?: string;
   emoji: string;
   displayName: string;
 }
@@ -18,16 +19,25 @@ interface TargetDebuffDef {
 export interface TargetDebuffTrackerProps {
   gameState: GameStateSnapshot;
   currentTime: number;
+  profileSpec: string;
   blacklistSpellIds?: number[];
 }
 
 interface HoverState {
-  buffId: TargetDebuffDef['buffId'];
+  buffId: string;
   cellCenterX: number;
   cellTop: number;
 }
 
-const TARGET_DEBUFFS: readonly TargetDebuffDef[] = [
+function formatTimer(remaining: number): string {
+  if (remaining < 10) {
+    return `${remaining.toFixed(1)}s`;
+  }
+
+  return `${Math.round(remaining)}s`;
+}
+
+const EXTERNAL_TARGET_DEBUFFS: readonly TargetDebuffDef[] = [
   {
     buffId: 'mystic_touch',
     spellId: TARGET_DEBUFF_SPELL_IDS.mystic_touch,
@@ -51,22 +61,72 @@ const TARGET_DEBUFFS: readonly TargetDebuffDef[] = [
   },
 ];
 
-function formatTimer(remaining: number): string {
-  if (remaining < 10) {
-    return `${remaining.toFixed(1)}s`;
+function buildVisibleTargetDebuffs(
+  gameState: GameStateSnapshot,
+  profileSpec: string,
+  currentTime: number,
+  blacklistSpellIds: readonly number[],
+): Array<TargetDebuffDef & { buffState: BuffState }> {
+  const hiddenDebuffs = new Set(buildTrackerBlacklist(TARGET_DEBUFF_SPELL_IDS, blacklistSpellIds));
+  const buffRegistry = getBuffPresentationRegistryForProfileSpec(profileSpec);
+  const visibleDebuffs: Array<TargetDebuffDef & { buffState: BuffState }> = [];
+  const target = gameState.targets[0];
+
+  if (target) {
+    for (const [buffId, buffState] of target.debuffs.entries()) {
+      if (hiddenDebuffs.has(buffId)) {
+        continue;
+      }
+      if (buffState.expiresAt > 0 && buffState.expiresAt <= currentTime) {
+        continue;
+      }
+
+      const definition = buffRegistry[buffId];
+      visibleDebuffs.push({
+        buffId,
+        buffState,
+        spellId: TARGET_DEBUFF_SPELL_IDS[buffId] ?? 0,
+        iconName: definition?.iconName,
+        emoji: definition?.emoji ?? '❗',
+        displayName: definition?.displayName ?? buffId,
+      });
+    }
   }
 
-  return `${Math.round(remaining)}s`;
-}
+  for (const definition of EXTERNAL_TARGET_DEBUFFS) {
+    if (hiddenDebuffs.has(definition.buffId)) {
+      continue;
+    }
 
-function getTargetDebuffState(gameState: GameStateSnapshot, buffId: TargetDebuffDef['buffId']): BuffState | null {
-  if (buffId === 'mystic_touch') {
-    return gameState.assumeMysticTouch
-      ? { expiresAt: 0, stacks: 1, stackTimers: [] }
-      : null;
+    const buffState = definition.buffId === 'mystic_touch'
+      ? (
+          gameState.assumeMysticTouch
+            ? { expiresAt: 0, stacks: 1, stackTimers: [] }
+            : null
+        )
+      : gameState.buffs.get(definition.buffId) ?? null;
+
+    if (!buffState) {
+      continue;
+    }
+    if (buffState.expiresAt > 0 && buffState.expiresAt <= currentTime) {
+      continue;
+    }
+    if (visibleDebuffs.some((entry) => entry.buffId === definition.buffId)) {
+      continue;
+    }
+
+    visibleDebuffs.push({
+      ...definition,
+      buffState,
+    });
   }
 
-  return gameState.buffs.get(buffId) ?? null;
+  return visibleDebuffs.sort((left, right) => {
+    const leftRemaining = left.buffState.expiresAt === 0 ? Number.POSITIVE_INFINITY : left.buffState.expiresAt - currentTime;
+    const rightRemaining = right.buffState.expiresAt === 0 ? Number.POSITIVE_INFINITY : right.buffState.expiresAt - currentTime;
+    return leftRemaining - rightRemaining || left.displayName.localeCompare(right.displayName);
+  });
 }
 
 /**
@@ -75,28 +135,13 @@ function getTargetDebuffState(gameState: GameStateSnapshot, buffId: TargetDebuff
 export function TargetDebuffTracker({
   gameState,
   currentTime,
+  profileSpec,
   blacklistSpellIds = [],
 }: TargetDebuffTrackerProps): React.ReactElement {
   const [hover, setHover] = useState<HoverState | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = useState<{ left: number; top: number } | null>(null);
-  const hiddenDebuffs = new Set(buildTrackerBlacklist(TARGET_DEBUFF_SPELL_IDS, blacklistSpellIds));
-  const visibleDebuffs = TARGET_DEBUFFS.flatMap((def) => {
-    if (hiddenDebuffs.has(def.buffId)) {
-      return [];
-    }
-
-    const buffState = getTargetDebuffState(gameState, def.buffId);
-    if (!buffState) {
-      return [];
-    }
-
-    if (buffState.expiresAt > 0 && buffState.expiresAt <= currentTime) {
-      return [];
-    }
-
-    return [{ ...def, buffState }];
-  });
+  const visibleDebuffs = buildVisibleTargetDebuffs(gameState, profileSpec, currentTime, blacklistSpellIds);
 
   useLayoutEffect(() => {
     if (!hover || !tooltipRef.current) {

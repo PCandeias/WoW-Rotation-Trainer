@@ -9,16 +9,20 @@ import type { SimEvent } from '@core/engine/eventQueue';
 import { EventType } from '@core/engine/eventQueue';
 import type { GameState, GameStateSnapshot } from '@core/engine/gameState';
 import type { SimEventQueue } from '@core/engine/eventQueue';
-import { executeAbility } from '@core/engine/executor';
+import { executeAbility, processAbilityCast } from '@core/engine/executor';
 import { initAutoAttacks, processAutoAttack } from '@core/engine/autoAttack';
-import { interruptActiveChannel, processChannelTick, processChannelEnd } from '@core/engine/channel';
+import { interruptActiveChannel, processChannelEnd, processChannelTickDetailed } from '@core/engine/channel';
+import { processDotTickDetailed } from '@core/engine/dot';
 import { tryQueueAbility } from '@core/engine/spellQueue';
 import { expireSharedPlayerBuff } from '@core/shared/player_effects';
-import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
+import type { SpellDef } from '@core/data/spells/types';
 import type { RngInstance } from '@core/engine/rng';
 import type { ClassModule } from '@core/class_modules/class_module';
 import { monk_module } from '@core/class_modules/monk/monk_module';
-import { processDelayedSpellImpact } from '@core/class_modules/monk/flurry_strikes';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
+import type { SpecRuntime } from '@core/runtime/spec_runtime';
+import { monkWindwalkerRuntime } from '@core/class_modules/monk/monk_spec_runtime';
+import { getTopNRecommendations } from './aplRecommender';
 
 // ---------------------------------------------------------------------------
 // Config
@@ -29,9 +33,16 @@ export interface SimEventProcessorConfig {
   onEncounterEnd: () => void;
   onChannelStart?: (spellId: string, startTime: number, duration: number) => void;
   onChannelEnd?: () => void;
-  onSuccessfulCast?: (spellId: string, time: number, preCastSnapshot: GameStateSnapshot) => void;
+  onSuccessfulCast?: (
+    spellId: string,
+    time: number,
+    preCastSnapshot: GameStateSnapshot,
+    preCastRecommendations: readonly string[],
+  ) => void;
   onCombatEvent?: (event: SimEvent) => void;
+  spellbook?: ReadonlyMap<string, SpellDef>;
   classModule?: ClassModule;
+  runtime?: SpecRuntime;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +55,9 @@ export function createSimEventProcessor(
   rng: RngInstance,
   config: SimEventProcessorConfig
 ): (events: SimEvent[]) => void {
-  const cm = config.classModule ?? monk_module;
+  const runtime = config.runtime ?? monkWindwalkerRuntime;
+  const cm = config.classModule ?? runtime.module ?? monk_module;
+  const spellbook = config.spellbook ?? runtime.spells ?? getSpellbookForProfileSpec('monk');
 
   function buildDamageSignature(spellId: string, amount: number, isCrit: boolean, time: number): string {
     return `${spellId}|${Math.round(amount)}|${isCrit ? 'crit' : 'hit'}|${time.toFixed(3)}`;
@@ -67,21 +80,30 @@ export function createSimEventProcessor(
           break;
 
         case EventType.PLAYER_INPUT: {
-          const spell = MONK_WW_SPELLS.get(event.ability);
+          const resolvedSpell = runtime.resolveActionSpell?.(
+            { type: 'cast', ability: event.ability },
+            state,
+          ) ?? spellbook.get(event.ability) ?? null;
+          const spell = resolvedSpell;
           if (spell) {
             const preCastSnapshot = state.snapshot();
+            const preCastRecommendations = getTopNRecommendations(state, 4, runtime);
             const result = executeAbility(spell, state, queue, rng);
             if (
               !result.success
-              && (result.failReason === 'on_gcd' || result.failReason === 'channel_locked')
+              && (
+                result.failReason === 'on_gcd'
+                || result.failReason === 'channel_locked'
+                || result.failReason === 'cast_locked'
+              )
             ) {
               tryQueueAbility(state, event.ability);
             }
             if (result.success) {
-              config.onSuccessfulCast?.(event.ability, state.currentTime, preCastSnapshot);
+              config.onSuccessfulCast?.(spell.name, state.currentTime, preCastSnapshot, preCastRecommendations);
             }
             if (result.success && result.damage > 0) {
-              emitDirectDamage(event.ability, result.damage, false, state.currentTime);
+              emitDirectDamage(spell.name, result.damage, result.isCrit, state.currentTime);
             }
             if (result.success && state.gcdReady > state.currentTime) {
               queue.push({ type: EventType.GCD_READY, time: state.gcdReady });
@@ -95,9 +117,17 @@ export function createSimEventProcessor(
           break;
 
         case EventType.CHANNEL_TICK: {
-          const damage = processChannelTick(event, state, rng);
-          if (damage > 0) {
-            emitDirectDamage(event.spellId, damage, false, state.currentTime);
+          const tickResult = processChannelTickDetailed(event, state, rng, queue);
+          if (tickResult.damage > 0) {
+            emitDirectDamage(event.spellId, tickResult.damage, tickResult.isCrit, state.currentTime);
+          }
+          break;
+        }
+
+        case EventType.DOT_TICK: {
+          const tickResult = processDotTickDetailed(event, state, rng, queue);
+          if (tickResult.damage > 0) {
+            emitDirectDamage(event.spellId, tickResult.damage, tickResult.isCrit, state.currentTime);
           }
           break;
         }
@@ -127,10 +157,23 @@ export function createSimEventProcessor(
           break;
         }
 
-        case EventType.DELAYED_SPELL_IMPACT: {
-          const result = processDelayedSpellImpact(event.spellId, state, queue, rng);
-          if (result && result.damage > 0) {
-            emitDirectDamage(event.spellId, result.damage, result.isCrit, state.currentTime);
+        case EventType.DELAYED_SPELL_IMPACT:
+        case EventType.TIGEREYE_BREW_TICK:
+        case EventType.COMBAT_WISDOM_TICK: {
+          const result = runtime.processScheduledEvent?.(event, state, queue, rng, state.encounterDuration);
+          if (result?.handled) {
+            const damages = result.damages ?? (result.damage ? [result.damage] : []);
+            for (const damage of damages) {
+              if (damage.amount <= 0) {
+                continue;
+              }
+              emitDirectDamage(
+                damage.spellId,
+                damage.amount,
+                damage.isCrit,
+                state.currentTime,
+              );
+            }
           }
           break;
         }
@@ -151,27 +194,19 @@ export function createSimEventProcessor(
           break;
         }
 
-        case EventType.TIGEREYE_BREW_TICK: {
-          if (state.hasTalent('tigereye_brew')) {
-            const current = state.getBuffStacks('tigereye_brew_1');
-            if (current < 20) {
-              state.applyBuff('tigereye_brew_1', 120, current + 1);
-            }
-            const period = 8 / (1 + state.getHastePercent() / 100);
-            queue.push({ type: EventType.TIGEREYE_BREW_TICK, time: state.currentTime + period });
+        case EventType.CAST_START: {
+          if (event.duration && config.onChannelStart) {
+            config.onChannelStart(event.spellId, event.time, event.duration);
           }
           break;
         }
 
-        case EventType.COMBAT_WISDOM_TICK: {
-          if (state.hasTalent('combat_wisdom')) {
-            state.applyBuff('combat_wisdom', state.encounterDuration - state.currentTime);
-            const nextTick = state.currentTime + 15;
-            state.nextCombatWisdomAt = nextTick;
-            if (nextTick < state.encounterDuration) {
-              queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
-            }
+        case EventType.ABILITY_CAST: {
+          const result = processAbilityCast(event, state, queue, rng);
+          if (result.success && result.damage > 0) {
+            emitDirectDamage(event.spellId, result.damage, result.isCrit, state.currentTime);
           }
+          config.onChannelEnd?.();
           break;
         }
 
@@ -181,8 +216,6 @@ export function createSimEventProcessor(
         case EventType.GCD_READY:
         case EventType.ENERGY_CAP_CHECK:
         case EventType.QUEUED_ABILITY_FIRE:
-        case EventType.ABILITY_CAST:
-          // No-op
           break;
       }
 

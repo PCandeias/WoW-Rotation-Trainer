@@ -14,8 +14,10 @@ import type {
   RunAnalysisReport,
   SpellTimelineChart,
   SpecAnalysisProfile,
+  TargetDebuffUptimeRow,
 } from './types';
-import { MONK_WW_BUFFS, MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
+import { getResourceWasteMetricsForSpec } from './specResourceMetrics';
+import type { BuffDef, SpellDef } from '@core/data';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 
 const DAMAGE_BREAKDOWN_SOURCE_ALIASES: Readonly<Record<string, string>> = {
@@ -24,6 +26,10 @@ const DAMAGE_BREAKDOWN_SOURCE_ALIASES: Readonly<Record<string, string>> = {
 };
 
 function titleCaseSpellId(spellId: string): string {
+  const sharedSpell = SHARED_PLAYER_SPELLS.get(spellId);
+  if (sharedSpell?.displayName) {
+    return sharedSpell.displayName;
+  }
   return spellId
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -81,9 +87,17 @@ function buildCastCountsBySpell(trace: RawRunTrace): Map<string, number> {
   return counts;
 }
 
-function resolveDamageBreakdownSpellId(sourceSpellId: string): string | null {
+interface AnalysisDataRegistry {
+  spellbook: ReadonlyMap<string, SpellDef>;
+  buffbook: ReadonlyMap<string, BuffDef>;
+}
+
+function resolveDamageBreakdownSpellId(
+  sourceSpellId: string,
+  spellbook: ReadonlyMap<string, SpellDef>,
+): string | null {
   const spellId = DAMAGE_BREAKDOWN_SOURCE_ALIASES[sourceSpellId] ?? sourceSpellId;
-  const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
+  const spell = spellbook.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
   return spell ? spellId : null;
 }
 
@@ -96,7 +110,10 @@ function createEmptyDamageSide(): AbilityDamageBreakdownSide {
   };
 }
 
-function buildDamageBreakdownSide(trace: RawRunTrace): Map<string, AbilityDamageBreakdownSide> {
+function buildDamageBreakdownSide(
+  trace: RawRunTrace,
+  spellbook: ReadonlyMap<string, SpellDef>,
+): Map<string, AbilityDamageBreakdownSide> {
   const sideBySpellId = new Map<string, AbilityDamageBreakdownSide>();
   const castCounts = buildCastCountsBySpell(trace);
 
@@ -105,7 +122,7 @@ function buildDamageBreakdownSide(trace: RawRunTrace): Map<string, AbilityDamage
       continue;
     }
 
-    const displaySpellId = resolveDamageBreakdownSpellId(sourceSpellId);
+    const displaySpellId = resolveDamageBreakdownSpellId(sourceSpellId, spellbook);
     if (!displaySpellId) {
       continue;
     }
@@ -131,9 +148,13 @@ function buildDamageBreakdownSide(trace: RawRunTrace): Map<string, AbilityDamage
   return sideBySpellId;
 }
 
-function buildDamageBreakdown(player: RawRunTrace, trainer: RawRunTrace): AbilityDamageBreakdownRow[] {
-  const playerBreakdown = buildDamageBreakdownSide(player);
-  const trainerBreakdown = buildDamageBreakdownSide(trainer);
+function buildDamageBreakdown(
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+  spellbook: ReadonlyMap<string, SpellDef>,
+): AbilityDamageBreakdownRow[] {
+  const playerBreakdown = buildDamageBreakdownSide(player, spellbook);
+  const trainerBreakdown = buildDamageBreakdownSide(trainer, spellbook);
   const spellIds = new Set<string>([
     ...playerBreakdown.keys(),
     ...trainerBreakdown.keys(),
@@ -155,18 +176,55 @@ function buildDamageBreakdown(player: RawRunTrace, trainer: RawRunTrace): Abilit
 }
 
 function buildResourceWasteSeries(player: RawRunTrace, trainer: RawRunTrace): ResourceWasteChartPoint[] {
-  const length = Math.max(player.wasteTimelineBySecond.energy.length, trainer.wasteTimelineBySecond.energy.length);
+  const wasteMetrics = getResourceWasteMetricsForSpec(trainer.specId);
+  if (wasteMetrics.length === 0) {
+    return [];
+  }
+  const length = Math.max(
+    ...wasteMetrics.flatMap((metric) => [
+      player.wasteTimelineBySecond[metric.key]?.length ?? 0,
+      trainer.wasteTimelineBySecond[metric.key]?.length ?? 0,
+    ]),
+  );
   const points: ResourceWasteChartPoint[] = [];
   for (let index = 0; index < length; index += 1) {
-    points.push({
-      time: index,
-      playerChi: player.wasteTimelineBySecond.chi[index] ?? 0,
-      trainerChi: trainer.wasteTimelineBySecond.chi[index] ?? 0,
-      playerEnergy: player.wasteTimelineBySecond.energy[index] ?? 0,
-      trainerEnergy: trainer.wasteTimelineBySecond.energy[index] ?? 0,
-    });
+    const point: ResourceWasteChartPoint = { time: index };
+    for (const metric of wasteMetrics) {
+      point[metric.playerSeriesKey] = player.wasteTimelineBySecond[metric.key]?.[index] ?? 0;
+      point[metric.trainerSeriesKey] = trainer.wasteTimelineBySecond[metric.key]?.[index] ?? 0;
+    }
+    points.push(point);
   }
   return points;
+}
+
+function buildTargetDebuffUptimeRows(
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+): TargetDebuffUptimeRow[] {
+  const buffIds = new Set([
+    ...Object.keys(player.targetDebuffUptimes),
+    ...Object.keys(trainer.targetDebuffUptimes),
+  ]);
+
+  return [...buffIds]
+    .map((buffId) => {
+      const playerSeconds = player.targetDebuffUptimes[buffId] ?? 0;
+      const trainerSeconds = trainer.targetDebuffUptimes[buffId] ?? 0;
+      return {
+        buffId,
+        playerSeconds,
+        trainerSeconds,
+        playerRatio: player.encounterDuration > 0 ? playerSeconds / player.encounterDuration : 0,
+        trainerRatio: trainer.encounterDuration > 0 ? trainerSeconds / trainer.encounterDuration : 0,
+      };
+    })
+    .filter((row) => row.playerSeconds > 0 || row.trainerSeconds > 0)
+    .sort(
+      (left, right) => (
+        Math.max(right.playerSeconds, right.trainerSeconds) - Math.max(left.playerSeconds, left.trainerSeconds)
+      ) || left.buffId.localeCompare(right.buffId),
+    );
 }
 
 function titleCaseBuffId(buffId: string): string {
@@ -200,10 +258,27 @@ function buildCastCount(trace: RawRunTrace, spellId: string): number {
   return trace.casts.filter((entry) => entry.spellId === spellId).length;
 }
 
-function buildAplFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
+function buildAplFindings(
+  profile: SpecAnalysisProfile,
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+  registry: AnalysisDataRegistry,
+): AnalysisFinding[] {
   const grouped = new Map<string, { actualCounts: Map<string, number>; times: number[] }>();
   for (const cast of player.casts) {
     if (!cast.recommendedSpellId || cast.recommendedSpellId === cast.spellId) {
+      continue;
+    }
+
+    if (
+      !isOnGcdSpell(cast.recommendedSpellId, registry.spellbook)
+      && !isOnGcdSpell(cast.spellId, registry.spellbook)
+    ) {
+      continue;
+    }
+
+    const playerState = buildDecisionStateForCast(profile, player, cast, registry);
+    if (profile.shouldReportRecommendationMismatch?.(cast.recommendedSpellId, cast.spellId, playerState) === false) {
       continue;
     }
 
@@ -315,7 +390,7 @@ function buildCooldownAndAbilityFindings(profile: SpecAnalysisProfile, player: R
         'cooldown',
         spellId,
         buildCastCount(player, spellId),
-        trainer.damageBySpell[spellId]?.casts ?? 0,
+        trainer.damageBySpell[spellId]?.casts ?? buildCastCount(trainer, spellId),
         trainer,
       );
     if (finding) {
@@ -354,7 +429,12 @@ function buildCooldownAndAbilityFindings(profile: SpecAnalysisProfile, player: R
   return findings;
 }
 
-function buildProcFindings(profile: SpecAnalysisProfile, player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
+function buildProcFindings(
+  profile: SpecAnalysisProfile,
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+  registry: AnalysisDataRegistry,
+): AnalysisFinding[] {
   return (profile.procAnalysisRules ?? []).flatMap((rule) => {
     const findings: AnalysisFinding[] = [];
     const timeline = player.buffStacksTimelineBySecond[rule.buffId];
@@ -403,7 +483,7 @@ function buildProcFindings(profile: SpecAnalysisProfile, player: RawRunTrace, tr
       const misuseSpellId = rule.misuseSpellId;
       const misuseTimes = player.casts
         .filter((cast) => cast.spellId === misuseSpellId)
-        .filter((cast) => !hasTrackedBuff(buildDecisionStateForCast(profile, player, cast), rule.buffId))
+        .filter((cast) => !hasTrackedBuff(buildDecisionStateForCast(profile, player, cast, registry), rule.buffId))
         .filter((cast) => cast.recommendedSpellId !== misuseSpellId)
         .map((cast) => cast.time);
 
@@ -460,23 +540,43 @@ function buildFinisherFindings(profile: SpecAnalysisProfile, player: RawRunTrace
 }
 
 function buildResourceFinding(player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
-  const chiDelta = Math.max(0, lastValue(player.wasteTimelineBySecond.chi) - lastValue(trainer.wasteTimelineBySecond.chi));
-  const energyDelta = Math.max(0, lastValue(player.wasteTimelineBySecond.energy) - lastValue(trainer.wasteTimelineBySecond.energy));
-  if (chiDelta < 1 && energyDelta < 15) {
+  const wasteMetrics = getResourceWasteMetricsForSpec(trainer.specId);
+  if (wasteMetrics.length === 0) {
     return [];
   }
 
-  const estimatedDpsLoss = Math.round(chiDelta * 180 + energyDelta * 12);
+  const deltas = wasteMetrics.map((metric) => ({
+    metric,
+    delta: Math.max(
+      0,
+      lastValue(player.wasteTimelineBySecond[metric.key] ?? []) - lastValue(trainer.wasteTimelineBySecond[metric.key] ?? []),
+    ),
+  }));
+  if (deltas.every(({ metric, delta }) => delta < metric.minorThreshold)) {
+    return [];
+  }
+
+  const estimatedDpsLoss = Math.round(deltas.reduce((sum, { metric, delta }) => sum + delta * metric.dpsLossPerUnit, 0));
+  const occurrences = Math.max(1, Math.round(deltas.reduce((sum, { metric, delta }) => sum + delta / metric.occurrenceWeight, 0)));
+  const severity = deltas.some(({ metric, delta }) => delta >= metric.majorThreshold) ? 'major' : 'medium';
+  const summary = deltas
+    .filter(({ metric, delta }) => delta >= metric.minorThreshold)
+    .map(({ metric, delta }) => `${delta.toFixed(1)} more ${metric.summaryLabel}`)
+    .join(' and ');
+
   return [
     {
       id: 'resource-waste',
       category: 'resource',
       title: 'Resource waste cost damage',
-      summary: `You wasted ${chiDelta.toFixed(1)} more Chi and ${energyDelta.toFixed(1)} more Energy than the trainer benchmark.`,
-      fix: 'Spend Chi before it caps and use filler earlier when Energy is about to overflow.',
+      summary: `You wasted ${summary} than the trainer benchmark.`,
+      fix: deltas
+        .filter(({ metric, delta }) => delta >= metric.minorThreshold)
+        .map(({ metric }) => metric.fixHint)
+        .join(' '),
       estimatedDpsLoss,
-      occurrences: Math.max(1, Math.round(chiDelta + energyDelta / 25)),
-      severity: chiDelta >= 2 || energyDelta >= 30 ? 'major' : 'medium',
+      occurrences,
+      severity,
       evidence: [],
     },
   ];
@@ -511,7 +611,12 @@ function resolveTraceTotalDamage(trace: RawRunTrace): number {
   return Number.isFinite(lastCumulativeDamage) ? lastCumulativeDamage : trace.totalDamage;
 }
 
-function buffStateAtTime(trace: RawRunTrace, time: number, relevantBuffIds: readonly string[]): AnalysisActiveBuffState[] {
+function buffStateAtTime(
+  trace: RawRunTrace,
+  time: number,
+  relevantBuffIds: readonly string[],
+  buffbook: ReadonlyMap<string, BuffDef>,
+): AnalysisActiveBuffState[] {
   if (relevantBuffIds.length === 0) {
     return [];
   }
@@ -525,7 +630,7 @@ function buffStateAtTime(trace: RawRunTrace, time: number, relevantBuffIds: read
         return { buffId, stacks };
       }
 
-      const buffDef = MONK_WW_BUFFS.get(buffId);
+      const buffDef = buffbook.get(buffId);
       const timelineIndex = Math.max(0, Math.min(timeline.length - 1, Math.floor(time)));
       let activeSinceIndex = timelineIndex;
       while (activeSinceIndex > 0 && (timeline[activeSinceIndex - 1] ?? 0) > 0) {
@@ -621,10 +726,11 @@ function buildDecisionState(
   profile: SpecAnalysisProfile,
   trace: RawRunTrace,
   time: number,
+  registry: AnalysisDataRegistry,
 ): AnalysisDecisionState {
   const snapshotTime = Math.max(0, time - 0.001);
   const topRecommendations = recommendationsAtTime(trace, snapshotTime).slice(0, 3);
-  const activeBuffs = buffStateAtTime(trace, snapshotTime, profile.getTrackedBuffIds());
+  const activeBuffs = buffStateAtTime(trace, snapshotTime, profile.getTrackedBuffIds(), registry.buffbook);
   const activeCooldowns = normalizeCooldownDisplayStates(
     profile.getEssentialCooldownSpellIds(),
     activeBuffs,
@@ -670,12 +776,13 @@ function buildDecisionStateForCast(
   profile: SpecAnalysisProfile,
   trace: RawRunTrace,
   cast: RawRunTrace['casts'][number],
+  registry: AnalysisDataRegistry,
 ): AnalysisDecisionState {
   if (cast.preCastState) {
     return filterRecordedDecisionState(profile, cast.preCastState);
   }
 
-  return buildDecisionState(profile, trace, cast.time);
+  return buildDecisionState(profile, trace, cast.time, registry);
 }
 
 function findLatestCastBeforeTime(
@@ -702,6 +809,7 @@ function hasCastNearTime(trace: RawRunTrace, spellId: string, time: number, wind
 function buildExpiredProcMistakes(
   profile: SpecAnalysisProfile,
   player: RawRunTrace,
+  registry: AnalysisDataRegistry,
 ): ExactMistakeEntry[] {
   const procRules = [
     {
@@ -712,7 +820,7 @@ function buildExpiredProcMistakes(
       fix: 'Track `Dance of Chi-Ji` more aggressively and spend it before it expires or gets crowded out by other buttons.',
     },
     {
-      buffId: 'blackout_reinforcement',
+      buffId: 'combo_breaker',
       expectedSpellId: 'blackout_kick',
       title: 'A Blackout Kick! proc expired unused',
       summary: 'You let `Blackout Kick!` expire instead of spending the free `Blackout Kick` for damage and cooldown reduction.',
@@ -748,7 +856,7 @@ function buildExpiredProcMistakes(
         title: rule.title,
         summary: rule.summary,
         fix: rule.fix,
-        playerState: buildDecisionState(profile, player, expiryTime),
+        playerState: buildDecisionState(profile, player, expiryTime, registry),
       });
     }
 
@@ -760,6 +868,7 @@ function buildExactMistakes(
   profile: SpecAnalysisProfile,
   player: RawRunTrace,
   trainer: RawRunTrace,
+  registry: AnalysisDataRegistry,
 ): ExactMistakeEntry[] {
   const exactMistakeSpellIds = new Set(profile.exactMistakeSpellIds);
   const recommendationMistakes = player.casts
@@ -767,14 +876,18 @@ function buildExactMistakes(
       (cast) => cast.recommendedSpellId
         && cast.recommendedSpellId !== cast.spellId
         && exactMistakeSpellIds.has(cast.recommendedSpellId)
-        && isOnGcdSpell(cast.spellId),
+        && isOnGcdSpell(cast.recommendedSpellId, registry.spellbook)
+        && isOnGcdSpell(cast.spellId, registry.spellbook),
     )
     .map<ExactMistakeEntry | null>((cast) => {
       const expectedSpellId = cast.recommendedSpellId;
       if (!expectedSpellId) {
         return null;
       }
-      const playerState = buildDecisionStateForCast(profile, player, cast);
+      const playerState = buildDecisionStateForCast(profile, player, cast, registry);
+      if (profile.shouldReportRecommendationMismatch?.(expectedSpellId, cast.spellId, playerState) === false) {
+        return null;
+      }
       const explanation = profile.explainExactDecision?.(expectedSpellId, cast.spellId, playerState)
         ?? profile.explainRecommendedSpell(expectedSpellId);
 
@@ -795,7 +908,7 @@ function buildExactMistakes(
     })
     .filter((entry): entry is ExactMistakeEntry => entry !== null);
 
-  return [...recommendationMistakes, ...buildExpiredProcMistakes(profile, player)]
+  return [...recommendationMistakes, ...buildExpiredProcMistakes(profile, player, registry)]
     .sort((left, right) => {
       const rightDamage = getAverageSpellDamage(trainer, right.expectedSpellId);
       const leftDamage = getAverageSpellDamage(trainer, left.expectedSpellId);
@@ -804,8 +917,8 @@ function buildExactMistakes(
     .slice(0, 8);
 }
 
-function isOnGcdSpell(spellId: string): boolean {
-  const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
+function isOnGcdSpell(spellId: string, spellbook: ReadonlyMap<string, SpellDef>): boolean {
+  const spell = spellbook.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
   return spell?.isOnGcd === true;
 }
 
@@ -867,6 +980,7 @@ export function buildRunAnalysisReport(
   player: RawRunTrace,
   trainer: RawRunTrace,
   profile: SpecAnalysisProfile,
+  registry: AnalysisDataRegistry,
 ): RunAnalysisReport {
   const scoreDuration = Math.max(
     0.1,
@@ -879,11 +993,11 @@ export function buildRunAnalysisReport(
   const playerDps = playerTotalDamage / scoreDuration;
   const trainerDps = trainerTotalDamage / scoreDuration;
   const ratio = trainerDps > 0 ? playerDps / trainerDps : 0;
-  const exactMistakes = scoreDuration <= 30 ? [] : buildExactMistakes(profile, player, trainer);
+  const exactMistakes = scoreDuration <= 30 ? [] : buildExactMistakes(profile, player, trainer, registry);
   const findings = [
     ...buildCooldownAndAbilityFindings(profile, player, trainer),
-    ...buildAplFindings(profile, player, trainer),
-    ...buildProcFindings(profile, player, trainer),
+    ...buildAplFindings(profile, player, trainer, registry),
+    ...buildProcFindings(profile, player, trainer, registry),
     ...buildFinisherFindings(profile, player, trainer),
     ...buildResourceFinding(player, trainer),
     ...profile.analyzeSetup(player, trainer),
@@ -910,7 +1024,8 @@ export function buildRunAnalysisReport(
       cooldownUsage: buildCooldownRows(profile, player, trainer),
       resourceWaste: buildResourceWasteSeries(player, trainer),
     },
-    damageBreakdown: buildDamageBreakdown(player, trainer),
+    damageBreakdown: buildDamageBreakdown(player, trainer, registry.spellbook),
+    targetDebuffUptimes: buildTargetDebuffUptimeRows(player, trainer),
     exactMistakes,
     findings,
   };

@@ -22,7 +22,7 @@ const ENCOUNTER_MUSIC_TITLE_OVERRIDES: Readonly<Record<string, string>> = {
  * Files live in public/assets/ so Vite serves them without hashing or
  * processing through the module transform pipeline.
  */
-const BASE = import.meta.env.BASE_URL ?? './';
+const BASE = import.meta.env.BASE_URL ?? '/';
 const MP3_FILENAMES = [
   'Across_the_Ancient_Canopy.mp3',
   'Apex_of_the_Siege.mp3',

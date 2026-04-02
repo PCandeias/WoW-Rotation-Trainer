@@ -20,13 +20,18 @@ export function getSpellInputStatus(
 
   return {
     failReason,
-    canPress: failReason === undefined || failReason === 'on_gcd' || failReason === 'channel_locked',
+    canPress:
+      failReason === undefined
+      || failReason === 'on_gcd'
+      || failReason === 'channel_locked'
+      || failReason === 'cast_locked',
     visuallyUsable:
       hasEnoughResources
       && (
         failReason === undefined
         || failReason === 'on_gcd'
         || failReason === 'channel_locked'
+        || failReason === 'cast_locked'
         || failReason === 'on_cooldown'
       ),
   };

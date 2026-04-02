@@ -84,6 +84,7 @@ export function ConsumableTracker({
               charges={chargeInfo ? { current: chargeInfo.current, max: chargeInfo.max } : undefined}
               gcdRemaining={spell?.isOnGcd ? gcdRemaining : 0}
               gcdTotal={gcdTotal}
+              tooltipText={spell?.id !== undefined ? `${def.displayName}\nSpell ID: ${spell.id}` : def.displayName}
             />
           );
         })}

@@ -15,6 +15,7 @@ export interface SpellDef {
   id: number;
   name: string;
   displayName: string;
+  castTime?: number;
   energyCost: number;
   chiCost: number;
   chiGain: number;
@@ -27,6 +28,7 @@ export interface SpellDef {
   requiresGcdReady?: boolean;
   usableDuringCurrentGcd?: boolean;
   apCoefficient: number;
+  spCoefficient?: number;
   baseDmgMin: number;
   baseDmgMax: number;
   buffApplied?: string;

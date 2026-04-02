@@ -17,9 +17,17 @@ import {
   ChallengeOverlay,
   ChallengeHud,
 } from '@ui/components';
-import { WW_ACTION_BAR, type ActionBarSlotDef } from '@ui/components/ActionBar';
-import { MONK_BUFF_REGISTRY, resolveMonkBuffIconName } from '@core/class_modules/monk/monk_buff_registry';
-import { MONK_WINDWALKER_TALENT_LOADOUT } from '@core/data/talentStringDecoder';
+import {
+  augmentActionBarSlots,
+  getVisibleActionBarSlots,
+  resolveActionBarButtonSpellIds,
+  type ActionBarSlotDef,
+} from '@ui/components/ActionBar';
+import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
+import { getBuffbookForProfileSpec } from '@core/data/specBuffbook';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
+import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
+import { getTalentLoadoutForProfileSpec } from '@core/data/talentStringDecoder';
 import { useSimulation, type CountdownValue } from '@ui/sim/useSimulation';
 import type { CharacterLoadout } from '@core/data/loadout';
 import type { GameStateSnapshot } from '@core/engine/gameState';
@@ -36,14 +44,26 @@ import {
   type TrainerMode,
   usesCompetitiveTrainerRules,
 } from '@ui/state/trainerSettings';
-import { TRACKED_BUFF_SPELL_IDS, buildTrackerBlacklist } from '@ui/components/trackerSpellIds';
+import { buildTrackerBlacklist } from '@ui/components/trackerSpellIds';
 import { LoadoutPanel } from './LoadoutPanel';
 import { normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 import { useChallengeMode } from '@ui/challenge/useChallengeMode';
 import type { RunAnalysisReport } from '@core/analysis';
+import { getProfileSpecForAnalysisSpecId } from '@core/analysis';
 import { usePostRunAnalysis } from '@ui/analysis/usePostRunAnalysis';
 import { useEncounterMusic } from '@ui/audio/useEncounterMusic';
 import { FIXED_SCENE_HEIGHT, FIXED_SCENE_WIDTH, useFixedSceneScale } from '@ui/utils/layoutScaling';
+import {
+  getDefaultPlayableTrainerSpecId,
+  getTrainerSpecDefinition,
+  getTrainerSpecUiDefaults,
+  type TrainerSpecId,
+} from '@ui/specs/specCatalog';
+import {
+  getBuffIconNameResolverForProfileSpec,
+  getBuffPresentationRegistryForProfileSpec,
+} from '@ui/specs/specBuffPresentation';
+import { getCooldownTrackerDefinitionsForProfileSpec } from '@ui/specs/specCooldownPresentation';
 
 const LazyEndScreen = React.lazy(() => import('./EndScreen'));
 
@@ -52,6 +72,7 @@ const LazyEndScreen = React.lazy(() => import('./EndScreen'));
 // ---------------------------------------------------------------------------
 
 export interface EncounterScreenProps {
+  selectedSpec?: TrainerSpecId;
   mode: TrainerMode;
   speedMultiplier?: number;
   challengeSettings?: ChallengeSettings;
@@ -99,6 +120,7 @@ export interface EncounterScreenProps {
  *   - DPS / timer overlay (top center)
  */
 export function EncounterScreen({
+  selectedSpec = getDefaultPlayableTrainerSpecId(),
   mode,
   speedMultiplier,
   challengeSettings,
@@ -117,6 +139,16 @@ export function EncounterScreen({
   hudSettings,
   resourcesAnchored = false,
 }: EncounterScreenProps): React.ReactElement {
+  const specDefinition = getTrainerSpecDefinition(selectedSpec);
+  const profileSpec = specDefinition.profileSpec;
+  const specUiDefaults = getTrainerSpecUiDefaults(selectedSpec);
+  const talentDefinition = getTalentLoadoutForProfileSpec(profileSpec);
+  const defaultProfile = getDefaultProfileForSpec(profileSpec);
+  const spellbook = getSpellbookForProfileSpec(profileSpec);
+  const buffbook = getBuffbookForProfileSpec(profileSpec);
+  const buffRegistry = getBuffPresentationRegistryForProfileSpec(profileSpec);
+  const buffIconNameResolver = getBuffIconNameResolverForProfileSpec(profileSpec);
+  const cooldownDefinitions = getCooldownTrackerDefinitionsForProfileSpec(profileSpec);
   const legacyBuffBlacklist = ['mystic_touch', 'chaos_brand', 'hunters_mark'];
   const {
     simState,
@@ -127,12 +159,14 @@ export function EncounterScreen({
     cancelChannel,
     updateTalents,
     updateLoadout,
+    dismissTutorialPrompt,
     pause,
     resume,
     togglePause,
     restart,
     finishEncounterEarly,
   } = useSimulation({
+    selectedSpec,
     mode,
     speedMultiplier,
     encounterDuration,
@@ -156,6 +190,7 @@ export function EncounterScreen({
     channelInfo,
     damageEvents,
     procHighlight,
+    tutorialPrompt,
     endReason,
     finalDuration,
   } = simState;
@@ -182,17 +217,67 @@ export function EncounterScreen({
     ...(hudSettings?.buffs.iconTracker.blacklistSpellIds ?? []),
     ...(hudSettings?.buffs.barTracker.blacklistSpellIds ?? []),
   ];
-  const buffBlacklist = buildTrackerBlacklist(TRACKED_BUFF_SPELL_IDS, [...new Set(combinedBuffBlacklistSpellIds)]);
+  const buffBlacklist = buildTrackerBlacklist(specUiDefaults.buffSpellIds, [...new Set(combinedBuffBlacklistSpellIds)]);
   const hudLayout = hudSettings?.layout;
   const actionBarConfigs = actionBarSettings ?? getDefaultTrainerSettings().actionBars;
+  const visibleActionBarSlots = useMemo(
+    () => (snapshot ? getVisibleActionBarSlots(snapshot, specUiDefaults.actionBarSlots, spellbook) : []),
+    [snapshot, specUiDefaults.actionBarSlots, spellbook],
+  );
   const renderedActionBars = useMemo(
-    () => (snapshot ? buildRenderedActionBars(actionBarConfigs) : []),
-    [actionBarConfigs, snapshot],
+    () => (snapshot ? buildRenderedActionBars(actionBarConfigs, visibleActionBarSlots) : []),
+    [actionBarConfigs, snapshot, visibleActionBarSlots],
   );
   const encounterInputMap = useMemo(
-    () => (snapshot ? buildEncounterInputMap(renderedActionBars, snapshot) : {}),
-    [renderedActionBars, snapshot],
+    () => (snapshot ? buildEncounterInputMap(renderedActionBars, snapshot, visibleActionBarSlots) : {}),
+    [renderedActionBars, snapshot, visibleActionBarSlots],
   );
+  const tutorialExpectedSpellId = tutorialPrompt?.expectedSpellId ?? null;
+  const tutorialActive = mode === 'tutorial' && tutorialPrompt !== null;
+  const tutorialExpectedSpellSequence = useMemo(
+    () => (
+      tutorialExpectedSpellId === null || snapshot === null
+        ? null
+        : findSpellSequenceForTutorial(renderedActionBars, visibleActionBarSlots, snapshot, tutorialExpectedSpellId)
+    ),
+    [renderedActionBars, snapshot, tutorialExpectedSpellId, visibleActionBarSlots],
+  );
+  const handleSpellInput = (spellId: string): void => {
+    if (!tutorialActive || tutorialExpectedSpellId === null) {
+      injectInput(spellId);
+      return;
+    }
+
+    if (spellId !== tutorialExpectedSpellId) {
+      return;
+    }
+
+    dismissTutorialPrompt();
+    resume();
+    injectInput(spellId);
+  };
+  const handleSpellSequence = (spellIds: readonly string[]): void => {
+    if (spellIds.length === 0) {
+      return;
+    }
+
+    if (!tutorialActive || tutorialExpectedSpellId === null) {
+      spellIds.forEach((spellId) => injectInput(spellId));
+      return;
+    }
+
+    if (!spellIds.includes(tutorialExpectedSpellId)) {
+      return;
+    }
+
+    dismissTutorialPrompt();
+    resume();
+    spellIds.forEach((spellId) => injectInput(spellId));
+  };
+  const handleResumeTutorial = (): void => {
+    dismissTutorialPrompt();
+    resume();
+  };
   const challengeValidKeys = useMemo(
     () => [...(challengeSettings?.validKeys ?? DEFAULT_CHALLENGE_VALID_KEYS)],
     [challengeSettings?.validKeys],
@@ -230,6 +315,12 @@ export function EncounterScreen({
         return;
       }
 
+      if (tutorialActive && event.code === 'Space') {
+        event.preventDefault();
+        handleResumeTutorial();
+        return;
+      }
+
       if (event.code === 'Space' && canManualPause && !loadoutOpen) {
         event.preventDefault();
         togglePause();
@@ -252,9 +343,7 @@ export function EncounterScreen({
       const spellIds = encounterInputMap[chord] ?? [];
       if (spellIds.length > 0) {
         event.preventDefault();
-        spellIds.forEach((spellId) => {
-          injectInput(spellId);
-        });
+        handleSpellSequence(spellIds);
         return;
       }
 
@@ -287,9 +376,7 @@ export function EncounterScreen({
       }
 
       event.preventDefault();
-      spellIds.forEach((spellId) => {
-        injectInput(spellId);
-      });
+      handleSpellSequence(spellIds);
     };
 
     const handleWheel = (event: WheelEvent): void => {
@@ -308,9 +395,7 @@ export function EncounterScreen({
       }
 
       event.preventDefault();
-      spellIds.forEach((spellId) => {
-        injectInput(spellId);
-      });
+      handleSpellSequence(spellIds);
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -327,10 +412,13 @@ export function EncounterScreen({
     challenge,
     challengeEnabled,
     encounterInputMap,
-    injectInput,
+    handleResumeTutorial,
+    handleSpellInput,
+    handleSpellSequence,
     loadoutOpen,
     restart,
     skipToNextTrack,
+    tutorialActive,
     togglePause,
   ]);
 
@@ -354,7 +442,7 @@ export function EncounterScreen({
   const reportedAnalysisRef = useRef<RunAnalysisReport | null>(null);
   const postRunAnalysis = usePostRunAnalysis({
     enabled: isEnded && analysisTrace !== null,
-    specId: 'monk_windwalker',
+    selectedSpec,
     encounterDuration: finalDuration ?? encounterDuration,
     activeEnemies: nTargets,
     talents,
@@ -607,6 +695,63 @@ export function EncounterScreen({
     pointerEvents: 'none',
   };
 
+  const tutorialOverlay: CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    background: 'rgba(18, 22, 28, 0.68)',
+    zIndex: 3,
+    pointerEvents: 'none',
+  };
+
+  const tutorialCard: CSSProperties = {
+    position: 'absolute',
+    top: 84,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: 420,
+    maxWidth: 'calc(100% - 32px)',
+    ...buildHudFrameStyle(),
+    padding: '16px 18px',
+    zIndex: 4,
+    pointerEvents: 'auto',
+    display: 'grid',
+    gap: 12,
+  };
+
+  const tutorialBadge: CSSProperties = {
+    justifySelf: 'start',
+    padding: '4px 8px',
+    borderRadius: 999,
+    background: 'rgba(247, 244, 163, 0.12)',
+    color: '#f7f4a3',
+    fontSize: '0.72rem',
+    fontFamily: FONTS.ui,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+  };
+
+  const tutorialList: CSSProperties = {
+    margin: 0,
+    paddingLeft: 18,
+    color: T.textBright,
+    display: 'grid',
+    gap: 6,
+    fontSize: '0.92rem',
+  };
+
+  const tutorialButtonRow: CSSProperties = {
+    display: 'flex',
+    gap: 10,
+    flexWrap: 'wrap',
+  };
+
+  const tutorialButton: CSSProperties = {
+    ...buildControlStyle({ tone: 'primary' }),
+    padding: '8px 12px',
+    fontSize: '0.8rem',
+  };
+
 
   const timeRemaining = Math.max(0, encounterDuration - simTime);
   const minutes = Math.floor(timeRemaining / 60);
@@ -630,6 +775,7 @@ export function EncounterScreen({
           dps={dps}
           totalDamage={snapshot.totalDamage}
           duration={finalDuration ?? encounterDuration}
+          profileSpec={profileSpec}
           mode={mode}
           analysisStatus={postRunAnalysis.status}
           analysisReport={postRunAnalysis.report}
@@ -715,6 +861,70 @@ export function EncounterScreen({
         {/* Floating combat text */}
         <FloatingCombatText events={visibleDamageEvents} anchorPosition={enemyAnchorPosition} />
 
+        {tutorialActive && (
+          <>
+            <div data-testid="tutorial-overlay" style={tutorialOverlay} />
+            <div data-testid="tutorial-prompt" style={tutorialCard}>
+              <div style={tutorialBadge}>{tutorialPrompt.phaseLabel}</div>
+              <div>
+                <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  Cast now
+                </div>
+                <div style={{ color: T.textBright, fontFamily: FONTS.display, fontSize: '1.3rem' }}>
+                  {getSpellLabel(tutorialPrompt.expectedSpellId, spellbook)}
+                </div>
+              </div>
+              <div>
+                <div style={{ color: T.textBright, fontWeight: 700, marginBottom: 4 }}>{tutorialPrompt.title}</div>
+                <div style={{ color: T.textDim, lineHeight: 1.45 }}>{tutorialPrompt.summary}</div>
+              </div>
+              <div>
+                <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  {tutorialPrompt.phaseLabel} list
+                </div>
+                <ol style={tutorialList}>
+                  {tutorialPrompt.topRecommendations.map((spellId) => (
+                    <li
+                      key={spellId}
+                      style={{ color: spellId === tutorialPrompt.expectedSpellId ? '#f7f4a3' : T.textBright }}
+                    >
+                      {getSpellLabel(spellId, spellbook)}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+              <div>
+                <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  Why this spell
+                </div>
+                <div style={{ color: T.textDim, lineHeight: 1.45 }}>{tutorialPrompt.fix}</div>
+              </div>
+              <div style={tutorialButtonRow}>
+                <button
+                  type="button"
+                  style={tutorialButton}
+                  onClick={(): void => {
+                    if (tutorialExpectedSpellSequence !== null) {
+                      handleSpellSequence(tutorialExpectedSpellSequence);
+                      return;
+                    }
+                    handleSpellInput(tutorialPrompt.expectedSpellId);
+                  }}
+                >
+                  Cast highlighted spell
+                </button>
+                <button
+                  type="button"
+                  style={{ ...buildControlStyle({ tone: 'ghost' }), padding: '8px 12px', fontSize: '0.8rem' }}
+                  onClick={handleResumeTutorial}
+                >
+                  Resume
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
         {/* Top stat bar */}
         <div style={topBar}>
           <div style={statPill}>
@@ -799,7 +1009,7 @@ export function EncounterScreen({
         </button>
 
         {/* Recommendation queue */}
-        {showRecommendations && (
+        {showRecommendations && !tutorialActive && (
           <div style={recQueuePos}>
             <RecommendationQueue
               recommendations={recommendations}
@@ -818,6 +1028,7 @@ export function EncounterScreen({
               <PlayerFrame
                 gameState={snapshot}
                 currentTime={simTime}
+                profileSpec={profileSpec}
                 healthOverride={challengeEnabled ? {
                   current: challenge.challenge.health,
                   max: challenge.challenge.maxHealth,
@@ -827,11 +1038,12 @@ export function EncounterScreen({
             </div>
             {!resourcesAnchored && (
               <div data-testid="encounter-resource-frame" style={buildHudGroupStyle(hudLayout?.resourceFrame ?? { xPct: 50, yPct: 52 })}>
-                <EnergyChiDisplay gameState={snapshot} currentTime={simTime} />
+                <EnergyChiDisplay gameState={snapshot} currentTime={simTime} profileSpec={profileSpec} />
               </div>
             )}
             <div data-testid="encounter-target-frame" style={buildHudGroupStyle(hudLayout?.targetFrame ?? { xPct: 66, yPct: 52 })}>
               <TargetFrame
+                profileSpec={profileSpec}
                 gameState={snapshot}
                 totalDamage={snapshot.totalDamage}
                 encounterDuration={encounterDuration}
@@ -847,8 +1059,9 @@ export function EncounterScreen({
           <BuffTracker
             gameState={snapshot}
             currentTime={simTime}
-            registry={MONK_BUFF_REGISTRY}
-            iconNameResolver={resolveMonkBuffIconName}
+            registry={buffRegistry}
+            iconNameResolver={buffIconNameResolver}
+            spellIdsByBuffId={specUiDefaults.buffSpellIds}
             blacklist={legacyBuffBlacklist}
             maxPerRow={12}
           />
@@ -858,8 +1071,9 @@ export function EncounterScreen({
           <BuffTracker
             gameState={snapshot}
             currentTime={simTime}
-            registry={MONK_BUFF_REGISTRY}
-            iconNameResolver={resolveMonkBuffIconName}
+            registry={buffRegistry}
+            iconNameResolver={buffIconNameResolver}
+            spellIdsByBuffId={specUiDefaults.buffSpellIds}
             blacklist={buffBlacklist}
             whitelist={hudSettings?.buffs.iconTracker.trackedEntryIds}
             maxPerRow={hudSettings?.buffs.iconTracker.iconsPerRow ?? 12}
@@ -872,6 +1086,10 @@ export function EncounterScreen({
             <BuffBarTracker
               gameState={snapshot}
               currentTime={simTime}
+              registry={buffRegistry}
+              buffbook={buffbook}
+              iconNameResolver={buffIconNameResolver}
+              spellIdsByBuffId={specUiDefaults.buffSpellIds}
               blacklist={buffBlacklist}
               whitelist={hudSettings?.buffs.barTracker.trackedEntryIds}
               containerStyle={{ width: 320 }}
@@ -886,6 +1104,8 @@ export function EncounterScreen({
               currentTime={simTime}
               showEssential
               showUtility={false}
+              spellbook={spellbook}
+              cooldownDefinitions={cooldownDefinitions}
               essentialTrackedIds={hudSettings?.cooldowns.essential.trackedEntryIds}
               essentialIconsPerRow={hudSettings?.cooldowns.essential.iconsPerRow}
               spellInputStatus={spellInputStatus}
@@ -900,6 +1120,8 @@ export function EncounterScreen({
               currentTime={simTime}
               showEssential={false}
               showUtility
+              spellbook={spellbook}
+              cooldownDefinitions={cooldownDefinitions}
               utilityTrackedIds={hudSettings?.cooldowns.utility.trackedEntryIds}
               utilityIconsPerRow={hudSettings?.cooldowns.utility.iconsPerRow}
               spellInputStatus={spellInputStatus}
@@ -929,6 +1151,7 @@ export function EncounterScreen({
             totalTime={channelInfo.totalTime}
             progress={channelInfo.progress}
             remainingTime={channelInfo.remainingTime}
+            spellbook={spellbook}
           />
         </div>
 
@@ -938,14 +1161,20 @@ export function EncounterScreen({
         <div
           key={actionBar.id}
           data-testid={`encounter-action-bar-${actionBar.id}`}
-          style={buildHudGroupStyle(hudLayout?.[actionBar.layoutKey] ?? { xPct: 50, yPct: 93 })}
+          style={{
+            ...buildHudGroupStyle(hudLayout?.[actionBar.layoutKey] ?? { xPct: 50, yPct: 93 }),
+            zIndex: tutorialActive ? 4 : undefined,
+          }}
         >
           <ActionBar
             gameState={snapshot}
             spellInputStatus={spellInputStatus}
             recommendedAbility={showRecommendations ? (recommendations[0] ?? null) : null}
             showRecommendations={showRecommendations}
-            onAbilityPress={injectInput}
+            focusedSpellId={tutorialExpectedSpellId}
+            dimNonFocusedSpells={tutorialActive}
+            onAbilityPress={handleSpellInput}
+            onAbilitySequencePress={handleSpellSequence}
             buttons={actionBar.buttons}
             totalButtons={actionBar.config.buttonCount}
             enableGlobalKeybinds={false}
@@ -953,6 +1182,7 @@ export function EncounterScreen({
             rows={Math.max(1, Math.ceil(Math.max(1, actionBar.config.buttonCount) / actionBar.config.buttonsPerRow))}
             slotsPerRow={actionBar.config.buttonsPerRow}
             slots={actionBar.slots}
+            spellbook={spellbook}
             ariaLabel={actionBar.label}
           />
         </div>
@@ -961,7 +1191,8 @@ export function EncounterScreen({
 
       {loadoutOpen && (
         <LoadoutPanel
-          definition={MONK_WINDWALKER_TALENT_LOADOUT}
+          definition={talentDefinition}
+          defaultProfile={defaultProfile}
           talents={talents}
           talentRanks={talentRanks}
           loadout={loadout}
@@ -989,6 +1220,18 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || tagName === 'input' || tagName === 'textarea' || tagName === 'select';
 }
 
+function getSpellLabel(spellId: string, spellbook: ReadonlyMap<string, { displayName?: string }>): string {
+  const spell = spellbook.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
+  if (spell?.displayName) {
+    return spell.displayName;
+  }
+
+  return spellId
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
 function buildHudGroupStyle(position?: { xPct: number; yPct: number; scale?: number }): CSSProperties {
   return {
     position: 'absolute',
@@ -1000,7 +1243,10 @@ function buildHudGroupStyle(position?: { xPct: number; yPct: number; scale?: num
   };
 }
 
-function buildRenderedActionBars(actionBarSettings: ActionBarSettings): {
+function buildRenderedActionBars(
+  actionBarSettings: ActionBarSettings,
+  actionBarSlots: readonly ActionBarSlotDef[],
+): {
   id: ActionBarId;
   label: string;
   layoutKey: keyof HudLayoutSettings;
@@ -1008,15 +1254,15 @@ function buildRenderedActionBars(actionBarSettings: ActionBarSettings): {
   slots: ActionBarSlotDef[];
   buttons: { spellIds: string[]; keybind: string }[];
 }[] {
-  const slotBySpellId = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot]));
-
   return ACTION_BAR_IDS.flatMap((actionBarId, index) => {
     const config = actionBarSettings.bars[actionBarId];
+    const augmentedSlots = augmentActionBarSlots(actionBarSlots, config.buttons);
+    const slotBySpellId = new Map(augmentedSlots.map((slot) => [slot.spellId, slot]));
 
     const buttons = config.buttons
       .slice(0, config.buttonCount)
       .flatMap((button) => {
-        const spellId = button.spellIds[0];
+        const spellId = resolveActionBarButtonSpellIds(button.spellIds, augmentedSlots, slotBySpellId)[0];
         const slot = spellId ? slotBySpellId.get(spellId) : undefined;
         if (!slot) {
           return [];
@@ -1028,7 +1274,7 @@ function buildRenderedActionBars(actionBarSettings: ActionBarSettings): {
       });
 
     const slots = buttons.flatMap((button) => {
-      const spellId = button.spellIds[0];
+      const spellId = resolveActionBarButtonSpellIds(button.spellIds, augmentedSlots, slotBySpellId)[0];
       const slot = spellId ? slotBySpellId.get(spellId) : undefined;
       return slot ? [slot] : [];
     });
@@ -1054,8 +1300,9 @@ function buildEncounterInputMap(
     slots: ActionBarSlotDef[];
   }[],
   snapshot: GameStateSnapshot,
+  actionBarSlots: readonly ActionBarSlotDef[],
 ): Record<string, string[]> {
-  const slotBySpellId = new Map(WW_ACTION_BAR.map((slot) => [slot.spellId, slot]));
+  const slotBySpellId = new Map(actionBarSlots.map((slot) => [slot.spellId, slot]));
   const inputMap: Record<string, string[]> = {};
 
   const isBuffActive = (buffId: string): boolean =>
@@ -1067,7 +1314,8 @@ function buildEncounterInputMap(
         return;
       }
 
-      const effectiveSpellIds = button.spellIds.flatMap((spellId) => {
+      const resolvedSpellIds = resolveActionBarButtonSpellIds(button.spellIds, actionBarSlots, slotBySpellId);
+      const effectiveSpellIds = resolvedSpellIds.flatMap((spellId) => {
         const slot = actionBar.slots.find((candidate) => candidate.spellId === spellId)
           ?? slotBySpellId.get(spellId);
         if (!slot) {
@@ -1087,6 +1335,42 @@ function buildEncounterInputMap(
   });
 
   return inputMap;
+}
+
+function findSpellSequenceForTutorial(
+  actionBars: {
+    buttons: { spellIds: string[]; keybind: string }[];
+    slots: ActionBarSlotDef[];
+  }[],
+  actionBarSlots: readonly ActionBarSlotDef[],
+  snapshot: GameStateSnapshot,
+  expectedSpellId: string,
+): string[] | null {
+  const slotBySpellId = new Map(actionBarSlots.map((slot) => [slot.spellId, slot]));
+  const isBuffActive = (buffId: string): boolean =>
+    (snapshot.buffs.get(buffId)?.expiresAt ?? 0) > snapshot.currentTime;
+
+  for (const actionBar of actionBars) {
+    for (const button of actionBar.buttons) {
+      const resolvedSpellIds = resolveActionBarButtonSpellIds(button.spellIds, actionBarSlots, slotBySpellId);
+      const effectiveSpellIds = resolvedSpellIds.flatMap((spellId) => {
+        const slot = actionBar.slots.find((candidate) => candidate.spellId === spellId)
+          ?? slotBySpellId.get(spellId);
+        if (!slot) {
+          return [];
+        }
+
+        const overrideActive = slot.procOverride ? isBuffActive(slot.procOverride.buffId) : false;
+        return [overrideActive ? (slot.procOverride?.spellId ?? slot.spellId) : slot.spellId];
+      });
+
+      if (effectiveSpellIds.includes(expectedSpellId)) {
+        return effectiveSpellIds;
+      }
+    }
+  }
+
+  return null;
 }
 
 function CountdownOverlay({ countdownValue }: { countdownValue: CountdownValue }): React.ReactElement {
@@ -1206,6 +1490,7 @@ export function AnalysisReviewScreen({
         dps={report.score.playerDps}
         totalDamage={report.score.playerTotalDamage}
         duration={duration}
+        profileSpec={getProfileSpecForAnalysisSpecId(report.benchmarkSignature.specId)}
         mode={mode}
         analysisStatus="ready"
         analysisReport={report}

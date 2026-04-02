@@ -62,7 +62,7 @@ export interface GameStateSnapshot {
   targetHealthPct: number;
   targetMaxHealth: number;
   /** Per-target state for multi-target encounters. */
-  targets: ReadonlyArray<Target>;
+  targets: readonly Target[];
 
   // Ability history
   prevGcdAbility: SpellId | null;
@@ -71,6 +71,7 @@ export interface GameStateSnapshot {
   // State maps (serialised)
   buffs: Map<string, BuffState>;
   cooldowns: Map<string, CooldownState>;
+  numericState: Map<string, number>;
   talents: Set<string>;
   talentRanks: Map<string, number>;
   trinkets: TrinketState[];
@@ -123,6 +124,15 @@ export interface GameStateStatHooks {
   getAttackPowerBonus?(state: IGameState): number;
   /** Additive bonus multiplier for AP (e.g. 0.04 = +4% AP). */
   getAttackPowerMultiplierBonus?(state: IGameState): number;
+  /** Flat additive spell power bonus. */
+  getSpellPowerBonus?(state: IGameState): number;
+  /** Additive bonus multiplier for spell power (e.g. 0.10 = +10% SP). */
+  getSpellPowerMultiplierBonus?(state: IGameState): number;
+  /**
+   * AP→SP bridge used by hybrid specs when SimC sets `spell_power_per_attack_power`.
+   * Example: Enhancement uses 1.01 from its spec passive.
+   */
+  getSpellPowerPerAttackPowerCoefficient?(state: IGameState): number;
   /**
    * Optional additive AP multiplier applied to the WEAPON_* AP term only.
    * Defaults to getAttackPowerMultiplierBonus when omitted.
@@ -143,6 +153,7 @@ export interface GameStateExecutionHooks {
   getUnregisteredChiCost?(state: GameState, spell: SpellDef, baseCost: number): number;
   getGlobalChiCostReduction?(state: GameState, spell: SpellDef): number;
   getUnregisteredCooldownDuration?(state: GameState, spell: SpellDef, baseDuration: number, hasteScalesCooldown: boolean): number;
+  getCooldownStateForQuery?(state: GameState, spellId: SpellId, baseState: CooldownState | undefined): CooldownState | undefined;
   getUnregisteredChannelDuration?(state: GameState, spell: SpellDef, baseDuration: number, hastePercent: number): number;
   getUnregisteredChannelTicks?(state: GameState, spell: SpellDef, baseTicks: number): number;
   getUnregisteredChannelTickOffsets?(
@@ -173,6 +184,14 @@ interface ActiveChannelState {
   trinketsBeforeStart?: TrinketState[];
 }
 
+interface ActiveCastState {
+  spellId: string;
+  castId: number;
+  startedAt: number;
+  endsAt: number;
+  isComboStrike: boolean;
+}
+
 function cloneCooldownState(cooldownState: CooldownState | undefined): CooldownState | undefined {
   if (!cooldownState) {
     return undefined;
@@ -183,6 +202,24 @@ function cloneCooldownState(cooldownState: CooldownState | undefined): CooldownS
     readyTimes: cooldownState.readyTimes ? [...cooldownState.readyTimes] : undefined,
     maxCharges: cooldownState.maxCharges,
     rechargeDuration: cooldownState.rechargeDuration,
+  };
+}
+
+function cloneBuffState(buff: BuffState): BuffState {
+  return {
+    expiresAt: buff.expiresAt,
+    stacks: buff.stacks,
+    instanceId: buff.instanceId,
+    stackTimers: [...buff.stackTimers],
+  };
+}
+
+function cloneTargetState(target: Target): Target {
+  return {
+    ...target,
+    debuffs: new Map(
+      [...target.debuffs.entries()].map(([debuffId, debuff]) => [debuffId, cloneBuffState(debuff)] as const),
+    ),
   };
 }
 
@@ -285,10 +322,15 @@ export class GameState implements IGameState {
   // === State maps ===
   buffs = new Map<string, BuffState>();
   cooldowns = new Map<string, CooldownState>();
+  numericState = new Map<string, number>();
   /** When each buff was most recently applied (for uptime tracking). */
   private _buffStart = new Map<string, number>();
   /** Accumulated uptime (seconds) for each buff from completed/expired periods. */
   private _buffUptimeAccum = new Map<string, number>();
+  /** When each primary-target debuff was most recently applied (for uptime tracking). */
+  private _primaryTargetDebuffStart = new Map<string, number>();
+  /** Accumulated uptime (seconds) for each primary-target debuff from completed/expired periods. */
+  private _primaryTargetDebuffUptimeAccum = new Map<string, number>();
   talents: Set<string>;
   talentRanks: Map<string, number> = new Map<string, number>();
   trinkets: TrinketState[] = [];
@@ -296,6 +338,7 @@ export class GameState implements IGameState {
   statHooks: GameStateStatHooks = {};
   damageHooks: IGameStateDamageHooks = {};
   executionHooks: GameStateExecutionHooks = {};
+  private nextTargetDebuffInstanceId = 1;
 
   // === Stats ===
   stats: CharacterStats;
@@ -347,6 +390,8 @@ export class GameState implements IGameState {
   // === Channel tracking ===
   private activeChannel: ActiveChannelState | null = null;
   private nextChannelId = 1;
+  private activeCast: ActiveCastState | null = null;
+  private nextCastId = 1;
 
   constructor(stats: CharacterStats, talents: Set<string>, options?: { assumeMysticTouch?: boolean }) {
     this.stats = resolveCharacterStatsWithTrainerDefaults(stats);
@@ -409,6 +454,132 @@ export class GameState implements IGameState {
       this.targetCurrentHealth = target.currentHealth;
       this.updateTargetHealthPct();
     }
+  }
+
+  private getTargetDebuffState(targetId: number, debuffId: string): BuffState | undefined {
+    return this.targets[targetId]?.debuffs.get(debuffId);
+  }
+
+  private accumulatePrimaryTargetDebuffUptime(debuffId: string, endTime: number): void {
+    const start = this._primaryTargetDebuffStart.get(debuffId);
+    if (start === undefined) {
+      return;
+    }
+
+    this._primaryTargetDebuffUptimeAccum.set(
+      debuffId,
+      (this._primaryTargetDebuffUptimeAccum.get(debuffId) ?? 0) + Math.max(0, endTime - start),
+    );
+  }
+
+  applyTargetDebuff(debuffId: string, duration: number, targetId = 0, stacks = 1): number {
+    const target = this.targets[targetId];
+    if (!target) {
+      return 0;
+    }
+
+    const now = this.currentTime;
+    const newExpiry = duration <= 0 ? 0 : now + duration;
+    const existing = target.debuffs.get(debuffId);
+    const instanceId = this.nextTargetDebuffInstanceId++;
+
+    if (existing) {
+      const activeTimers = existing.stackTimers.filter((t) => t === 0 || t > now);
+      const activeCount = activeTimers.length;
+      if (targetId === 0 && activeCount === 0) {
+        const previousEnd = existing.expiresAt === 0 ? now : Math.min(existing.expiresAt, now);
+        this.accumulatePrimaryTargetDebuffUptime(debuffId, previousEnd);
+      }
+
+      if (stacks > activeCount) {
+        const toAdd = stacks - activeCount;
+        for (let i = 0; i < toAdd; i += 1) {
+          activeTimers.push(newExpiry);
+        }
+      } else if (stacks < activeCount) {
+        activeTimers.sort((a, b) => {
+          if (a === 0) return 1;
+          if (b === 0) return -1;
+          return a - b;
+        });
+        activeTimers.splice(0, activeCount - stacks);
+        for (let i = 0; i < activeTimers.length; i += 1) {
+          activeTimers[i] = newExpiry;
+        }
+      } else {
+        for (let i = 0; i < activeTimers.length; i += 1) {
+          activeTimers[i] = newExpiry;
+        }
+      }
+
+      if (activeTimers.length === 0) {
+        if (targetId === 0) {
+          const previousEnd = existing.expiresAt === 0 ? now : Math.min(existing.expiresAt, now);
+          this.accumulatePrimaryTargetDebuffUptime(debuffId, previousEnd);
+          this._primaryTargetDebuffStart.delete(debuffId);
+        }
+        target.debuffs.delete(debuffId);
+        return 0;
+      }
+
+      const maxExpiry = activeTimers.includes(0) ? 0 : Math.max(...activeTimers);
+      target.debuffs.set(debuffId, {
+        expiresAt: maxExpiry,
+        stacks: activeTimers.length,
+        instanceId,
+        stackTimers: activeTimers,
+      });
+      if (targetId === 0 && activeCount === 0) {
+        this._primaryTargetDebuffStart.set(debuffId, now);
+      }
+      return instanceId;
+    }
+
+    const timers = Array.from({ length: stacks }, () => newExpiry);
+    target.debuffs.set(debuffId, {
+      expiresAt: newExpiry,
+      stacks,
+      instanceId,
+      stackTimers: timers,
+    });
+    if (targetId === 0) {
+      this._primaryTargetDebuffStart.set(debuffId, now);
+    }
+    return instanceId;
+  }
+
+  expireTargetDebuff(debuffId: string, targetId = 0): void {
+    const target = this.targets[targetId];
+    const debuff = target?.debuffs.get(debuffId);
+    if (targetId === 0 && debuff) {
+      const end = debuff.expiresAt === 0 ? this.currentTime : Math.min(debuff.expiresAt, this.currentTime);
+      this.accumulatePrimaryTargetDebuffUptime(debuffId, end);
+      this._primaryTargetDebuffStart.delete(debuffId);
+    }
+    target?.debuffs.delete(debuffId);
+  }
+
+  isTargetDebuffActive(debuffId: string, targetId = 0): boolean {
+    const debuff = this.getTargetDebuffState(targetId, debuffId);
+    return debuff !== undefined && (debuff.expiresAt === 0 || debuff.expiresAt > this.currentTime);
+  }
+
+  getTargetDebuffRemains(debuffId: string, targetId = 0): number {
+    const debuff = this.getTargetDebuffState(targetId, debuffId);
+    if (debuff === undefined) return 0;
+    if (debuff.expiresAt === 0) return 0;
+    if (debuff.expiresAt <= this.currentTime) return 0;
+    return Math.max(0, debuff.expiresAt - this.currentTime);
+  }
+
+  getTargetDebuffStacks(debuffId: string, targetId = 0): number {
+    const debuff = this.getTargetDebuffState(targetId, debuffId);
+    if (debuff === undefined) return 0;
+    return debuff.stackTimers.filter((t) => t === 0 || t > this.currentTime).length;
+  }
+
+  getTargetDebuffInstanceId(debuffId: string, targetId = 0): number {
+    return this.getTargetDebuffState(targetId, debuffId)?.instanceId ?? 0;
   }
 
   /**
@@ -510,6 +681,18 @@ export class GameState implements IGameState {
     return base + sharedBonus + hookBonus;
   }
 
+  getSpellPower(): number {
+    const apBridgeCoefficient = this.statHooks.getSpellPowerPerAttackPowerCoefficient?.(this) ?? 0;
+    if (apBridgeCoefficient > 0) {
+      return Math.round(apBridgeCoefficient * this.getWeaponMainHandAttackPower());
+    }
+
+    const multBonus = 1 + (this.statHooks.getSpellPowerMultiplierBonus?.(this) ?? 0);
+    const base = (this.stats.spellPower ?? 0) * multBonus;
+    const hookBonus = this.statHooks.getSpellPowerBonus?.(this) ?? 0;
+    return base + hookBonus;
+  }
+
   private getAttackPowerWeaponMultiplier(): number {
     const multBonus = 1 + (
       this.statHooks.getAttackPowerWeaponMultiplierBonus?.(this)
@@ -544,6 +727,19 @@ export class GameState implements IGameState {
     const weaponMainhandAP = Math.floor(mhDps * WEAPON_POWER_COEFFICIENT);
     const multiplier = this.getAttackPowerWeaponMultiplier();
     return this.getAttackPower() + Math.round(weaponMainhandAP * multiplier);
+  }
+
+  getWeaponOffHandAttackPower(): number {
+    const WEAPON_POWER_COEFFICIENT = 6;
+
+    if (this.stats.offHandSpeed <= 0) {
+      return 0;
+    }
+
+    const ohDps = (this.stats.offHandMinDmg + this.stats.offHandMaxDmg) / 2 / this.stats.offHandSpeed;
+    const weaponOffhandAP = Math.floor(ohDps * WEAPON_POWER_COEFFICIENT);
+    const multiplier = this.getAttackPowerWeaponMultiplier();
+    return this.getAttackPower() + Math.round(weaponOffhandAP * multiplier);
   }
 
   getWeaponBothAttackPower(): number {
@@ -683,7 +879,7 @@ export class GameState implements IGameState {
   }
 
   isCooldownReady(spellId: SpellId): boolean {
-    const cd = this.settleCooldownState(spellId);
+    const cd = this.resolveCooldownStateForQuery(spellId);
     if (cd === undefined) return true;
     if (cd.readyTimes && cd.maxCharges !== undefined) {
       const chargesReady = cd.maxCharges - cd.readyTimes.length > 0;
@@ -694,7 +890,7 @@ export class GameState implements IGameState {
   }
 
   getCooldownRemains(spellId: SpellId): number {
-    const cd = this.settleCooldownState(spellId);
+    const cd = this.resolveCooldownStateForQuery(spellId);
     if (cd === undefined) return 0;
     const lockoutRemains = Math.max(0, (cd.readyAt ?? this.currentTime) - this.currentTime);
     if (cd.readyTimes && cd.maxCharges !== undefined) {
@@ -714,6 +910,37 @@ export class GameState implements IGameState {
     if (cd === undefined || cd.readyTimes) return;
     if (cd.readyAt === undefined || cd.readyAt <= this.currentTime) return;
     cd.readyAt = Math.max(this.currentTime, cd.readyAt - deltaSeconds);
+    this.cooldowns.set(spellId, cd);
+  }
+
+  resetCooldown(spellId: SpellId): void {
+    const cd = this.settleCooldownState(spellId);
+    if (cd === undefined) return;
+    if (cd.readyTimes) {
+      cd.readyAt = this.currentTime;
+      cd.readyTimes = [];
+      this.cooldowns.set(spellId, cd);
+      return;
+    }
+    cd.readyAt = this.currentTime;
+    this.cooldowns.set(spellId, cd);
+  }
+
+  restoreCooldownCharge(spellId: SpellId): void {
+    const cd = this.settleCooldownState(spellId);
+    if (cd === undefined) return;
+    if (!cd.readyTimes) {
+      cd.readyAt = this.currentTime;
+      this.cooldowns.set(spellId, cd);
+      return;
+    }
+    if (cd.readyTimes.length === 0) {
+      cd.readyAt = this.currentTime;
+      this.cooldowns.set(spellId, cd);
+      return;
+    }
+    cd.readyAt = this.currentTime;
+    cd.readyTimes.shift();
     this.cooldowns.set(spellId, cd);
   }
 
@@ -845,6 +1072,32 @@ export class GameState implements IGameState {
     return Object.fromEntries(this._buffUptimeAccum);
   }
 
+  /**
+   * Collect primary-target debuff uptime statistics at the end of the fight.
+   * Flushes any still-tracked periods (active or naturally-expired) and returns
+   * total uptime in seconds for each debuff that was ever applied to target 0.
+   */
+  collectPrimaryTargetDebuffUptimes(): Record<string, number> {
+    const primaryTarget = this.targets[0];
+    if (!primaryTarget) {
+      return {};
+    }
+
+    for (const [debuffId, debuff] of primaryTarget.debuffs) {
+      const start = this._primaryTargetDebuffStart.get(debuffId) ?? 0;
+      const end = debuff.expiresAt === 0 ? this.currentTime : Math.min(debuff.expiresAt, this.currentTime);
+      const elapsed = Math.max(0, end - start);
+      if (elapsed > 0) {
+        this._primaryTargetDebuffUptimeAccum.set(
+          debuffId,
+          (this._primaryTargetDebuffUptimeAccum.get(debuffId) ?? 0) + elapsed,
+        );
+      }
+    }
+
+    return Object.fromEntries(this._primaryTargetDebuffUptimeAccum);
+  }
+
   isBuffActive(buffId: string): boolean {
     const buff = this.buffs.get(buffId);
     return buff !== undefined && (buff.expiresAt === 0 || buff.expiresAt > this.currentTime);
@@ -868,6 +1121,25 @@ export class GameState implements IGameState {
     if (!buff) return 0;
     const now = this.currentTime;
     return buff.stackTimers.filter(t => t === 0 || t > now).length;
+  }
+
+  getNumericState(stateId: string): number {
+    return this.numericState.get(stateId) ?? 0;
+  }
+
+  setNumericState(stateId: string, value: number): void {
+    if (value === 0) {
+      this.numericState.delete(stateId);
+      return;
+    }
+
+    this.numericState.set(stateId, value);
+  }
+
+  adjustNumericState(stateId: string, delta: number): number {
+    const nextValue = this.getNumericState(stateId) + delta;
+    this.setNumericState(stateId, nextValue);
+    return this.getNumericState(stateId);
   }
 
   addBuffStack(buffId: string): void {
@@ -1013,6 +1285,40 @@ export class GameState implements IGameState {
     return cloneTrinkets(this.trinkets);
   }
 
+  startCast(spellId: string, duration: number, isComboStrike: boolean): number {
+    const castId = this.nextCastId++;
+    this.activeCast = {
+      spellId,
+      castId,
+      startedAt: this.currentTime,
+      endsAt: this.currentTime + duration,
+      isComboStrike,
+    };
+    return castId;
+  }
+
+  getActiveCast(): Readonly<ActiveCastState> | null {
+    return this.activeCast;
+  }
+
+  isCurrentCast(spellId: string, castId: number): boolean {
+    return (
+      this.activeCast !== null
+      && this.activeCast.spellId === spellId
+      && this.activeCast.castId === castId
+    );
+  }
+
+  completeCast(spellId: string, castId: number): Readonly<ActiveCastState> | null {
+    if (!this.isCurrentCast(spellId, castId)) {
+      return null;
+    }
+
+    const completedCast = this.activeCast;
+    this.activeCast = null;
+    return completedCast;
+  }
+
   /**
    * Returns the currently active channel, if any.
    */
@@ -1106,13 +1412,14 @@ export class GameState implements IGameState {
       assumeMysticTouch: this.assumeMysticTouch,
       targetHealthPct: this.targetHealthPct,
       targetMaxHealth: this.targetMaxHealth,
-      targets: this.targets.map(t => ({ ...t })),
+      targets: this.targets.map(cloneTargetState),
 
       prevGcdAbility: this.prevGcdAbility,
       prevGcdAbilities: [...this.prevGcdAbilities],
 
       buffs: buffsCopy,
       cooldowns: cooldownsCopy,
+      numericState: new Map(this.numericState),
       talents: new Set(this.talents),
       talentRanks: new Map(this.talentRanks),
       trinkets: this.trinkets.map((t) => ({ ...t })),
@@ -1154,7 +1461,8 @@ export class GameState implements IGameState {
    *   do not affect the original.
   * - `talents`, `stats`, and stat hooks are shared (same reference) since
    *   they are treated as read-only during lookahead.
-   * - Uptime-tracking internals (`_buffStart`, `_buffUptimeAccum`) and
+   * - Uptime-tracking internals (`_buffStart`, `_buffUptimeAccum`,
+   *   `_primaryTargetDebuffStart`, `_primaryTargetDebuffUptimeAccum`) and
    *   `pendingSpellStats` start empty so lookahead damage does not pollute
    *   the real encounter's stats.
    */
@@ -1183,7 +1491,7 @@ export class GameState implements IGameState {
     c.targetHealthPct = this.targetHealthPct;
     c.targetCurrentHealth = this.targetCurrentHealth; // copy private field
     c.targetMaxHealth = this.targetMaxHealth;         // copy private field
-    c.targets = this.targets.map(t => ({ ...t }));
+      c.targets = this.targets.map(cloneTargetState);
     // assumeMysticTouch already set via constructor options above
 
     c.prevGcdAbility = this.prevGcdAbility;
@@ -1214,7 +1522,7 @@ export class GameState implements IGameState {
     // --- Deep copy buffs ---
     c.buffs = new Map();
     for (const [k, v] of this.buffs) {
-      c.buffs.set(k, { ...v, stackTimers: [...v.stackTimers] });
+      c.buffs.set(k, cloneBuffState(v));
     }
 
     // --- Deep copy cooldowns ---
@@ -1225,6 +1533,7 @@ export class GameState implements IGameState {
         readyTimes: v.readyTimes ? [...v.readyTimes] : undefined,
       });
     }
+    c.numericState = new Map(this.numericState);
 
     // --- Trinkets: new array, shallow-copy each entry ---
     c.trinkets = this.trinkets.map((t) => ({ ...t }));
@@ -1232,12 +1541,15 @@ export class GameState implements IGameState {
     // --- Channel tracking ---
     c.activeChannel = this.activeChannel ? { ...this.activeChannel } : null;
     c.nextChannelId = this.nextChannelId;
+    c.activeCast = this.activeCast ? { ...this.activeCast } : null;
+    c.nextCastId = this.nextCastId;
 
     // --- Shared references (read-only during lookahead) ---
     // stats and talents are already set via the constructor
     c.statHooks = this.statHooks;
     c.damageHooks = this.damageHooks;
     c.executionHooks = this.executionHooks;
+    c.nextTargetDebuffInstanceId = this.nextTargetDebuffInstanceId;
     c.action_list = this.action_list;
     c.disabledPlayerActions = this.disabledPlayerActions; // shared ref — read-only during lookahead
 
@@ -1245,6 +1557,8 @@ export class GameState implements IGameState {
     // Uptime tracking starts empty — lookahead should not accumulate real uptimes
     c._buffStart = new Map();
     c._buffUptimeAccum = new Map();
+    c._primaryTargetDebuffStart = new Map();
+    c._primaryTargetDebuffUptimeAccum = new Map();
 
     // Pending spell stats reset — lookahead damage must not pollute real stats
     c.pendingSpellStats = [];
@@ -1267,6 +1581,11 @@ export class GameState implements IGameState {
       this.cooldowns.set(spellId, cooldown);
     }
     return cooldown;
+  }
+
+  private resolveCooldownStateForQuery(spellId: SpellId): CooldownState | undefined {
+    const baseState = this.settleCooldownState(spellId);
+    return this.executionHooks.getCooldownStateForQuery?.(this, spellId, baseState) ?? baseState;
   }
 }
 

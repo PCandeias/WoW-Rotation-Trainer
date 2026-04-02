@@ -3,11 +3,11 @@ import type { CSSProperties } from 'react';
 
 import {
   getTalentCatalog,
-  MONK_WINDWALKER_TALENT_LOADOUT,
+  getTalentLoadoutForProfileSpec,
   type TalentLoadoutDefinition,
   type TalentTreeDefinition,
   type DecodedTalentTree,
-  type MonkWindwalkerTalentNodeDefinition,
+  type TalentNodeDefinition,
 } from '@core/data/talentStringDecoder';
 import { FONTS, T } from '@ui/theme/elvui';
 import { buildHudFrameStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
@@ -38,7 +38,7 @@ interface TreeConfig {
 
 interface PositionedNode {
   key: string;
-  definition: MonkWindwalkerTalentNodeDefinition;
+  definition: TalentNodeDefinition;
   tree: DecodedTalentTree;
   row: number;
   col: number;
@@ -85,6 +85,7 @@ const ROW_GAP = 74;
 const PANEL_PADDING_X = 28;
 const PANEL_PADDING_Y = 28;
 const HERO_SELECTOR_KEY = 'hero-selector';
+const DEFAULT_TALENT_LOADOUT = getTalentLoadoutForProfileSpec('monk');
 
 const TREE_PALETTES: Record<DecodedTalentTree, TreeConfig['palette']> = {
   class: {
@@ -227,6 +228,46 @@ const TALENT_VISUAL_OVERRIDES: Record<string, TalentVisual> = {
   inner_compass: { iconName: 'inv_10_dungeonjewelry_explorer_trinket_1compass_color2', emoji: '🧭' },
   restore_balance: { iconName: 'ability_monk_chiexplosion', emoji: '⚖️' },
   xuens_bond: { iconName: 'ability_demonhunter_netherbond', emoji: '🐅' },
+  stormbringer: { iconName: 'spell_shaman_stormblast', emoji: '🌩️' },
+  totemic: { iconName: 'inv_ability_totemicshaman_surgingtotem', emoji: '🗿' },
+  maelstrom_weapon: { iconName: 'spell_nature_unrelentingstorm', emoji: '⚡' },
+  flametongue_weapon: { iconName: 'spell_fire_flametounge', emoji: '🔥' },
+  molten_assault: { iconName: 'spell_fire_flameshock', emoji: '🔥' },
+  hot_hand: { iconName: 'spell_fire_playingwithfire', emoji: '🔥' },
+  lava_lash: { iconName: 'ability_shaman_lavalash', emoji: '🔥' },
+  stormstrike: { iconName: 'spell_shaman_improvedstormstrike', emoji: '⚡' },
+  crash_lightning: { iconName: 'spell_shaman_crashlightning', emoji: '🌩️' },
+  chain_lightning: { iconName: 'spell_nature_chainlightning', emoji: '🌩️' },
+  lightning_bolt: { iconName: 'spell_nature_lightning', emoji: '⚡' },
+  tempest: { iconName: 'inv_ability_stormcallershaman_tempest', emoji: '⛈️' },
+  primordial_storm: { iconName: 'ability_shaman_ascendance', emoji: '🌩️' },
+  windstrike: { iconName: 'spell_shaman_windstrike', emoji: '💨' },
+  doom_winds: { iconName: 'ability_ironmaidens_swirlingvortex', emoji: '🌪️' },
+  ascendance: { iconName: 'spell_fire_elementaldevastation', emoji: '⬆️' },
+  feral_spirit: { iconName: 'spell_shaman_feralspirit', emoji: '🐺' },
+  surging_totem: { iconName: 'inv_ability_totemicshaman_surgingtotem', emoji: '🗿' },
+  sundering: { iconName: 'ability_rhyolith_lavapool', emoji: '🌋' },
+  voltaic_blaze: { iconName: 'inv_10_dungeonjewelry_primalist_trinket_1ragingelement_fire', emoji: '⚡' },
+  stormsurge: { iconName: 'ability_shaman_maelstromweapon', emoji: '⚡' },
+  stormblast: { iconName: 'spell_shaman_stormblast', emoji: '🌩️' },
+  surging_elements: { iconName: 'spell_nature_elementalprecision_1', emoji: '⚡' },
+  forceful_winds: { iconName: 'ability_shaman_windwalktotem', emoji: '💨' },
+  windfury_weapon: { iconName: 'spell_nature_cyclone', emoji: '🌪️' },
+  lashing_flames: { iconName: 'spell_fire_lavaspawn', emoji: '🔥' },
+  static_accumulation: { iconName: 'spell_nature_lightningoverload', emoji: '⚡' },
+  amplification_core: { iconName: 'spell_holy_powerinfusion', emoji: '📡' },
+  whirling_air: { iconName: 'inv_10_elementalcombinedfoozles_air', emoji: '💨' },
+  whirling_fire: { iconName: 'inv_10_elementalcombinedfoozles_fire', emoji: '🔥' },
+  whirling_earth: { iconName: 'inv_10_elementalcombinedfoozles_earth', emoji: '🪨' },
+  totemic_rebound: { iconName: 'spell_nature_windfury', emoji: '🔁' },
+  overflowing_maelstrom: { iconName: 'spell_nature_unrelentingstorm', emoji: '⚡' },
+  raging_maelstrom: { iconName: 'inv_magic_swirl_color3', emoji: '⚡' },
+  overcharge: { iconName: 'spell_nature_chainlightning', emoji: '⚡' },
+  storm_unleashed: { iconName: 'inv12_apextalent_shaman_stormunleashed', emoji: '🌩️' },
+  storms_wrath: { iconName: 'spell_nature_lightningoverload', emoji: '⚡' },
+  totemic_focus: { iconName: 'inv_ability_totemicshaman_surgingtotem', emoji: '🗿' },
+  totemic_momentum: { iconName: 'spell_nature_reincarnation', emoji: '🌀' },
+  totemic_surge: { iconName: 'spell_nature_windfury', emoji: '💨' },
 };
 
 /**
@@ -235,7 +276,7 @@ const TALENT_VISUAL_OVERRIDES: Record<string, TalentVisual> = {
  * reachable talents, pick a single hero tree, and keep Tigereye Brew detached.
  */
 export function TalentTreeView({
-  definition = MONK_WINDWALKER_TALENT_LOADOUT,
+  definition = DEFAULT_TALENT_LOADOUT,
   talents,
   talentRanks,
   highlightedTalentIds,
@@ -1183,7 +1224,7 @@ function buildTreeLayout(
 
 function positionTreeNodes(
   definition: TalentLoadoutDefinition,
-  definitions: MonkWindwalkerTalentNodeDefinition[],
+  definitions: TalentNodeDefinition[],
   tree: DecodedTalentTree,
   talents: ReadonlySet<string>,
   talentRanks: ReadonlyMap<string, number>,
@@ -1326,7 +1367,7 @@ function buildParentMap(nodes: Omit<PositionedNode, 'available' | 'parents'>[]):
 }
 
 function createPositionedNode(
-  definition: MonkWindwalkerTalentNodeDefinition,
+  definition: TalentNodeDefinition,
   tree: DecodedTalentTree,
   row: number,
   col: number,
@@ -1387,7 +1428,7 @@ function getTreeMetrics(
 
 function getRowOrderIndex(
   rowIds: readonly string[],
-  definition: MonkWindwalkerTalentNodeDefinition,
+  definition: TalentNodeDefinition,
 ): number {
   const indexes = definition.internalIds
     .map((internalId) => rowIds.indexOf(internalId))
@@ -1527,7 +1568,7 @@ function pruneTalentSelection(
   return { talents, talentRanks };
 }
 
-function buildNodeKey(definition: MonkWindwalkerTalentNodeDefinition): string {
+function buildNodeKey(definition: TalentNodeDefinition): string {
   return `${definition.treeId}:${definition.order}`;
 }
 
@@ -1597,7 +1638,7 @@ function getTalentVisual(tree: DecodedTalentTree, internalId: string): TalentVis
   return TALENT_VISUAL_OVERRIDES[internalId] ?? TREE_DEFAULT_VISUALS[tree];
 }
 
-function getNodeBorderRadius(shape: MonkWindwalkerTalentNodeDefinition['visualType']): CSSProperties['borderRadius'] {
+function getNodeBorderRadius(shape: TalentNodeDefinition['visualType']): CSSProperties['borderRadius'] {
   if (shape === 'passive') {
     return '50%';
   }
@@ -1605,7 +1646,7 @@ function getNodeBorderRadius(shape: MonkWindwalkerTalentNodeDefinition['visualTy
   return 14;
 }
 
-function getNodeInnerBorderRadius(shape: MonkWindwalkerTalentNodeDefinition['visualType']): CSSProperties['borderRadius'] {
+function getNodeInnerBorderRadius(shape: TalentNodeDefinition['visualType']): CSSProperties['borderRadius'] {
   if (shape === 'passive') {
     return '50%';
   }

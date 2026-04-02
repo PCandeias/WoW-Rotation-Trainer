@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { cloneLoadout, type CharacterLoadout } from '@core/data/loadout';
-import { getDefaultMonkWindwalkerProfile } from '@core/data/defaultProfile';
+import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
+import { getBuffbookForProfileSpec, getSpellbookForProfileSpec } from '@core/data';
 import type { CharacterProfile } from '@core/data/profileParser';
 import { createGameState } from '@core/engine/gameState';
 import { runHeadless } from '@core/engine/headless';
 import { deriveTargetMaxHealthForKillRange } from '@core/engine/target';
 import {
   buildBenchmarkSignature,
-  buildMonkWindwalkerAnalysisProfile,
+  getAnalysisProfileForSpec,
   buildRunAnalysisReport,
   buildTrainerBenchmarkTrace,
   buildTraceFromSimResult,
@@ -15,13 +16,14 @@ import {
   type RawRunTrace,
   type RunAnalysisReport,
 } from '@core/analysis';
+import { getTrainerSpecDefinition, type TrainerSpecId } from '@ui/specs/specCatalog';
 
 const TRAINER_BENCHMARK_SEEDS = [1337, 7331, 9001, 4242, 2026] as const;
 const trainerTraceCache = new Map<string, RawRunTrace>();
 
 interface UsePostRunAnalysisOptions {
   enabled: boolean;
-  specId: string;
+  selectedSpec: TrainerSpecId;
   encounterDuration: number;
   activeEnemies?: number;
   talents: ReadonlySet<string>;
@@ -38,14 +40,22 @@ interface UsePostRunAnalysisResult {
 }
 
 export function usePostRunAnalysis(options: UsePostRunAnalysisOptions): UsePostRunAnalysisResult {
-  const { enabled, specId, encounterDuration, activeEnemies = 1, talents, talentRanks, loadout, playerTrace } = options;
+  const { enabled, selectedSpec, encounterDuration, activeEnemies = 1, talents, talentRanks, loadout, playerTrace } = options;
+  const specDefinition = useMemo(() => getTrainerSpecDefinition(selectedSpec), [selectedSpec]);
   const benchmarkSignature = useMemo(
-    () => buildBenchmarkSignature({ specId, encounterDuration, activeEnemies, talents, talentRanks, loadout }),
-    [activeEnemies, encounterDuration, loadout, specId, talentRanks, talents],
+    () => buildBenchmarkSignature({
+      specId: specDefinition.analysisSpecId,
+      encounterDuration,
+      activeEnemies,
+      talents,
+      talentRanks,
+      loadout,
+    }),
+    [activeEnemies, encounterDuration, loadout, specDefinition.analysisSpecId, talentRanks, talents],
   );
   const analysisProfile = useMemo(
-    () => buildMonkWindwalkerAnalysisProfile(talents),
-    [talents],
+    () => getAnalysisProfileForSpec(specDefinition.analysisSpecId, talents),
+    [specDefinition.analysisSpecId, talents],
   );
 
   const [result, setResult] = useState<UsePostRunAnalysisResult>({
@@ -67,13 +77,17 @@ export function usePostRunAnalysis(options: UsePostRunAnalysisOptions): UsePostR
     const timerId = window.setTimeout(() => {
       try {
         const trainerTrace = getOrCreateTrainerTrace(benchmarkSignature, {
+          profileSpec: specDefinition.profileSpec,
           talents,
           talentRanks,
           loadout,
           encounterDuration,
           activeEnemies,
         });
-        const report = buildRunAnalysisReport(benchmarkSignature, playerTrace, trainerTrace, analysisProfile);
+        const report = buildRunAnalysisReport(benchmarkSignature, playerTrace, trainerTrace, analysisProfile, {
+          spellbook: getSpellbookForProfileSpec(specDefinition.profileSpec),
+          buffbook: getBuffbookForProfileSpec(specDefinition.profileSpec),
+        });
         if (!cancelled) {
           setResult({ status: 'ready', benchmarkSignature, report, error: null });
         }
@@ -93,7 +107,7 @@ export function usePostRunAnalysis(options: UsePostRunAnalysisOptions): UsePostR
       cancelled = true;
       window.clearTimeout(timerId);
     };
-  }, [activeEnemies, analysisProfile, benchmarkSignature, enabled, encounterDuration, loadout, playerTrace, talentRanks, talents]);
+  }, [activeEnemies, analysisProfile, benchmarkSignature, enabled, encounterDuration, loadout, playerTrace, specDefinition.profileSpec, talentRanks, talents]);
 
   return result;
 }
@@ -101,6 +115,7 @@ export function usePostRunAnalysis(options: UsePostRunAnalysisOptions): UsePostR
 function getOrCreateTrainerTrace(
   benchmarkSignature: BenchmarkSignature,
   options: {
+    profileSpec: string;
     talents: ReadonlySet<string>;
     talentRanks: ReadonlyMap<string, number>;
     loadout: CharacterLoadout;
@@ -113,7 +128,7 @@ function getOrCreateTrainerTrace(
     return cached;
   }
 
-  const profile = buildProfile(options.talents, options.talentRanks, options.loadout);
+  const profile = buildProfile(options.profileSpec, options.talents, options.talentRanks, options.loadout);
   const bootstrapState = createGameState(profile, {
     duration: options.encounterDuration,
     activeEnemies: options.activeEnemies,
@@ -137,11 +152,12 @@ function getOrCreateTrainerTrace(
 }
 
 function buildProfile(
+  profileSpec: string,
   talents: ReadonlySet<string>,
   talentRanks: ReadonlyMap<string, number>,
   loadout: CharacterLoadout,
 ): CharacterProfile {
-  const defaultProfile = getDefaultMonkWindwalkerProfile();
+  const defaultProfile = getDefaultProfileForSpec(profileSpec);
   return {
     ...defaultProfile,
     talents: new Set(talents),

@@ -25,7 +25,8 @@ export interface ActionResult {
   cooldownAdjustments: { spellId: string; delta: number }[];
 }
 
-export type ActionCastFailReason = 'talent_missing' | 'wdp_constraint' | 'execute_not_ready';
+export type ActionCastFailReason = 'talent_missing' | 'wdp_constraint' | 'execute_not_ready' | 'not_available' | 'on_cooldown';
+export type ActionCastContext = Readonly<Record<string, boolean | number | string>>;
 
 export abstract class Action {
   abstract readonly name: string;
@@ -189,6 +190,23 @@ export abstract class Action {
   }
 
   /**
+   * Effective hard-cast duration for this action.
+   * Defaults to haste-scaled non-channeled cast time.
+   */
+  castTime(baseDuration: number, hastePercent: number): number {
+    return baseDuration / (1 + hastePercent / 100);
+  }
+
+  /**
+   * Optional hard-cast snapshot data captured at cast start and replayed at cast
+   * completion. Use this for spell-specific state such as proc/buff stack counts
+   * that must not drift while the cast is in flight.
+   */
+  createCastContext(): ActionCastContext | undefined {
+    return undefined;
+  }
+
+  /**
    * Effective channel duration for this action.
    * Defaults to haste-scaled channel duration.
    */
@@ -336,6 +354,7 @@ export abstract class Action {
       channelTicks: 0,
       isOnGcd: true,
       apCoefficient: this.spellData.effectN(1).ap_coeff(),
+      spCoefficient: this.spellData.effectN(1).sp_coeff(),
       baseDmgMin: 0,
       baseDmgMax: 0,
       requiresComboStrike: false,
@@ -360,7 +379,9 @@ export abstract class Action {
       versatilityMultiplier: this.snapshotVersatilityMultiplier(),
       targetMultiplier: this.snapshotTargetMultiplier(),
       apCoefficient: this.spellData.effectN(1).ap_coeff(),
+      spellPowerCoefficient: this.spellData.effectN(1).sp_coeff(),
       attackPower: this.effectiveAttackPower(),
+      spellPower: this.effectiveSpellPower(),
       baseDmgMin: 0,
       baseDmgMax: 0,
       critChance: this.snapshotCritChancePercent(),
@@ -386,17 +407,23 @@ export abstract class Action {
     return this.p.getWeaponMainHandAttackPower?.() ?? this.p.getAttackPower();
   }
 
+  protected effectiveSpellPower(): number {
+    return this.p.getSpellPower?.() ?? 0;
+  }
+
   /**
-   * Compute raw AP-scaled damage using effectN(1).ap_coeff() × total_multiplier().
+   * Compute raw AP/SP-scaled damage using effectN(1) coefficients × total_multiplier().
    * Subclasses override for multi-hit or non-standard formulas.
    */
   calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
     const ap = this.effectiveAttackPower();
     const apCoeff = this.spellData.effectN(1).ap_coeff();
+    const sp = this.effectiveSpellPower();
+    const spCoeff = this.spellData.effectN(1).sp_coeff();
     const critChance = this.composite_crit_chance();
     const isCrit = rng.next() < critChance;
     const critMult = isCrit ? this.critDamageMultiplier() : 1.0;
-    const damage = ap * apCoeff * this.total_multiplier(isComboStrike) * critMult;
+    const damage = (ap * apCoeff + sp * spCoeff) * this.total_multiplier(isComboStrike) * critMult;
     return { damage, isCrit };
   }
 
@@ -412,6 +439,7 @@ export abstract class Action {
     _queue: SimEventQueue,
     rng: RngInstance,
     isComboStrike: boolean,
+    _castContext?: ActionCastContext,
   ): ActionResult {
     return {
       ...this.calculateDamage(rng, isComboStrike),
@@ -435,6 +463,16 @@ export abstract class Action {
     return { damage: 0, isCrit: false, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
   }
 
+  dot_tick(
+    _state: IGameState,
+    _rng: RngInstance,
+    _snapshot: DamageSnapshot,
+    _tickNum: number,
+    _targetId: number,
+  ): ActionResult {
+    return { damage: 0, isCrit: false, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
+  }
+
   last_tick(
     _state: IGameState,
     _queue: SimEventQueue,
@@ -450,7 +488,9 @@ export abstract class Action {
     const base = snapshot.baseDmgMin === snapshot.baseDmgMax
       ? snapshot.baseDmgMin
       : rollRange(rng, snapshot.baseDmgMin, snapshot.baseDmgMax);
-    const baseDamage = base + snapshot.apCoefficient * snapshot.attackPower;
+    const baseDamage = base
+      + snapshot.apCoefficient * snapshot.attackPower
+      + (snapshot.spellPowerCoefficient ?? 0) * (snapshot.spellPower ?? 0);
     const combined = snapshot.actionMultiplier
       * snapshot.playerMultiplier
       * snapshot.masteryMultiplier

@@ -13,12 +13,15 @@ import {
 import { T, FONTS } from '@ui/theme/elvui';
 import { buildControlStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
 import { AbilityIcon } from '@ui/components/AbilityIcon';
+import type { BuffRegistry } from '@ui/components/BuffTracker';
 import { SPELL_ICONS } from '@ui/components/ActionBar';
-import { MONK_BUFF_REGISTRY } from '@core/class_modules/monk/monk_buff_registry';
-import { MONK_WW_SPELLS } from '@core/data/spells/monk_windwalker';
+import type { SpellDef } from '@core/data';
+import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import { usesCompetitiveTrainerRules, type TrainerMode } from '@ui/state/trainerSettings';
 import type { RunAnalysisReport } from '@core/analysis';
+import { getResourceWasteMetricsForSpec } from '@core/analysis/specResourceMetrics';
+import { getBuffPresentationRegistryForProfileSpec } from '@ui/specs/specBuffPresentation';
 
 // ---------------------------------------------------------------------------
 // End Screen
@@ -28,6 +31,7 @@ interface EndScreenProps {
   dps: number;
   totalDamage: number;
   duration: number;
+  profileSpec: string;
   mode: TrainerMode;
   analysisStatus: 'idle' | 'loading' | 'ready' | 'error';
   analysisReport: RunAnalysisReport | null;
@@ -43,10 +47,6 @@ interface EndScreenProps {
 const ANALYSIS_SERIES = {
   player: '#17d4ff',
   trainer: '#ffb84d',
-  playerChi: '#1fd58f',
-  trainerChi: '#ffd166',
-  playerEnergy: '#ff6b6b',
-  trainerEnergy: '#8ea2ff',
 };
 
 function gradeForRatio(ratio: number): { label: string; color: string } {
@@ -69,6 +69,7 @@ export default function EndScreen({
   dps,
   totalDamage,
   duration,
+  profileSpec,
   mode,
   analysisStatus,
   analysisReport,
@@ -83,10 +84,32 @@ export default function EndScreen({
   const trainerRatio = analysisReport?.score.trainerDpsRatio ?? 0;
   const summaryDps = analysisStatus === 'ready' && analysisReport ? analysisReport.score.playerDps : dps;
   const summaryTotalDamage = analysisStatus === 'ready' && analysisReport ? analysisReport.score.playerTotalDamage : totalDamage;
+  const [selectedExactMistakeIndex, setSelectedExactMistakeIndex] = useState(0);
   const { label, color } = analysisStatus === 'ready'
     ? gradeForRatio(analysisReport?.score.trainerDpsRatio ?? 0)
     : gradeForDps(summaryDps);
   const failedChallenge = endReason === 'challenge_failure';
+  const spellbook = getSpellbookForProfileSpec(profileSpec);
+  const buffRegistry = getBuffPresentationRegistryForProfileSpec(profileSpec);
+  const resourceWasteMetrics = analysisReport ? getResourceWasteMetricsForSpec(analysisReport.benchmarkSignature.specId) : [];
+  const exactMistakes = analysisReport?.exactMistakes ?? [];
+
+  useEffect(() => {
+    setSelectedExactMistakeIndex(0);
+  }, [analysisReport]);
+
+  useEffect(() => {
+    if (exactMistakes.length === 0) {
+      if (selectedExactMistakeIndex !== 0) {
+        setSelectedExactMistakeIndex(0);
+      }
+      return;
+    }
+
+    if (selectedExactMistakeIndex > exactMistakes.length - 1) {
+      setSelectedExactMistakeIndex(exactMistakes.length - 1);
+    }
+  }, [exactMistakes, selectedExactMistakeIndex]);
 
   const overlay: CSSProperties = {
     width: '100%',
@@ -212,8 +235,9 @@ export default function EndScreen({
   };
 
   return (
-    <div style={overlay}>
-      <div style={shell}>
+    <EndScreenPresentationContext.Provider value={{ spellbook, buffRegistry, profileSpec }}>
+      <div style={overlay}>
+        <div style={shell}>
         <div style={{ display: 'grid', gap: 6 }}>
           <h2 style={title}>{heading}</h2>
           {failedChallenge && heading === 'Encounter Complete' && (
@@ -324,7 +348,17 @@ export default function EndScreen({
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
-              analysisReport ? <SpellTimeline data={analysisReport.charts.spellTimeline} encounterDuration={duration} /> : null,
+              analysisReport
+                ? (
+                  <SpellTimeline
+                    data={analysisReport.charts.spellTimeline}
+                    encounterDuration={duration}
+                    exactMistakes={exactMistakes}
+                    selectedExactMistakeIndex={selectedExactMistakeIndex}
+                    onSelectExactMistake={setSelectedExactMistakeIndex}
+                  />
+                )
+                : null,
               'Loading spell timeline...',
             )}
           />
@@ -344,22 +378,37 @@ export default function EndScreen({
                         Exact mistakes are disabled for 30-second opener runs because this view is meant for full-fight decision review, not opener-only snapshots.
                       </div>
                     )
-                    : <ExactMistakesPanel mistakes={analysisReport.exactMistakes} />
+                    : (
+                      <ExactMistakesPanel
+                        mistakes={exactMistakes}
+                        currentIndex={selectedExactMistakeIndex}
+                        onSelectMistake={setSelectedExactMistakeIndex}
+                      />
+                    )
                 )
                 : null,
               'Loading precise decision review...',
             )}
           />
           <ReportCard
-            title="Resource Waste"
-            subtitle="Track Chi and Energy waste separately so overcaps are easier to spot."
-            bodyOverflow="hidden"
+            title="Resources & Debuffs"
+            subtitle="Track spec-owned waste metrics and primary-target debuff uptime against the trainer."
+            bodyOverflow="auto"
             style={{ gridColumn: '1 / span 2', gridRow: '3' }}
             body={renderAnalysisState(
               analysisStatus,
               analysisError,
-              analysisReport ? <ResourceWasteChart data={analysisReport.charts.resourceWaste} /> : null,
-              'Loading resource comparison...',
+              analysisReport
+                ? (
+                    <div style={{ display: 'grid', gap: 14, minHeight: 0 }}>
+                      {resourceWasteMetrics.length === 0
+                        ? <div style={{ color: T.textDim }}>No tracked resource waste metrics are registered for this spec yet.</div>
+                        : <ResourceWasteChart specId={analysisReport.benchmarkSignature.specId} data={analysisReport.charts.resourceWaste} />}
+                      <TargetDebuffUptimePanel rows={analysisReport.targetDebuffUptimes} />
+                    </div>
+                  )
+                : null,
+              'Loading resource and debuff comparison...',
             )}
           />
           <ReportCard
@@ -386,9 +435,26 @@ export default function EndScreen({
             {exitLabel}
           </button>
         </div>
+        </div>
       </div>
-    </div>
+    </EndScreenPresentationContext.Provider>
   );
+}
+
+interface EndScreenPresentationContextValue {
+  spellbook: ReadonlyMap<string, SpellDef>;
+  buffRegistry: BuffRegistry;
+  profileSpec: string;
+}
+
+const EndScreenPresentationContext = React.createContext<EndScreenPresentationContextValue | null>(null);
+
+function useEndScreenPresentation(): EndScreenPresentationContextValue {
+  const context = React.useContext(EndScreenPresentationContext);
+  if (!context) {
+    throw new Error('End screen presentation context is unavailable');
+  }
+  return context;
 }
 
 function ReportCard({
@@ -606,7 +672,14 @@ function DamageChartPanel({
   );
 }
 
-function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resourceWaste'] }): React.ReactElement {
+function ResourceWasteChart({
+  specId,
+  data,
+}: {
+  specId: string;
+  data: RunAnalysisReport['charts']['resourceWaste'];
+}): React.ReactElement {
+  const metrics = getResourceWasteMetricsForSpec(specId);
   return (
     <div
       style={{
@@ -618,22 +691,17 @@ function ResourceWasteChart({ data }: { data: RunAnalysisReport['charts']['resou
         gap: 14,
       }}
     >
-      <ResourceWastePanel
-        title="Chi Waste"
-        data={data}
-        playerKey="playerChi"
-        trainerKey="trainerChi"
-        playerColor={ANALYSIS_SERIES.playerChi}
-        trainerColor={ANALYSIS_SERIES.trainerChi}
-      />
-      <ResourceWastePanel
-        title="Energy Waste"
-        data={data}
-        playerKey="playerEnergy"
-        trainerKey="trainerEnergy"
-        playerColor={ANALYSIS_SERIES.playerEnergy}
-        trainerColor={ANALYSIS_SERIES.trainerEnergy}
-      />
+      {metrics.map((metric) => (
+        <ResourceWastePanel
+          key={metric.key}
+          title={metric.label}
+          data={data}
+          playerKey={metric.playerSeriesKey}
+          trainerKey={metric.trainerSeriesKey}
+          playerColor={metric.playerColor}
+          trainerColor={metric.trainerColor}
+        />
+      ))}
     </div>
   );
 }
@@ -648,8 +716,8 @@ function ResourceWastePanel({
 }: {
   title: string;
   data: RunAnalysisReport['charts']['resourceWaste'];
-  playerKey: 'playerChi' | 'playerEnergy';
-  trainerKey: 'trainerChi' | 'trainerEnergy';
+  playerKey: string;
+  trainerKey: string;
   playerColor: string;
   trainerColor: string;
 }): React.ReactElement {
@@ -691,9 +759,15 @@ function ResourceWastePanel({
 function SpellTimeline({
   data,
   encounterDuration,
+  exactMistakes,
+  selectedExactMistakeIndex,
+  onSelectExactMistake,
 }: {
   data: RunAnalysisReport['charts']['spellTimeline'];
   encounterDuration: number;
+  exactMistakes: RunAnalysisReport['exactMistakes'];
+  selectedExactMistakeIndex: number;
+  onSelectExactMistake: (index: number) => void;
 }): React.ReactElement {
   if (data.player.length === 0 && data.trainer.length === 0) {
     return <div>No cast timeline is available for this encounter.</div>;
@@ -720,6 +794,9 @@ function SpellTimeline({
             accent={ANALYSIS_SERIES.player}
             timelineWidth={timelineWidth}
             labelColumnWidth={labelColumnWidth}
+            exactMistakes={exactMistakes}
+            selectedExactMistakeIndex={selectedExactMistakeIndex}
+            onSelectExactMistake={onSelectExactMistake}
           />
           <SpellTimelineLane
             label="Trainer"
@@ -728,6 +805,9 @@ function SpellTimeline({
             accent={ANALYSIS_SERIES.trainer}
             timelineWidth={timelineWidth}
             labelColumnWidth={labelColumnWidth}
+            exactMistakes={[]}
+            selectedExactMistakeIndex={0}
+            onSelectExactMistake={onSelectExactMistake}
           />
           <div style={{ display: 'grid', gridTemplateColumns: `${labelColumnWidth}px ${timelineWidth}px`, gap: 12 }}>
             <div />
@@ -804,13 +884,15 @@ function ImprovementNotes({ findings }: { findings: RunAnalysisReport['findings'
   );
 }
 
-function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMistakes'] }): React.ReactElement {
-  const [currentIndex, setCurrentIndex] = useState(0);
-
-  useEffect(() => {
-    setCurrentIndex(0);
-  }, [mistakes]);
-
+function ExactMistakesPanel({
+  mistakes,
+  currentIndex,
+  onSelectMistake,
+}: {
+  mistakes: RunAnalysisReport['exactMistakes'];
+  currentIndex: number;
+  onSelectMistake: (index: number) => void;
+}): React.ReactElement {
   if (mistakes.length === 0) {
     return <div>No clear off-priority mistakes stood out against your own moment-to-moment state.</div>;
   }
@@ -845,8 +927,8 @@ function ExactMistakesPanel({ mistakes }: { mistakes: RunAnalysisReport['exactMi
           nextLabel="Next exact mistake"
           canGoPrevious={canGoPrevious}
           canGoNext={canGoNext}
-          onPrevious={() => setCurrentIndex((index) => Math.max(0, index - 1))}
-          onNext={() => setCurrentIndex((index) => Math.min(mistakes.length - 1, index + 1))}
+          onPrevious={() => onSelectMistake(Math.max(0, clampedIndex - 1))}
+          onNext={() => onSelectMistake(Math.min(mistakes.length - 1, clampedIndex + 1))}
         />
       </div>
       <div
@@ -905,6 +987,9 @@ function SpellTimelineLane({
   accent,
   timelineWidth,
   labelColumnWidth,
+  exactMistakes,
+  selectedExactMistakeIndex,
+  onSelectExactMistake,
 }: {
   label: string;
   lane: { placements: { spellId: string; time: number; level: number }[]; levelCount: number; count: number };
@@ -912,8 +997,13 @@ function SpellTimelineLane({
   accent: string;
   timelineWidth: number;
   labelColumnWidth: number;
+  exactMistakes: RunAnalysisReport['exactMistakes'];
+  selectedExactMistakeIndex: number;
+  onSelectExactMistake: (index: number) => void;
 }): React.ReactElement {
-  const trackHeight = Math.max(52, lane.levelCount * 34 + 18);
+  const { spellbook } = useEndScreenPresentation();
+  const mistakeMarkerBandHeight = exactMistakes.length > 0 ? 22 : 0;
+  const trackHeight = Math.max(52, mistakeMarkerBandHeight + lane.levelCount * 34 + 18);
   const tickStep = encounterDuration <= 30 ? 5 : encounterDuration <= 90 ? 10 : 15;
   const tickTimes = Array.from({ length: Math.floor(encounterDuration / tickStep) + 1 }, (_, index) => Math.min(encounterDuration, index * tickStep));
 
@@ -947,7 +1037,7 @@ function SpellTimelineLane({
           />
         ))}
         {lane.placements.map((entry, index) => {
-          const presentation = getSpellPresentation(entry.spellId);
+          const presentation = getSpellPresentation(entry.spellId, spellbook);
           return (
             <div
               key={`${label}-${entry.spellId}-${entry.time.toFixed(2)}-${index}`}
@@ -955,7 +1045,7 @@ function SpellTimelineLane({
               style={{
                 position: 'absolute',
                 left: `${Math.max(0, Math.min(100, (entry.time / Math.max(1, encounterDuration)) * 100))}%`,
-                top: 8 + entry.level * 34,
+                top: mistakeMarkerBandHeight + 8 + entry.level * 34,
                 transform: 'translateX(-50%)',
                 width: 28,
                 height: 28,
@@ -975,6 +1065,41 @@ function SpellTimelineLane({
                 style={{ borderRadius: 6 }}
               />
             </div>
+          );
+        })}
+        {exactMistakes.map((mistake, index) => {
+          const isSelected = index === selectedExactMistakeIndex;
+          return (
+            <button
+              key={`${label}-exact-mistake-${mistake.id}`}
+              type="button"
+              aria-label={`Open exact mistake ${index + 1} at ${mistake.time.toFixed(1)}s`}
+              title={`Open exact mistake ${index + 1}: ${mistake.title} • ${mistake.time.toFixed(1)}s`}
+              onClick={() => onSelectExactMistake(index)}
+              style={{
+                ...buildControlStyle({ tone: 'ghost' }),
+                position: 'absolute',
+                left: `${Math.max(0, Math.min(100, (mistake.time / Math.max(1, encounterDuration)) * 100))}%`,
+                top: 4,
+                transform: 'translateX(-50%)',
+                width: 18,
+                height: 18,
+                minWidth: 18,
+                padding: 0,
+                borderRadius: 999,
+                border: `1px solid ${isSelected ? T.red : `${T.gold}aa`}`,
+                backgroundColor: isSelected ? 'rgba(255, 92, 92, 0.24)' : 'rgba(255, 184, 77, 0.18)',
+                color: isSelected ? T.red : T.gold,
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                lineHeight: 1,
+                display: 'grid',
+                placeItems: 'center',
+                boxShadow: isSelected ? `0 0 12px ${T.red}55` : `0 0 10px ${T.gold}33`,
+              }}
+            >
+              !
+            </button>
           );
         })}
       </div>
@@ -1039,7 +1164,10 @@ function ImpactBadge({
   );
 }
 
-function getSpellPresentation(spellId: string | null | undefined): {
+function getSpellPresentation(
+  spellId: string | null | undefined,
+  spellbook: ReadonlyMap<string, SpellDef>,
+): {
   label: string;
   iconName?: string;
   emoji: string;
@@ -1052,7 +1180,7 @@ function getSpellPresentation(spellId: string | null | undefined): {
     };
   }
 
-  const spell = MONK_WW_SPELLS.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
+  const spell = spellbook.get(spellId) ?? SHARED_PLAYER_SPELLS.get(spellId);
   const icon = SPELL_ICONS[spellId] ?? { iconName: 'inv_misc_questionmark', emoji: '❔' };
   return {
     label: spell?.displayName ?? titleCaseSpellId(spellId),
@@ -1068,7 +1196,8 @@ function SpellBadge({
   spellId: string;
   compact?: boolean;
 }): React.ReactElement {
-  const presentation = getSpellPresentation(spellId);
+  const { spellbook } = useEndScreenPresentation();
+  const presentation = getSpellPresentation(spellId, spellbook);
   return (
     <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
       <AbilityIcon
@@ -1094,7 +1223,8 @@ function SpellDecisionBadge({
   emptyLabel?: string;
   tone: 'actual' | 'expected';
 }): React.ReactElement {
-  const presentation = getSpellPresentation(spellId);
+  const { spellbook } = useEndScreenPresentation();
+  const presentation = getSpellPresentation(spellId, spellbook);
   const borderColor = tone === 'expected' ? `${T.accent}88` : `${T.red}66`;
   return (
     <div
@@ -1132,12 +1262,20 @@ function DecisionStatePanel({
 }: {
   state: RunAnalysisReport['exactMistakes'][number]['playerState'];
 }): React.ReactElement {
+  const { spellbook, profileSpec } = useEndScreenPresentation();
+  const maelstromWeaponStacks = state.activeBuffs.find((buff) => buff.buffId === 'maelstrom_weapon')?.stacks ?? 0;
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <StateValue label="Energy" value={Math.round(state.energy).toString()} />
-        <StateValue label="Chi" value={Math.round(state.chi).toString()} />
-        <StateValue label="Previous" value={state.previousAbility ? getSpellPresentation(state.previousAbility).label : 'None'} />
+        {profileSpec === 'shaman'
+          ? <StateValue label="Maelstrom Weapon" value={maelstromWeaponStacks.toString()} />
+          : (
+              <>
+                <StateValue label="Energy" value={Math.round(state.energy).toString()} />
+                <StateValue label="Chi" value={Math.round(state.chi).toString()} />
+              </>
+            )}
+        <StateValue label="Previous" value={state.previousAbility ? getSpellPresentation(state.previousAbility, spellbook).label : 'None'} />
       </div>
       <div style={{ display: 'grid', gap: 6 }}>
         <div style={{ color: T.textDim, fontSize: '0.74rem' }}>Top recommendations</div>
@@ -1242,9 +1380,10 @@ function BuffBadge({
   stacks: number;
   remaining?: number;
 }): React.ReactElement {
-  const label = MONK_BUFF_REGISTRY[buffId]?.displayName ?? titleCaseSpellId(buffId);
-  const iconName = MONK_BUFF_REGISTRY[buffId]?.iconName ?? 'inv_misc_questionmark';
-  const hideTimer = MONK_BUFF_REGISTRY[buffId]?.hideTimer === true;
+  const { buffRegistry } = useEndScreenPresentation();
+  const label = buffRegistry[buffId]?.displayName ?? titleCaseSpellId(buffId);
+  const iconName = buffRegistry[buffId]?.iconName ?? 'inv_misc_questionmark';
+  const hideTimer = buffRegistry[buffId]?.hideTimer === true;
   const timerLabel = !hideTimer && typeof remaining === 'number' && remaining > 0
     ? (remaining >= 10 ? `${Math.ceil(remaining)}s` : `${remaining.toFixed(1)}s`)
     : null;
@@ -1325,6 +1464,100 @@ function AbilityDamageBreakdownPanel({
   );
 }
 
+function TargetDebuffUptimePanel({
+  rows,
+}: {
+  rows: RunAnalysisReport['targetDebuffUptimes'];
+}): React.ReactElement {
+  if (rows.length === 0) {
+    return <div style={{ color: T.textDim }}>No primary-target debuff uptime rows were recorded for this encounter.</div>;
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+        Target Debuff Uptime
+      </div>
+      {rows.map((row) => (
+        <TargetDebuffUptimeRowView key={row.buffId} row={row} />
+      ))}
+    </div>
+  );
+}
+
+function TargetDebuffUptimeRowView({
+  row,
+}: {
+  row: RunAnalysisReport['targetDebuffUptimes'][number];
+}): React.ReactElement {
+  const { buffRegistry } = useEndScreenPresentation();
+  const label = buffRegistry[row.buffId]?.displayName ?? titleCaseSpellId(row.buffId);
+  const iconName = buffRegistry[row.buffId]?.iconName ?? 'inv_misc_questionmark';
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(160px, 1fr) minmax(0, 1fr) minmax(0, 1fr)',
+        gap: 12,
+        alignItems: 'center',
+        border: `1px solid ${T.border}`,
+        borderRadius: 12,
+        padding: '8px 10px',
+        backgroundColor: 'rgba(255,255,255,0.02)',
+      }}
+      title={`${label}\nYou: ${(row.playerRatio * 100).toFixed(1)}% (${row.playerSeconds.toFixed(1)}s)\nTrainer: ${(row.trainerRatio * 100).toFixed(1)}% (${row.trainerSeconds.toFixed(1)}s)`}
+    >
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <AbilityIcon iconName={iconName} emoji="☠️" size={20} alt={label} style={{ borderRadius: 999 }} />
+        <span style={{ color: T.textBright, fontSize: '0.78rem' }}>{label}</span>
+      </div>
+      <TargetDebuffUptimeValue label="You" ratio={row.playerRatio} seconds={row.playerSeconds} color={ANALYSIS_SERIES.player} />
+      <TargetDebuffUptimeValue label="Trainer" ratio={row.trainerRatio} seconds={row.trainerSeconds} color={ANALYSIS_SERIES.trainer} />
+    </div>
+  );
+}
+
+function TargetDebuffUptimeValue({
+  label,
+  ratio,
+  seconds,
+  color,
+}: {
+  label: string;
+  ratio: number;
+  seconds: number;
+  color: string;
+}): React.ReactElement {
+  return (
+    <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+        <span style={{ color: T.textDim, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>
+        <span style={{ color: T.textBright, fontSize: '0.76rem' }}>{(ratio * 100).toFixed(1)}% • {seconds.toFixed(1)}s</span>
+      </div>
+      <div
+        style={{
+          width: '100%',
+          height: 10,
+          borderRadius: 999,
+          backgroundColor: 'rgba(255,255,255,0.06)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.max(0, Math.min(100, ratio * 100))}%`,
+            minWidth: ratio > 0 ? 4 : 0,
+            height: '100%',
+            background: `linear-gradient(90deg, ${color}aa, ${color})`,
+            boxShadow: `0 0 10px ${color}55`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 function AbilityDamageBreakdownRowView({
   row,
   maxPlayerDamage,
@@ -1338,7 +1571,8 @@ function AbilityDamageBreakdownRowView({
   playerTotalDamage: number;
   trainerTotalDamage: number;
 }): React.ReactElement {
-  const tooltip = formatAbilityBreakdownTooltip(row, playerTotalDamage, trainerTotalDamage);
+  const { spellbook } = useEndScreenPresentation();
+  const tooltip = formatAbilityBreakdownTooltip(row, playerTotalDamage, trainerTotalDamage, spellbook);
 
   return (
     <div
@@ -1455,12 +1689,13 @@ function formatAbilityBreakdownTooltip(
   row: NonNullable<RunAnalysisReport['damageBreakdown']>[number],
   playerTotalDamage: number,
   trainerTotalDamage: number,
+  spellbook: ReadonlyMap<string, SpellDef>,
 ): string {
-  const spellLabel = getSpellPresentation(row.spellId).label;
+  const spellLabel = getSpellPresentation(row.spellId, spellbook).label;
   return [
     spellLabel,
-    formatAbilityBreakdownTooltipSection('You', row.player, playerTotalDamage),
-    formatAbilityBreakdownTooltipSection('Trainer', row.trainer, trainerTotalDamage),
+    formatAbilityBreakdownTooltipSection('You', row.player, playerTotalDamage, spellbook),
+    formatAbilityBreakdownTooltipSection('Trainer', row.trainer, trainerTotalDamage, spellbook),
   ].join('\n\n');
 }
 
@@ -1468,6 +1703,7 @@ function formatAbilityBreakdownTooltipSection(
   label: string,
   side: NonNullable<RunAnalysisReport['damageBreakdown']>[number]['player'],
   totalDamage: number,
+  spellbook: ReadonlyMap<string, SpellDef>,
 ): string {
   const share = totalDamage > 0 ? (side.totalDamage / totalDamage) * 100 : 0;
   const lines = [
@@ -1481,7 +1717,7 @@ function formatAbilityBreakdownTooltipSection(
 
   for (const source of side.sources) {
     lines.push(
-      `  ${getSpellPresentation(source.spellId).label}: ${formatCompactNumber(source.damage)}`
+      `  ${getSpellPresentation(source.spellId, spellbook).label}: ${formatCompactNumber(source.damage)}`
       + ` • ${source.casts} cast${source.casts === 1 ? '' : 's'}`
       + ` • ${source.crits} crit${source.crits === 1 ? '' : 's'}`,
     );

@@ -6,9 +6,14 @@ import type { SpellDef } from '../../data/spells';
 import type { CharacterProfile } from '../../data/profileParser';
 import type { GameState } from '../../engine/gameState';
 import { resolveSharedUseItemSpell } from '../../shared/player_effect_runtime';
+import { SHARED_PLAYER_SPELLS } from '../../shared/player_effects';
 import { MONK_WW_BUFFS, MONK_WW_SPELLS } from '../../data/spells/monk_windwalker';
 import type { SpecRuntime } from '../../runtime/spec_runtime';
 import { monk_module } from './monk_module';
+import type { SimEventQueue, SimEvent } from '../../engine/eventQueue';
+import { EventType } from '../../engine/eventQueue';
+import type { RngInstance } from '../../engine/rng';
+import { processDelayedSpellImpact } from './flurry_strikes';
 
 let defaultAplCompatibilityChecked = false;
 
@@ -27,7 +32,7 @@ export const monkWindwalkerRuntime: SpecRuntime = {
     if (state.talents.has('ascension')) {
       state.chiMax = 6;
       state.energyMax = 120;
-      state.energyRegenMultiplier = 1.1;
+      state.energyRegenMultiplier *= 1.1;
       state.recomputeEnergyRegenRate();
     }
     // Monks always self-apply Mystic Touch on first hit (SimC:
@@ -42,11 +47,11 @@ export const monkWindwalkerRuntime: SpecRuntime = {
       return spell;
     }
 
-    if (action.ability !== 'use_item') {
-      return null;
+    if (action.ability === 'use_item') {
+      return resolveUseItemSpell(action, state);
     }
 
-    return resolveUseItemSpell(action, state);
+    return SHARED_PLAYER_SPELLS.get(action.ability) ?? null;
   },
   assertDefaultAplCompatibility(actionLists: ActionList[]) {
     if (defaultAplCompatibilityChecked) {
@@ -79,5 +84,59 @@ export const monkWindwalkerRuntime: SpecRuntime = {
     }
 
     defaultAplCompatibilityChecked = true;
+  },
+  processScheduledEvent(
+    event: SimEvent,
+    state: GameState,
+    queue: SimEventQueue,
+    rng: RngInstance,
+    encounterDuration: number,
+  ) {
+    switch (event.type) {
+      case EventType.DELAYED_SPELL_IMPACT: {
+        const result = processDelayedSpellImpact(event.spellId, state, queue, rng);
+        if (!result) {
+          return { handled: true };
+        }
+
+        return {
+          handled: true,
+          damage: {
+            spellId: event.spellId,
+            amount: result.damage,
+            isCrit: result.isCrit,
+          },
+        };
+      }
+
+      case EventType.TIGEREYE_BREW_TICK: {
+        if (state.hasTalent('tigereye_brew')) {
+          const current = state.getBuffStacks('tigereye_brew_1');
+          if (current < 20) {
+            state.applyBuff('tigereye_brew_1', 120, current + 1);
+          }
+          const period = 8 / (1 + state.getHastePercent() / 100);
+          queue.push({ type: EventType.TIGEREYE_BREW_TICK, time: state.currentTime + period });
+        }
+
+        return { handled: true };
+      }
+
+      case EventType.COMBAT_WISDOM_TICK: {
+        if (state.hasTalent('combat_wisdom')) {
+          state.applyBuff('combat_wisdom', encounterDuration - state.currentTime);
+          const nextTick = state.currentTime + 15;
+          state.nextCombatWisdomAt = nextTick;
+          if (nextTick < encounterDuration) {
+            queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
+          }
+        }
+
+        return { handled: true };
+      }
+
+      default:
+        return { handled: false };
+    }
   },
 };

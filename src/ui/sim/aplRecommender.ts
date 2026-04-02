@@ -1,34 +1,43 @@
 /**
  * Browser-compatible APL recommendation engine.
  *
- * Loads the APL via Vite's `?raw` import and exposes helpers
- * that evaluate the action list against a live GameState to
- * determine the next recommended ability.
+ * Evaluates a spec runtime's default APL against a live GameState to determine
+ * the next recommended ability, then supports forward-simulated lookahead for
+ * recommendation queues.
  */
 
-import aplText from '@data/apls/monk_windwalker.simc?raw';
-import { MONK_WW_SPELLS } from '@data/spells/monk_windwalker';
-import type { SpellDef } from '@data/spells/monk_windwalker';
+import type { SpellDef } from '@core/data/spells';
 import { parseActionLists } from '@core/apl/actionList';
 import type { ActionList, CastAction, VariableAction } from '@core/apl/actionList';
 import { evaluate } from '@core/apl/evaluator';
 import type { EvalContext } from '@core/apl/evaluator';
 import type { GameState } from '@core/engine/gameState';
-import { executeAbility, getAbilityFailReason } from '@core/engine/executor';
+import { executeAbility, getAbilityFailReason, processAbilityCast } from '@core/engine/executor';
 import { EventType, SimEventQueue, type SimEvent } from '@core/engine/eventQueue';
 import { processChannelEnd, processChannelTick } from '@core/engine/channel';
+import { processDotTickDetailed } from '@core/engine/dot';
 import type { RngInstance } from '@core/engine/rng';
-import { SHARED_PLAYER_SPELLS, buffAffectsEnergyRegen, expireSharedPlayerBuff } from '@core/shared/player_effects';
-import { createSharedPlayerActions } from '@core/shared/player_effect_actions';
-import { resolveSharedUseItemSpell } from '@core/shared/player_effect_runtime';
-import { processDelayedSpellImpact } from '@core/class_modules/monk/flurry_strikes';
-import { monk_module } from '@core/class_modules/monk/monk_module';
+import { buffAffectsEnergyRegen, expireSharedPlayerBuff } from '@core/shared/player_effects';
+import type { SpecRuntime } from '@core/runtime/spec_runtime';
+import { monkWindwalkerRuntime } from '@core/class_modules/monk/monk_spec_runtime';
 
 // ---------------------------------------------------------------------------
-// Parse APL once at module init
+// Parse default APLs once per runtime
 // ---------------------------------------------------------------------------
 
-const ACTION_LISTS = parseActionLists(aplText);
+const ACTION_LISTS_BY_RUNTIME = new Map<string, ActionList[]>();
+
+function getActionListsForRuntime(runtime: SpecRuntime): ActionList[] {
+  const cached = ACTION_LISTS_BY_RUNTIME.get(runtime.specId);
+  if (cached) {
+    return cached;
+  }
+
+  const actionLists = parseActionLists(runtime.defaultApl);
+  runtime.assertDefaultAplCompatibility(actionLists);
+  ACTION_LISTS_BY_RUNTIME.set(runtime.specId, actionLists);
+  return actionLists;
+}
 
 // ---------------------------------------------------------------------------
 // Ported helpers from headless.ts (browser-safe, no node:fs)
@@ -38,18 +47,18 @@ function isSpellCastable(spell: SpellDef, state: GameState): boolean {
   return getAbilityFailReason(spell, state) === undefined;
 }
 
-function resolveSpellForAction(action: CastAction, state: GameState): SpellDef | null {
-  const spell = MONK_WW_SPELLS.get(action.ability) ?? SHARED_PLAYER_SPELLS.get(action.ability);
-  if (spell) {
-    // Mirror SimC's create_action() gate: only recommend spells the class module
-    // has registered as player-actionable. Spells absent from action_list (e.g.
-    // touch_of_death, invoke_xuen) are tracked by the engine but have no action
-    // bar button, so their cooldowns are never updated and they would otherwise
-    // appear perpetually castable.
-    return state.action_list?.has(spell.name) ? spell : null;
+function resolveSpellForAction(action: CastAction, state: GameState, runtime: SpecRuntime): SpellDef | null {
+  const spell = runtime.resolveActionSpell(action, state);
+  if (!spell) {
+    return null;
   }
 
-  return resolveSharedUseItemSpell(action, state, MONK_WW_SPELLS);
+  // Mirror SimC's create_action() gate: only recommend spells the class module
+  // has registered as player-actionable. Spells absent from action_list (e.g.
+  // touch_of_death, invoke_xuen) are tracked by the engine but have no action
+  // bar button, so their cooldowns are never updated and they would otherwise
+  // appear perpetually castable.
+  return state.action_list?.has(spell.name) ? spell : null;
 }
 
 function applyVariable(
@@ -84,21 +93,28 @@ interface SelectedAction {
   spell: SpellDef;
 }
 
+interface ProjectedActionableTimeSearchResult {
+  earliestTime: number | null;
+  terminated: boolean;
+}
+
 interface LookaheadContext {
   state: GameState;
   queue: SimEventQueue;
   rng: RngInstance;
+  runtime: SpecRuntime;
 }
 
 function walkActionList(
   list: ActionList,
   allLists: ActionList[],
   state: GameState,
-  ctx: EvalContext
+  ctx: EvalContext,
+  runtime: SpecRuntime,
 ): SelectedAction | null {
   for (const action of list.actions) {
     if (action.type === 'cast') {
-      const spell = resolveSpellForAction(action, state);
+      const spell = resolveSpellForAction(action, state, runtime);
       if (!spell) continue;
 
       if (action.condition) {
@@ -128,7 +144,7 @@ function walkActionList(
     if (action.type === 'call_list') {
       const sub = allLists.find((al) => al.name === action.listName);
       if (!sub) continue;
-      const result = walkActionList(sub, allLists, state, ctx);
+      const result = walkActionList(sub, allLists, state, ctx, runtime);
       if (result !== null) return result;
       if (action.callType === 'run') return null;
       continue;
@@ -142,11 +158,131 @@ function walkActionList(
   return null;
 }
 
-function selectAction(state: GameState): SelectedAction | null {
+function selectAction(state: GameState, runtime: SpecRuntime): SelectedAction | null {
   const ctx: EvalContext = { variables: new Map() };
-  const defaultList = ACTION_LISTS.find((al) => al.name === 'default');
+  const actionLists = getActionListsForRuntime(runtime);
+  const defaultList = actionLists.find((al) => al.name === 'default');
   if (!defaultList) return null;
-  return walkActionList(defaultList, ACTION_LISTS, state, ctx);
+  return walkActionList(defaultList, actionLists, state, ctx, runtime);
+}
+
+function mergeProjectedActionableTime(current: number | null, candidate: number | null): number | null {
+  if (candidate === null) {
+    return current;
+  }
+
+  if (current === null) {
+    return candidate;
+  }
+
+  return Math.min(current, candidate);
+}
+
+function getProjectedActionableTimeForSpell(spell: SpellDef, state: GameState): number | null {
+  const failReason = getAbilityFailReason(spell, state);
+  if (failReason === undefined) {
+    return state.currentTime;
+  }
+
+  if (failReason === 'on_cooldown') {
+    return state.currentTime + state.getCooldownRemains(spell.name);
+  }
+
+  if (failReason !== 'insufficient_energy') {
+    return null;
+  }
+
+  const energyRegenRate = state.energyRegenRate;
+  if (energyRegenRate <= 0) {
+    return null;
+  }
+
+  const missingEnergy = spell.energyCost - state.getEnergy();
+  if (missingEnergy <= 0) {
+    return state.currentTime;
+  }
+
+  return state.currentTime + (missingEnergy / energyRegenRate);
+}
+
+function findEarliestProjectedActionableTimeInList(
+  list: ActionList,
+  allLists: ActionList[],
+  state: GameState,
+  ctx: EvalContext,
+  runtime: SpecRuntime,
+): ProjectedActionableTimeSearchResult {
+  let earliestTime: number | null = null;
+
+  for (const action of list.actions) {
+    if (action.type === 'cast') {
+      const spell = resolveSpellForAction(action, state, runtime);
+      if (!spell) {
+        continue;
+      }
+
+      if (action.condition) {
+        const castCtx: EvalContext = { ...ctx, candidateAbility: spell.name };
+        try {
+          const value = evaluate(action.condition.ast, state, castCtx);
+          if (value === 0) {
+            continue;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      earliestTime = mergeProjectedActionableTime(
+        earliestTime,
+        getProjectedActionableTimeForSpell(spell, state),
+      );
+      continue;
+    }
+
+    if (action.condition) {
+      try {
+        const value = evaluate(action.condition.ast, state, ctx);
+        if (value === 0) {
+          continue;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    if (action.type === 'call_list') {
+      const subList = allLists.find((entry) => entry.name === action.listName);
+      if (!subList) {
+        continue;
+      }
+
+      const result = findEarliestProjectedActionableTimeInList(subList, allLists, state, ctx, runtime);
+      earliestTime = mergeProjectedActionableTime(earliestTime, result.earliestTime);
+
+      if (action.callType === 'run' || result.terminated) {
+        return { earliestTime, terminated: true };
+      }
+      continue;
+    }
+
+    if (action.type === 'variable') {
+      applyVariable(action, state, ctx);
+    }
+  }
+
+  return { earliestTime, terminated: false };
+}
+
+function findEarliestProjectedActionableTime(state: GameState, runtime: SpecRuntime): number | null {
+  const actionLists = getActionListsForRuntime(runtime);
+  const defaultList = actionLists.find((entry) => entry.name === 'default');
+  if (!defaultList) {
+    return null;
+  }
+
+  const ctx: EvalContext = { variables: new Map() };
+  return findEarliestProjectedActionableTimeInList(defaultList, actionLists, state, ctx, runtime).earliestTime;
 }
 
 function createPreviewRng(): RngInstance {
@@ -165,12 +301,22 @@ function createPreviewRng(): RngInstance {
   };
 }
 
-function cloneLookaheadState(state: GameState, extraActionIds: readonly string[] = []): GameState {
+function normalizeRecommendedSpellId(spellId: string, state: GameState): string {
+  if (spellId === 'flame_shock' && state.hasTalent('voltaic_blaze')) {
+    return 'voltaic_blaze';
+  }
+  return spellId;
+}
+
+function cloneLookaheadState(
+  state: GameState,
+  runtime: SpecRuntime,
+  extraActionIds: readonly string[] = [],
+): GameState {
   const sim = state.clone();
   const originalActions = state.action_list ?? new Map();
   const reboundActions = new Map([
-    ...monk_module.create_actions(sim).entries(),
-    ...createSharedPlayerActions(sim).entries(),
+    ...runtime.module.create_actions(sim).entries(),
   ]);
   sim.action_list = new Map(originalActions);
   for (const [spellId, action] of reboundActions) {
@@ -181,11 +327,16 @@ function cloneLookaheadState(state: GameState, extraActionIds: readonly string[]
   return sim;
 }
 
-function createLookaheadContext(state: GameState, extraActionIds: readonly string[] = []): LookaheadContext {
+function createLookaheadContext(
+  state: GameState,
+  runtime: SpecRuntime,
+  extraActionIds: readonly string[] = [],
+): LookaheadContext {
   return {
-    state: cloneLookaheadState(state, extraActionIds),
+    state: cloneLookaheadState(state, runtime, extraActionIds),
     queue: new SimEventQueue(),
     rng: createPreviewRng(),
+    runtime,
   };
 }
 
@@ -222,31 +373,25 @@ function processLookaheadEvent(ctx: LookaheadContext, event: SimEvent): void {
     case EventType.CHANNEL_TICK:
       processChannelTick(event, ctx.state, ctx.rng, ctx.queue);
       break;
+    case EventType.DOT_TICK:
+      processDotTickDetailed(event, ctx.state, ctx.rng, ctx.queue);
+      break;
     case EventType.CHANNEL_END:
       processChannelEnd(event, ctx.state, ctx.queue, ctx.rng);
       break;
+    case EventType.ABILITY_CAST:
+      processAbilityCast(event, ctx.state, ctx.queue, ctx.rng);
+      break;
     case EventType.DELAYED_SPELL_IMPACT:
-      processDelayedSpellImpact(event.spellId, ctx.state, ctx.queue, ctx.rng);
-      break;
     case EventType.TIGEREYE_BREW_TICK:
-      if (ctx.state.hasTalent('tigereye_brew')) {
-        const current = ctx.state.getBuffStacks('tigereye_brew_1');
-        if (current < 20) {
-          ctx.state.applyBuff('tigereye_brew_1', 120, current + 1);
-        }
-        const period = 8 / (1 + ctx.state.getHastePercent() / 100);
-        ctx.queue.push({ type: EventType.TIGEREYE_BREW_TICK, time: ctx.state.currentTime + period });
-      }
-      break;
     case EventType.COMBAT_WISDOM_TICK:
-      if (ctx.state.hasTalent('combat_wisdom')) {
-        ctx.state.applyBuff('combat_wisdom', ctx.state.encounterDuration - ctx.state.currentTime);
-        const nextTick = ctx.state.currentTime + 15;
-        ctx.state.nextCombatWisdomAt = nextTick;
-        if (nextTick < ctx.state.encounterDuration) {
-          ctx.queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
-        }
-      }
+      ctx.runtime.processScheduledEvent?.(
+        event,
+        ctx.state,
+        ctx.queue,
+        ctx.rng,
+        ctx.state.encounterDuration,
+      );
       break;
     case EventType.AUTO_ATTACK_MH:
     case EventType.AUTO_ATTACK_OH:
@@ -260,10 +405,10 @@ function processLookaheadEvent(ctx: LookaheadContext, event: SimEvent): void {
     case EventType.PLAYER_INPUT:
     case EventType.PLAYER_CANCEL:
     case EventType.QUEUED_ABILITY_FIRE:
-    case EventType.ABILITY_CAST:
     case EventType.ENERGY_CAP_CHECK:
     case EventType.ENCOUNTER_START:
     case EventType.ENCOUNTER_END:
+    case EventType.CAST_START:
       break;
   }
 }
@@ -314,7 +459,7 @@ function executeLookaheadSpell(ctx: LookaheadContext, spell: SpellDef): ReturnTy
 function selectActionWithChannelProjection(ctx: LookaheadContext): SelectedAction | null {
   // Primary projection: evaluate at the first post-GCD instant.
   projectToGcdReady(ctx);
-  const immediate = selectAction(ctx.state);
+  const immediate = selectAction(ctx.state, ctx.runtime);
   if (immediate) {
     return immediate;
   }
@@ -322,21 +467,40 @@ function selectActionWithChannelProjection(ctx: LookaheadContext): SelectedActio
   // If an active channel still blocks all options, project to natural channel end
   // and evaluate again so the UI never goes blank during channel lock windows.
   const activeChannel = ctx.state.getActiveChannel();
-  if (!activeChannel) {
-    return null;
+  if (activeChannel) {
+    advanceLookaheadTime(ctx, activeChannel.endsAt);
+    processChannelEnd({
+      type: EventType.CHANNEL_END,
+      time: ctx.state.currentTime,
+      spellId: activeChannel.spellId,
+      channelId: activeChannel.channelId,
+    }, ctx.state, ctx.queue, ctx.rng);
+    flushLookaheadEventsAtCurrentTime(ctx);
+    projectToGcdReady(ctx);
+
+    const projectedAfterChannel = selectAction(ctx.state, ctx.runtime);
+    if (projectedAfterChannel) {
+      return projectedAfterChannel;
+    }
   }
 
-  advanceLookaheadTime(ctx, activeChannel.endsAt);
-  processChannelEnd({
-    type: EventType.CHANNEL_END,
-    time: ctx.state.currentTime,
-    spellId: activeChannel.spellId,
-    channelId: activeChannel.channelId,
-  }, ctx.state, ctx.queue, ctx.rng);
-  flushLookaheadEventsAtCurrentTime(ctx);
-  projectToGcdReady(ctx);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const nextActionableTime = findEarliestProjectedActionableTime(ctx.state, ctx.runtime);
+    if (nextActionableTime === null || nextActionableTime <= ctx.state.currentTime + Number.EPSILON) {
+      return null;
+    }
 
-  return selectAction(ctx.state);
+    advanceLookaheadTime(ctx, nextActionableTime);
+    flushLookaheadEventsAtCurrentTime(ctx);
+    projectToGcdReady(ctx);
+
+    const projected = selectAction(ctx.state, ctx.runtime);
+    if (projected) {
+      return projected;
+    }
+  }
+
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,10 +511,13 @@ function selectActionWithChannelProjection(ctx: LookaheadContext): SelectedActio
  * Get the top recommended spell ID for the current state.
  * Returns null if no spell is castable.
  */
-export function getRecommendation(state: GameState): string | null {
-  const ctx = createLookaheadContext(state);
+export function getRecommendation(
+  state: GameState,
+  runtime: SpecRuntime = monkWindwalkerRuntime,
+): string | null {
+  const ctx = createLookaheadContext(state, runtime);
   const selected = selectActionWithChannelProjection(ctx);
-  return selected?.spell.name ?? null;
+  return selected ? normalizeRecommendedSpellId(selected.spell.name, state) : null;
 }
 
 /**
@@ -360,8 +527,12 @@ export function getRecommendation(state: GameState): string | null {
  * Returns the cloned, mutated GameState after the cast is applied so that
  * `getTopNRecommendations` can chain multiple simulated steps.
  */
-export function simulateStep(state: GameState, spell: SpellDef): GameState {
-  const ctx = createLookaheadContext(state, [spell.name]);
+export function simulateStep(
+  state: GameState,
+  spell: SpellDef,
+  runtime: SpecRuntime = monkWindwalkerRuntime,
+): GameState {
+  const ctx = createLookaheadContext(state, runtime, [spell.name]);
   const result = executeLookaheadSpell(ctx, spell);
   if (!result.success) {
     throw new Error(`Lookahead simulateStep failed for ${spell.name}: ${result.failReason ?? 'unknown'}`);
@@ -376,13 +547,17 @@ export function simulateStep(state: GameState, spell: SpellDef): GameState {
  * Clones state to avoid mutating live state, then walks the APL and
  * simulates each successive cast to produce a realistic lookahead queue.
  */
-export function getTopNRecommendations(state: GameState, n: number): string[] {
-  const ctx = createLookaheadContext(state);
+export function getTopNRecommendations(
+  state: GameState,
+  n: number,
+  runtime: SpecRuntime = monkWindwalkerRuntime,
+): string[] {
+  const ctx = createLookaheadContext(state, runtime);
   const result: string[] = [];
   for (let i = 0; i < n; i++) {
     const selected = selectActionWithChannelProjection(ctx);
     if (!selected) break;
-    result.push(selected.spell.name);
+    result.push(normalizeRecommendedSpellId(selected.spell.name, state));
     if (!executeLookaheadSpell(ctx, selected.spell).success) {
       break;
     }

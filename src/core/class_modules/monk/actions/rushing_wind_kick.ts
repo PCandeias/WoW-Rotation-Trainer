@@ -57,7 +57,10 @@ export class RushingWindKickAction extends RisingSunKickAction {
   }
 
   override preCastFailReason(): 'talent_missing' | undefined {
-    return this.p.isBuffActive('rushing_wind_kick') ? undefined : 'talent_missing';
+    if (!this.p.isBuffActive('rushing_wind_kick')) {
+      return 'talent_missing';
+    }
+    return undefined;
   }
 
   override execute(

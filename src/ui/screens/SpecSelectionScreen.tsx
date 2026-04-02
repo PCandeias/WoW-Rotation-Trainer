@@ -3,34 +3,14 @@ import type { CSSProperties } from 'react';
 import { AbilityIcon } from '@ui/components/AbilityIcon';
 import { FONTS, T } from '@ui/theme/elvui';
 import { buildCardStyle } from '@ui/theme/stylePrimitives';
-import type { TrainerSpecId } from '@ui/state/trainerSettings';
+import { getPlayableTrainerSpecs, type TrainerSpecId } from '@ui/specs/specCatalog';
 
 export interface SpecSelectionScreenProps {
   selectedSpec: TrainerSpecId;
   onSelectSpec: (specId: TrainerSpecId) => void;
 }
 
-interface SpecOption {
-  id: TrainerSpecId;
-  className: string;
-  specName: string;
-  heroTree: string;
-  iconName: string;
-  emoji: string;
-  accentColor: string;
-}
-
-const SPEC_OPTIONS: SpecOption[] = [
-  {
-    id: 'monk-windwalker',
-    className: 'Monk',
-    specName: 'Windwalker',
-    heroTree: 'Shado-Pan',
-    iconName: 'spell_monk_windwalker_spec',
-    emoji: '🐉',
-    accentColor: T.classMonk,
-  },
-];
+const SPEC_OPTIONS = getPlayableTrainerSpecs();
 
 /**
  * First-run entry screen that selects the active spec before setup.
@@ -84,6 +64,7 @@ export function SpecSelectionScreen({
             flexDirection: 'column',
             alignItems: 'center',
             gap: 14,
+            position: 'relative',
           };
 
           return (
@@ -94,6 +75,29 @@ export function SpecSelectionScreen({
               onClick={(): void => onSelectSpec(option.id)}
               aria-pressed={active}
             >
+              {option.stampLabel ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 14,
+                    right: 14,
+                    transform: 'rotate(10deg)',
+                    border: `1px solid ${option.accentColor}`,
+                    borderRadius: 999,
+                    padding: '4px 10px',
+                    fontFamily: FONTS.ui,
+                    fontSize: '0.68rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.12em',
+                    textTransform: 'uppercase',
+                    color: option.accentColor,
+                    background: 'rgba(7, 10, 18, 0.88)',
+                    boxShadow: `0 0 0 1px ${option.accentColor}20 inset`,
+                  }}
+                >
+                  {option.stampLabel}
+                </div>
+              ) : null}
               <div
                 style={{
                   width: 108,
@@ -113,10 +117,10 @@ export function SpecSelectionScreen({
               <div style={{ color: option.accentColor, fontFamily: FONTS.display, fontSize: '1.55rem' }}>{option.specName}</div>
               <div style={{ color: T.textBright, fontFamily: FONTS.body, fontWeight: 700, fontSize: '1rem' }}>{option.className}</div>
               <div style={{ color: T.text, fontSize: '0.92rem', lineHeight: 1.55, textAlign: 'center' }}>
-                Agile melee training with a Warcraft-inspired HUD and polished analysis surfaces.
+                {option.description}
               </div>
               <div style={{ color: T.textDim, fontFamily: FONTS.ui, fontSize: '0.78rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-                Hero Tree · {option.heroTree}
+                {option.footerLabel}
               </div>
               <div style={{ color: active ? option.accentColor : T.textDim, fontFamily: FONTS.ui, fontSize: '0.76rem', letterSpacing: '0.12em', textTransform: 'uppercase' }}>
                 {active ? 'Selected Spec' : 'Ready to Select'}
