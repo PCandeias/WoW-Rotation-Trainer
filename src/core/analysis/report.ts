@@ -175,8 +175,12 @@ function buildDamageBreakdown(
     );
 }
 
-function buildResourceWasteSeries(player: RawRunTrace, trainer: RawRunTrace): ResourceWasteChartPoint[] {
-  const wasteMetrics = getResourceWasteMetricsForSpec(trainer.specId);
+function buildResourceWasteSeries(
+  specId: string,
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+): ResourceWasteChartPoint[] {
+  const wasteMetrics = getResourceWasteMetricsForSpec(specId);
   if (wasteMetrics.length === 0) {
     return [];
   }
@@ -539,8 +543,12 @@ function buildFinisherFindings(profile: SpecAnalysisProfile, player: RawRunTrace
   });
 }
 
-function buildResourceFinding(player: RawRunTrace, trainer: RawRunTrace): AnalysisFinding[] {
-  const wasteMetrics = getResourceWasteMetricsForSpec(trainer.specId);
+function buildResourceFinding(
+  specId: string,
+  player: RawRunTrace,
+  trainer: RawRunTrace,
+): AnalysisFinding[] {
+  const wasteMetrics = getResourceWasteMetricsForSpec(specId);
   if (wasteMetrics.length === 0) {
     return [];
   }
@@ -999,7 +1007,7 @@ export function buildRunAnalysisReport(
     ...buildAplFindings(profile, player, trainer, registry),
     ...buildProcFindings(profile, player, trainer, registry),
     ...buildFinisherFindings(profile, player, trainer),
-    ...buildResourceFinding(player, trainer),
+    ...buildResourceFinding(benchmarkSignature.specId, player, trainer),
     ...profile.analyzeSetup(player, trainer),
     ...buildDowntimeFinding(profile, player),
   ]
@@ -1022,7 +1030,7 @@ export function buildRunAnalysisReport(
       cumulativeDamage: buildCumulativeSeries(player, trainer),
       spellTimeline: buildSpellTimelineChart(player, trainer),
       cooldownUsage: buildCooldownRows(profile, player, trainer),
-      resourceWaste: buildResourceWasteSeries(player, trainer),
+      resourceWaste: buildResourceWasteSeries(benchmarkSignature.specId, player, trainer),
     },
     damageBreakdown: buildDamageBreakdown(player, trainer, registry.spellbook),
     targetDebuffUptimes: buildTargetDebuffUptimeRows(player, trainer),
