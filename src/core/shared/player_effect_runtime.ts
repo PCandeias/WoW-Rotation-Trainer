@@ -16,6 +16,16 @@ import {
 } from './player_effect_actions';
 
 const SHARED_USE_BUFF_TRINKETS = new Set(['algethar_puzzle_box']);
+const ARCANOWEAVE_BONUS_IDS = new Set([13668]);
+const ARCANOWEAVE_RPPM = 2.0;
+const ARCANOWEAVE_DURATION = 20;
+const ARCANOWEAVE_PRIMARY_STAT = 25.236664;
+const MIGHT_OF_THE_VOID_RPPM = 3.0;
+const MIGHT_OF_THE_VOID_DURATION = 15;
+const ACUITY_OF_THE_RENDOREI_AMOUNTS = new Map<string, number>([
+  ['enchant_weapon__acuity_of_the_rendorei_1', 53.43994],
+  ['enchant_weapon__acuity_of_the_rendorei_2', 66.80006],
+]);
 const FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING = 89.39348;
 const HARANDAR_CELEBRATION_PRIMARY_STAT = 50;
 const VOID_TOUCHED_PRIMARY_STAT = 25.10191;
@@ -74,6 +84,15 @@ interface DragonhawkProcState {
   tracker: RppmTracker;
 }
 
+interface ArcanoweaveProcState {
+  tracker: RppmTracker;
+}
+
+interface MightOfTheVoidProcState {
+  tracker: RppmTracker;
+  amount: number;
+}
+
 // ---------------------------------------------------------------------------
 // Gaze of the Alnseer — RPPM tracker (passive 2.0 PPM, haste-scaled)
 // ---------------------------------------------------------------------------
@@ -85,6 +104,8 @@ const gazeLastStackTime = new WeakMap<GameState, number>();
 const loaProcStates = new WeakMap<GameState, LoaProcState>();
 const huntProcStates = new WeakMap<GameState, HuntProcState>();
 const dragonhawkProcStates = new WeakMap<GameState, DragonhawkProcState>();
+const arcanoweaveProcStates = new WeakMap<GameState, ArcanoweaveProcState>();
+const mightOfTheVoidProcStates = new WeakMap<GameState, MightOfTheVoidProcState>();
 
 /** DBC: spell 1256896, 2.0 RPPM, haste-scaled. */
 const GAZE_RPPM = 2.0;
@@ -118,7 +139,11 @@ function applyTimedSharedBuff(
   duration: number,
   stacks = 1,
 ): void {
+  const wasActive = state.isBuffActive(buffId);
   state.applyBuff(buffId, duration, stacks);
+  if (!wasActive) {
+    queue.push({ type: EventType.BUFF_APPLY, time: state.currentTime, buffId, stacks });
+  }
   queue.push({ type: EventType.BUFF_EXPIRE, time: state.currentTime + duration, buffId });
 }
 
@@ -200,6 +225,36 @@ function initializeDragonhawkProcState(state: GameState, loadout: ReturnType<typ
   });
 }
 
+function initializeArcanoweaveProcState(state: GameState, loadout: ReturnType<typeof cloneLoadout>): void {
+  const hasArcanoweave = loadout.gear.some((item) => item.bonusIds.some((bonusId) => ARCANOWEAVE_BONUS_IDS.has(bonusId)));
+  if (!hasArcanoweave) {
+    return;
+  }
+
+  arcanoweaveProcStates.set(state, {
+    tracker: createRppmTracker(ARCANOWEAVE_RPPM),
+  });
+}
+
+function initializeMightOfTheVoidProcState(state: GameState, loadout: ReturnType<typeof cloneLoadout>): void {
+  let amount = 0;
+  for (const item of loadout.gear) {
+    if (item.slot !== 'main_hand' && item.slot !== 'off_hand') {
+      continue;
+    }
+    amount = Math.max(amount, ACUITY_OF_THE_RENDOREI_AMOUNTS.get(item.enchantName ?? '') ?? 0);
+  }
+
+  if (amount <= 0) {
+    return;
+  }
+
+  mightOfTheVoidProcStates.set(state, {
+    tracker: createRppmTracker(MIGHT_OF_THE_VOID_RPPM),
+    amount,
+  });
+}
+
 function pickRandomEntry<T>(rng: RngInstance, values: readonly T[]): T {
   const index = Math.min(values.length - 1, Math.floor(rng.next() * values.length));
   return values[index];
@@ -238,7 +293,7 @@ export function initializeSharedPlayerState(state: GameState, profile: Character
   state.assumeMysticTouch = loadout.externalBuffs.mysticTouch;
   state.damageHooks = {
     ...state.damageHooks,
-    getTargetMultiplier: (spell, s): number => getSharedTargetDebuffMultiplier(s, spell),
+    getTargetMultiplier: (spell, s, targetIndex): number => getSharedTargetDebuffMultiplier(s, spell, targetIndex),
   };
 
   applyPassiveLoadoutStats(state, profile, loadout);
@@ -299,10 +354,28 @@ export function initializeSharedPlayerState(state: GameState, profile: Character
   initializeLoaProcState(state, loadout);
   initializeHuntProcState(state, loadout);
   initializeDragonhawkProcState(state, loadout);
+  initializeArcanoweaveProcState(state, loadout);
+  initializeMightOfTheVoidProcState(state, loadout);
+
+  const priorAttackPowerBonus = state.statHooks.getAttackPowerBonus;
+  const mightOfTheVoidAmount = mightOfTheVoidProcStates.get(state)?.amount ?? 0;
+  state.statHooks = {
+    ...state.statHooks,
+    getAttackPowerBonus: (currentState): number => {
+      let bonus = priorAttackPowerBonus?.(currentState) ?? 0;
+      if (currentState.isBuffActive('arcanoweave_insight')) {
+        bonus += ARCANOWEAVE_PRIMARY_STAT;
+      }
+      if (mightOfTheVoidAmount > 0 && currentState.isBuffActive('might_of_the_void')) {
+        bonus += mightOfTheVoidAmount;
+      }
+      return bonus;
+    },
+  };
 
   state.recomputeEnergyRegenRate();
   state.executionHooks = createSharedPlayerExecutionHooks();
-  state.action_list = createSharedPlayerActions(state, profile.race);
+  state.action_list = createSharedPlayerActions(state, profile.race, loadout.consumables.potion);
 
   for (const actionName of getAllSharedRacialActionNames()) {
     if (!availableRacials.has(actionName)) {
@@ -323,6 +396,10 @@ function applyPassiveLoadoutStats(
   profile: CharacterProfile,
   loadout: ReturnType<typeof cloneLoadout>,
 ): void {
+  if (profile.statsSource === 'simc_buffed_snapshot') {
+    return;
+  }
+
   if (loadout.consumables.flask === 'flask_of_the_blood_knights_2') {
     const baseHasteRating = state.stats.hasteRating ?? 0;
     const totalHasteRating = baseHasteRating + FLASK_OF_THE_BLOOD_KNIGHTS_HASTE_RATING;
@@ -448,7 +525,7 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
         // Step 1: Roll RPPM for Alnsight proc
         const tracker = getGazeRppm(state);
         if (attemptProc(tracker, state.currentTime, haste, rng)) {
-          state.applyBuff('alnsight', ALNSIGHT_DURATION);
+          applyTimedSharedBuff(state, queue, 'alnsight', ALNSIGHT_DURATION);
         }
 
         // Step 2: While Alnsight is active, each ability grants an Alnscorned Essence stack (0.75s ICD)
@@ -457,7 +534,7 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
           if (state.currentTime - lastStack >= ALNSCORNED_ESSENCE_ICD) {
             const currentStacks = state.getBuffStacks('alnscorned_essence');
             const newStacks = Math.min(currentStacks + 1, ALNSCORNED_ESSENCE_MAX_STACKS);
-            state.applyBuff('alnscorned_essence', ALNSCORNED_ESSENCE_DURATION, newStacks);
+            applyTimedSharedBuff(state, queue, 'alnscorned_essence', ALNSCORNED_ESSENCE_DURATION, newStacks);
             gazeLastStackTime.set(state, state.currentTime);
           }
         }
@@ -487,6 +564,16 @@ export function createSharedPlayerExecutionHooks(): GameStateExecutionHooks {
       const dragonhawkProcState = dragonhawkProcStates.get(state);
       if (dragonhawkProcState && attemptProc(dragonhawkProcState.tracker, state.currentTime, haste, rng)) {
         applyTimedSharedBuff(state, queue, 'precision_of_the_dragonhawk', 15);
+      }
+
+      const arcanoweaveProcState = arcanoweaveProcStates.get(state);
+      if (arcanoweaveProcState && attemptProc(arcanoweaveProcState.tracker, state.currentTime, haste, rng)) {
+        applyTimedSharedBuff(state, queue, 'arcanoweave_insight', ARCANOWEAVE_DURATION);
+      }
+
+      const mightOfTheVoidProcState = mightOfTheVoidProcStates.get(state);
+      if (mightOfTheVoidProcState && attemptProc(mightOfTheVoidProcState.tracker, state.currentTime, haste, rng)) {
+        applyTimedSharedBuff(state, queue, 'might_of_the_void', MIGHT_OF_THE_VOID_DURATION);
       }
     },
   };

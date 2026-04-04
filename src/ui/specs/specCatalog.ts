@@ -1,5 +1,6 @@
-import type { ActionBarSlotDef } from '@ui/components/ActionBar';
-import { ENHANCEMENT_ACTION_BAR, WW_ACTION_BAR } from '@ui/components/ActionBar';
+import type { ActionBarSlotDef } from '@ui/specs/actionBarTypes';
+import { WW_ACTION_BAR } from '@ui/specs/monk/actionBar';
+import { ENHANCEMENT_ACTION_BAR } from '@ui/specs/shaman/actionBar';
 import { TARGET_DEBUFF_SPELL_IDS, TRACKED_BUFF_SPELL_IDS } from '@ui/components/trackerSpellIds';
 import { T } from '@ui/theme/elvui';
 

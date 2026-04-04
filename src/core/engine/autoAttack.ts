@@ -169,8 +169,11 @@ function suppressesAutoAttacksDuringActiveChannel(state: GameState): boolean {
  * Call once at ENCOUNTER_START.
  *
  * - First MH swing fires at `state.currentTime`.
- * - First OH swing fires at `state.currentTime + swingInterval(ohSpeed, haste) / 2`
- *   (offset by half interval to avoid bunching with MH).
+ * - First OH swing also fires at `state.currentTime` when an off-hand weapon is equipped.
+ *
+ * SimC schedules both hands from the same auto-attack execute path rather than
+ * introducing a trainer-local half-swing offset, so we start them in phase and
+ * let later weapon-speed differences create the natural drift.
  *
  * @param state - The current game state.
  * @param queue - The simulation event queue.
@@ -178,11 +181,11 @@ function suppressesAutoAttacksDuringActiveChannel(state: GameState): boolean {
 export function initAutoAttacks(state: GameState, queue: SimEventQueue): void {
   // Reset swing timers
   state.mhSwingTimer = state.currentTime;
-  state.ohSwingTimer = state.currentTime + currentSwingInterval('offHand', state) / 2;
+  state.ohSwingTimer = state.currentTime;
 
   // Schedule first swings
   queue.push({ type: EventType.AUTO_ATTACK_MH, time: state.currentTime });
-  queue.push({ type: EventType.AUTO_ATTACK_OH, time: state.currentTime + currentSwingInterval('offHand', state) / 2 });
+  queue.push({ type: EventType.AUTO_ATTACK_OH, time: state.currentTime });
 }
 
 // ---------------------------------------------------------------------------

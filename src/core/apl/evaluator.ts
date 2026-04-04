@@ -10,6 +10,7 @@
  */
 
 import type { AstNode } from './parser';
+import type { EvaluatorHooks } from './evaluator_hooks';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,9 +85,6 @@ export interface GameState {
   prevGcdAbilities: SpellId[]; // [most recent first]
   lastComboStrikeAbility: SpellId | null;
 
-  // Shado-Pan specific
-  flurryCharges: number;
-
   // Buffs, cooldowns, talents
   buffs: Map<string, BuffState>;
   cooldowns: Map<string, CooldownState>;
@@ -108,6 +106,12 @@ export interface GameState {
    * trigger_gcd, not base_gcd.  If not implemented, defaults to 1.5s.
    */
   getGcdMax?(): number;
+
+  /** Generic numeric state bag — used for spec-owned counters and flags. */
+  getNumericState?(stateId: string): number;
+
+  /** Spec-owned hooks for extending APL buff resolution without coupling the evaluator to spec modules. */
+  evaluatorHooks?: EvaluatorHooks;
 
   // Gear
   trinkets: TrinketState[]; // exactly 2 elements
@@ -148,13 +152,6 @@ function parseSlotIndex(segment: string): number {
 /** Return true if buff is active (exists in map AND not yet expired). */
 function isBuffActive(buff: BuffState | undefined, currentTime: number): boolean {
   return buff !== undefined && (buff.expiresAt === 0 || buff.expiresAt > currentTime);
-}
-
-function getZenithBuffState(state: GameState): BuffState | undefined {
-  const zenith = state.buffs.get('zenith');
-  if (isBuffActive(zenith, state.currentTime)) return zenith;
-  const conduit = state.buffs.get('celestial_conduit_active');
-  return isBuffActive(conduit, state.currentTime) ? conduit : undefined;
 }
 
 function resolveCooldown(
@@ -262,24 +259,19 @@ function resolveProperty(path: string[], state: GameState, ctx: EvalContext): nu
     if (extra.length > 0) {
       throw new AplError(`Too many segments in buff path: ${path.join('.')}`);
     }
+    const lookupBuff = (name: string): BuffState | undefined => state.buffs.get(name);
+    const getNumericState = (key: string): number => state.getNumericState?.(key) ?? 0;
+
+    // Spec hooks: custom buff state query takes priority over standard resolution.
+    const customResult = state.evaluatorHooks?.resolveCustomBuffState?.(
+      rawName, prop, lookupBuff, state.currentTime, getNumericState,
+    );
+    if (customResult !== undefined) return customResult;
+
     const name = normalizeAplBuffName(rawName);
-    if (rawName === 'flurry_charge') {
-      const flurry = state.buffs.get('flurry_charge');
-      const flurryStacks = isBuffActive(flurry, state.currentTime)
-        ? (flurry?.stackTimers ?? []).filter(t => t === 0 || t > state.currentTime).length
-        : state.flurryCharges;
-      switch (prop) {
-        case 'up':
-          return flurryStacks > 0 ? 1 : 0;
-        case 'remains':
-          return 0;
-        case 'stack':
-          return flurryStacks;
-        default:
-          throw new AplError(`Unknown buff property '${prop}' in path: ${path.join('.')}`);
-      }
-    }
-    const buff = rawName === 'zenith' ? getZenithBuffState(state) : state.buffs.get(name);
+    // Spec hooks: buff alias resolution (e.g. multi-key alias logic).
+    const buff = state.evaluatorHooks?.resolveBuffAlias?.(rawName, lookupBuff, state.currentTime)
+      ?? state.buffs.get(name);
     const active = isBuffActive(buff, state.currentTime);
 
     switch (prop) {
@@ -755,8 +747,6 @@ export function normalizeAplBuffName(name: string): string {
   switch (name) {
     case 'dance_of_chiji':
       return 'dance_of_chi_ji';
-    case 'zenith':
-      return 'zenith';
     default:
       return name;
   }

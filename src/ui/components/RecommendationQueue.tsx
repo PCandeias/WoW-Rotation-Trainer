@@ -2,7 +2,7 @@ import React from 'react';
 import type { CSSProperties } from 'react';
 import { T } from '@ui/theme/elvui';
 import { AbilityIcon } from '@ui/components/AbilityIcon';
-import { SPELL_ICONS } from '@ui/components/ActionBar';
+import { SPELL_ICONS } from '@ui/specs/spellIcons';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -11,6 +11,10 @@ import { SPELL_ICONS } from '@ui/components/ActionBar';
 export interface RecommendationQueueProps {
   /** Ordered list of recommended spellIds (first = most urgent). Max 4 shown. */
   recommendations: string[];
+  /** Projected wait until slot 0 becomes actionable. Null/0 means clickable now. */
+  firstRecommendationReadyIn?: number | null;
+  /** Current GCD wait; suppress slot-0 timer if the recommendation is ready by then. */
+  gcdRemaining?: number;
   /** Whether to show at all (false in Test mode) */
   visible: boolean;
   /** When true, render the spell name below each icon (useful for debugging APL output) */
@@ -101,8 +105,14 @@ function formatSpellId(spellId: string): string {
   return spellId.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
+function formatReadyIn(readyIn: number): string {
+  return readyIn >= 3 ? String(Math.ceil(readyIn)) : readyIn.toFixed(1);
+}
+
 export function RecommendationQueue({
   recommendations,
+  firstRecommendationReadyIn = null,
+  gcdRemaining = 0,
   visible,
   debug = false,
   procHighlight,
@@ -119,6 +129,7 @@ export function RecommendationQueue({
   if (!visible) return null;
 
   const displayed = recommendations.slice(0, 4);
+  const timerThreshold = Math.max(0, gcdRemaining) + 0.05;
 
   const containerStyle: CSSProperties = {
     display: 'flex',
@@ -144,6 +155,7 @@ export function RecommendationQueue({
         const slotStyle: CSSProperties = {
           width: `${config.size}px`,
           height: `${config.size}px`,
+          position: 'relative',
           background: T.bgSlot,
           border: config.border,
           ...(config.boxShadow ? { boxShadow: config.boxShadow } : {}),
@@ -165,6 +177,9 @@ export function RecommendationQueue({
         };
 
         const isAnimating = index === 0 && procHighlight;
+        const showReadyTimer = index === 0
+          && firstRecommendationReadyIn !== null
+          && firstRecommendationReadyIn > timerThreshold;
         const animStyle: CSSProperties = isAnimating && procHighlightStyle === 'shake'
           ? {
               animation: 'rqShake 0.35s ease, rqBorderFlash 0.8s ease forwards',
@@ -178,6 +193,20 @@ export function RecommendationQueue({
             }
           : {};
 
+        const timerStyle: CSSProperties = {
+          position: 'absolute',
+          right: '2px',
+          bottom: '2px',
+          padding: '0 3px',
+          borderRadius: '2px',
+          background: 'rgba(0, 0, 0, 0.78)',
+          color: T.gold,
+          fontSize: index === 0 ? '10px' : '9px',
+          fontWeight: 700,
+          lineHeight: 1.2,
+          textShadow: '0 1px 2px rgba(0, 0, 0, 0.85)',
+        };
+
         return (
           <div
             key={index === 0 ? highlightKey : `${spellId}-${index}`}
@@ -186,6 +215,11 @@ export function RecommendationQueue({
           >
             <div data-testid="recommendation-slot" style={{ ...slotStyle, ...animStyle }}>
               <AbilityIcon iconName={iconName} emoji={emoji} size={config.size} />
+              {showReadyTimer && (
+                <span data-testid="recommendation-slot-timer" style={timerStyle}>
+                  {formatReadyIn(firstRecommendationReadyIn)}
+                </span>
+              )}
             </div>
             {debug && <span style={nameStyle}>{formatSpellId(spellId)}</span>}
           </div>

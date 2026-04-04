@@ -3,6 +3,7 @@ import type { ClassModule } from '../class_module';
 import type { IGameState } from '../../engine/i_game_state';
 import type { Action } from '../../engine/action';
 import type { GameState } from '../../engine/gameState';
+import { WEAPON_POWER_COEFFICIENT } from '../../engine/gameState';
 import type { SimEventQueue } from '../../engine/eventQueue';
 import { EventType } from '../../engine/eventQueue';
 import type { RngInstance } from '../../engine/rng';
@@ -10,6 +11,7 @@ import { rollChance, rollRange } from '../../engine/rng';
 import { computePhysicalArmorMultiplier } from '../../engine/armor';
 import { currentSwingInterval } from '../../engine/autoAttack';
 import { calculateDamage } from '../../engine/damage';
+import { maybeTriggerSkyfuryProc } from '../../shared/melee_player_effects';
 import { getSharedTargetDebuffMultiplier } from '../../shared/player_effects';
 import { requireMonkSpellData } from '../../dbc/monk_spell_data';
 import type { SpellDef } from '../../data/spells';
@@ -21,6 +23,13 @@ import {
   getMonkTalents,
   initializeMonkRuntimeState,
 } from './monk_runtime';
+import {
+  getMonkDualThreatMhAllowed,
+  getMonkDualThreatOhAllowed,
+  setMonkDualThreatMhAllowed,
+  setMonkDualThreatOhAllowed,
+  setMonkNextCombatWisdomAt,
+} from './monk_state_keys';
 import { TigerPalmAction } from './actions/tiger_palm';
 import { BlackoutKickAction } from './actions/blackout_kick';
 import { RisingSunKickAction } from './actions/rising_sun_kick';
@@ -36,16 +45,9 @@ import { TouchOfKarmaAction } from './actions/touch_of_karma';
 
 const WINDWALKER_PASSIVE_SPELL = requireMonkSpellData(137025);
 const DUAL_THREAT_TALENT = requireMonkSpellData(451823);
-const SKYFURY_SPELL = requireMonkSpellData(462854);
 const TIGER_FANG_SPELL = requireMonkSpellData(1272781);
 const DUAL_THREAT_PROC_CHANCE_PCT = DUAL_THREAT_TALENT.effectN(1).base_value();
-const SKYFURY_PROC_CHANCE_PCT = SKYFURY_SPELL.proc_chance_pct();
-const SKYFURY_ICD_SECONDS = SKYFURY_SPELL.internal_cooldown_ms() / 1000;
 const WW_SPEC_AUTO_ATTACK_MULT = 1 + WINDWALKER_PASSIVE_SPELL.effectN(5).percent();
-const SKYFURY_PROC_SPELL_IDS = {
-  mainHand: 'skyfury_proc_mh',
-  offHand: 'skyfury_proc_oh',
-} as const;
 
 function getFlurryChargesForHit(
   state: GameState,
@@ -110,8 +112,9 @@ export const monk_module: ClassModule = {
     if (state.hasTalent('combat_wisdom')) {
       state.chi = Math.min(state.chiMax, 2);
       state.applyBuff('combat_wisdom', state.encounterDuration);
-      state.nextCombatWisdomAt = state.currentTime + 15;
-      queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: state.nextCombatWisdomAt });
+      const nextTick = state.currentTime + 15;
+      setMonkNextCombatWisdomAt(state, nextTick);
+      queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
     }
   },
 
@@ -158,7 +161,8 @@ export const monk_module: ClassModule = {
     // Parry = 0 (position=back). Glancing = 0 (delta=3, SimC only glances at delta>3).
     const spellKey = `auto_attack_${hand === 'mainHand' ? 'mh' : 'oh'}`;
     // SimC: each hand's dual_threat_t has its own damage->allowed flag.
-    const dtKey = hand === 'mainHand' ? 'dualThreatMhAllowed' : 'dualThreatOhAllowed' as const;
+    const getDtAllowed = hand === 'mainHand' ? getMonkDualThreatMhAllowed : getMonkDualThreatOhAllowed;
+    const setDtAllowed = hand === 'mainHand' ? setMonkDualThreatMhAllowed : setMonkDualThreatOhAllowed;
 
     // Tiger Fang: +15% auto-attack crit chance.
     let critChancePct = state.getCritPercent();
@@ -178,19 +182,12 @@ export const monk_module: ClassModule = {
     };
 
     const maybeTriggerSkyfury = (): number => {
-      if (!state.isBuffActive('skyfury')) {
-        return 0;
-      }
-      if (state.currentTime < gs.lastSkyfuryProcAt + SKYFURY_ICD_SECONDS) {
-        return 0;
-      }
-      if (!rollChance(rng, SKYFURY_PROC_CHANCE_PCT)) {
-        return 0;
-      }
-
-      gs.lastSkyfuryProcAt = state.currentTime;
-      state.recordPendingSpellStat(SKYFURY_PROC_SPELL_IDS[hand], 0, 1);
-      return resolveAutoAttack({ mayMiss: false, allowSkyfuryProc: false, scheduleSwing: false });
+      return maybeTriggerSkyfuryProc({
+        hand,
+        state: gs,
+        rng,
+        replayAutoAttack: () => resolveAutoAttack({ mayMiss: false, allowSkyfuryProc: false, scheduleSwing: false }),
+      });
     };
 
     const resolveAutoAttack = (
@@ -204,7 +201,7 @@ export const monk_module: ClassModule = {
         if (roll < missChance) {
           state.recordPendingSpellStat(spellKey, 0, 1, false, 'miss');
           if (state.hasTalent('dual_threat')) {
-            gs[dtKey] = true;
+            setDtAllowed(gs, true);
           }
           if (options.scheduleSwing) {
             scheduleNextSwing();
@@ -215,7 +212,7 @@ export const monk_module: ClassModule = {
         if (roll < missChance + dodgeChance) {
           state.recordPendingSpellStat(spellKey, 0, 1, false, 'dodge');
           if (state.hasTalent('dual_threat')) {
-            gs[dtKey] = true;
+            setDtAllowed(gs, true);
           }
           if (options.scheduleSwing) {
             scheduleNextSwing();
@@ -232,7 +229,7 @@ export const monk_module: ClassModule = {
 
       if (
         state.hasTalent('dual_threat')
-        && gs[dtKey]
+        && getDtAllowed(gs)
         && rollChance(rng, DUAL_THREAT_PROC_CHANCE_PCT)
       ) {
         // SimC: dual_threat_t::impact() — when DT procs it *replaces* the melee
@@ -250,7 +247,7 @@ export const monk_module: ClassModule = {
         // SimC dual_threat_t::damage_t::impact() attributes flurry_charge to MH weapon.
         addMonkFlurryCharges(gs, getFlurryChargesForHit(gs, dtResult.isCrit));
 
-        gs[dtKey] = false;
+        setDtAllowed(gs, false);
         totalDamage += dtResult.finalDamage;
         if (options.allowSkyfuryProc) {
           totalDamage += maybeTriggerSkyfury();
@@ -265,7 +262,10 @@ export const monk_module: ClassModule = {
         ? minDmg
         : rollRange(rng, minDmg, maxDmg);
 
-      const attackPowerDamage = weaponSpeed * (state.getAttackPower() / 6);
+      const weaponAP = hand === 'mainHand'
+        ? gs.getWeaponMainHandAttackPower()
+        : gs.getWeaponOffHandAttackPower();
+      const attackPowerDamage = weaponSpeed * (weaponAP / WEAPON_POWER_COEFFICIENT);
       let baseDamage = weaponDamage + attackPowerDamage;
       if (hand === 'offHand') { baseDamage *= 0.5; }
 
@@ -303,7 +303,7 @@ export const monk_module: ClassModule = {
       }
 
       if (state.hasTalent('dual_threat')) {
-        gs[dtKey] = true;
+        setDtAllowed(gs, true);
       }
 
       totalDamage += finalDamage;

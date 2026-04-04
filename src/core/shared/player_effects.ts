@@ -9,6 +9,7 @@ import type { IGameState } from '../engine/i_game_state';
 
 const RECKLESSNESS_POTION_HASTE_RATING = 934.5676;
 const RECKLESSNESS_POTION_VERS_PENALTY_RATING = 125.6926;
+const LIGHTS_POTENTIAL_PRIMARY_STAT = 365.4052;
 /**
  * Algeth'ar Puzzle Box mastery bonus computed dynamically via
  * {@link computePuzzleMasteryDelta}. This legacy constant is the fallback when
@@ -258,6 +259,13 @@ const SHARED_PLAYER_BUFF_DEFS: BuffDef[] = [
     isHarmful: false,
   },
   {
+    id: 'lights_potential',
+    displayName: "Light's Potential",
+    duration: 30,
+    maxStacks: 1,
+    isHarmful: false,
+  },
+  {
     id: 'algethar_puzzle',
     displayName: "Algeth'ar Puzzle",
     duration: 20,
@@ -276,6 +284,20 @@ const SHARED_PLAYER_BUFF_DEFS: BuffDef[] = [
     displayName: 'Alnscorned Essence',
     duration: 12,
     maxStacks: 20,
+    isHarmful: false,
+  },
+  {
+    id: 'arcanoweave_insight',
+    displayName: 'Arcanoweave Insight',
+    duration: 20,
+    maxStacks: 1,
+    isHarmful: false,
+  },
+  {
+    id: 'might_of_the_void',
+    displayName: 'Might of the Void',
+    duration: 15,
+    maxStacks: 1,
     isHarmful: false,
   },
   {
@@ -487,6 +509,9 @@ export function getSharedPlayerAttackPowerBonus(state: IGameState): number {
   if (stacks > 0) {
     attackPower += stacks * GAZE_ALNSEER_AGI_PER_STACK;
   }
+  if (state.isBuffActive('lights_potential')) {
+    attackPower += LIGHTS_POTENTIAL_PRIMARY_STAT;
+  }
   if (state.isBuffActive('blessing_of_the_capybara')) {
     attackPower += LOA_CAPYBARA_PRIMARY_STAT;
   }
@@ -510,7 +535,12 @@ export function getSharedPlayerDamageMultiplier(state: IGameState): number {
 
 export function getHuntersMarkTargetMultiplier(
   state: Pick<IGameState, 'isBuffActive'>,
+  targetIndex?: number,
 ): number {
+  // Hunter's Mark is applied to one target. In multi-target scenarios the
+  // trainer models it on target 0 (the primary). Secondary targets (index > 0)
+  // never receive the bonus.
+  if (targetIndex !== undefined && targetIndex > 0) return 1.0;
   return state.isBuffActive('hunters_mark')
     ? percentToMultiplier(HUNTERS_MARK_DAMAGE_TAKEN_PCT)
     : 1.0;
@@ -519,6 +549,7 @@ export function getHuntersMarkTargetMultiplier(
 export function getSharedTargetDebuffMultiplier(
   state: Pick<IGameState, 'assumeMysticTouch' | 'isBuffActive'>,
   spell: Pick<SpellDef, 'isPhysical'>,
+  targetIndex?: number,
 ): number {
   const isPhysical = spell.isPhysical !== false;
   let multiplier = 1.0;
@@ -530,7 +561,7 @@ export function getSharedTargetDebuffMultiplier(
   if (state.isBuffActive('chaos_brand') && !isPhysical) {
     multiplier *= percentToMultiplier(CHAOS_BRAND_MAGIC_TAKEN_PCT);
   }
-  multiplier *= getHuntersMarkTargetMultiplier(state);
+  multiplier *= getHuntersMarkTargetMultiplier(state, targetIndex);
 
   return multiplier;
 }

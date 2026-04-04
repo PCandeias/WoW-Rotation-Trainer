@@ -1,4 +1,5 @@
-import { ENHANCEMENT_ACTION_BAR, WW_ACTION_BAR } from '@ui/components/ActionBar';
+import { WW_ACTION_BAR } from '@ui/specs/monk/actionBar';
+import { ENHANCEMENT_ACTION_BAR } from '@ui/specs/shaman/actionBar';
 import type { ActionBarButtonSettings, ActionBarId, ActionBarSettings } from '@ui/state/trainerSettings';
 import type { Keybinds } from './useKeybinds';
 

@@ -3,34 +3,28 @@ import type { IGameState } from '../../../engine/i_game_state';
 import type { SimEventQueue } from '../../../engine/eventQueue';
 import type { RngInstance } from '../../../engine/rng';
 import { requireShamanSpellData } from '../../../dbc/shaman_spell_data';
-import { triggerStormsurgeProc } from './stormsurge';
 import { triggerFlametongueWeapon, triggerWindfuryWeapon } from './windfury_weapon';
 import { applyFeralSpiritWolfBuff } from './feral_spirit';
 import { applyShamanBuffStacks, consumeShamanBuffStacks, ShamanAction, triggerMaelstromWeaponProc } from '../shaman_action';
-import { whirlingEarthMultiplier } from './surging_totem';
+import { canTriggerEarthsurge, TremorEarthsurgeAction, whirlingEarthMultiplier } from './surging_totem';
+import { spawnSearingTotemEvents } from './lively_totems';
 
 const SUNDERING = requireShamanSpellData(197214);
 const SUNDERING_SPLITSTREAM = requireShamanSpellData(467283);
 const SPLITSTREAM_TALENT = requireShamanSpellData(445035);
+const SURGING_ELEMENTS_TALENT = requireShamanSpellData(382042);
+const LASHING_FLAMES_DEBUFF = requireShamanSpellData(334168);
 
-function countActiveFlameShockTargets(state: IGameState): number {
-  if (!state.getTargetDebuffRemains) {
-    return state.isTargetDebuffActive?.('flame_shock') ? 1 : 0;
-  }
-
-  let count = 0;
-  for (let targetId = 0; targetId < Math.max(1, state.activeEnemies); targetId += 1) {
-    if (state.getTargetDebuffRemains('flame_shock', targetId) > 0) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-class SunderingSplitstreamAction extends ShamanAction {
+export class SunderingSplitstreamAction extends ShamanAction {
   readonly name = 'sundering_splitstream';
   readonly spellData = SUNDERING_SPLITSTREAM;
   readonly aoe = -1;
+  private readonly earthsurgeAction: TremorEarthsurgeAction;
+
+  constructor(state: IGameState) {
+    super(state);
+    this.earthsurgeAction = new TremorEarthsurgeAction(state);
+  }
 
   protected override actionIsPhysical(): boolean {
     return false;
@@ -46,7 +40,7 @@ class SunderingSplitstreamAction extends ShamanAction {
 
   override composite_da_multiplier(): number {
     return super.composite_da_multiplier()
-      * (1 + SPLITSTREAM_TALENT.effectN(1).percent());
+      * SPLITSTREAM_TALENT.effectN(1).percent();
   }
 
   executeProc(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
@@ -56,16 +50,17 @@ class SunderingSplitstreamAction extends ShamanAction {
     let anyCrit = false;
 
     for (let targetId = 0; targetId < nTargets; targetId += 1) {
-      const impact = this.calculateDamageFromSnapshot({
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, nTargets),
-      }, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, nTargets));
       this.p.addDamage(impact.damage, targetId);
       totalDamage += impact.damage;
       anyCrit = anyCrit || impact.isCrit;
     }
 
     this.p.recordPendingSpellStat(this.name, totalDamage, 1, anyCrit);
+    if (canTriggerEarthsurge(this.p)) {
+      const earthsurge = this.earthsurgeAction.executePulse(rng, isComboStrike, SPLITSTREAM_TALENT.effectN(1).percent());
+      anyCrit = anyCrit || earthsurge.some((damage) => damage.isCrit);
+    }
     return { damage: totalDamage, isCrit: anyCrit };
   }
 }
@@ -81,11 +76,11 @@ export class SunderingAction extends ShamanAction {
   readonly name = 'sundering';
   readonly spellData = SUNDERING;
   readonly aoe = -1;
-  private readonly splitstreamAction: SunderingSplitstreamAction;
+  private readonly earthsurgeAction: TremorEarthsurgeAction;
 
   constructor(state: IGameState) {
     super(state);
-    this.splitstreamAction = new SunderingSplitstreamAction(state);
+    this.earthsurgeAction = new TremorEarthsurgeAction(state);
   }
 
   protected override actionIsPhysical(): boolean {
@@ -104,6 +99,13 @@ export class SunderingAction extends ShamanAction {
     return super.composite_da_multiplier() * whirlingEarthMultiplier(this.p);
   }
 
+  override preCastFailReason(): 'not_available' | undefined {
+    if (!this.p.isCooldownReady(this.name)) {
+      return undefined;
+    }
+    return this.p.isBuffActive('primordial_storm') ? 'not_available' : undefined;
+  }
+
   override execute(
     queue: SimEventQueue,
     rng: RngInstance,
@@ -114,45 +116,49 @@ export class SunderingAction extends ShamanAction {
     let anyCrit = false;
 
     for (let targetId = 0; targetId < this.nTargets(); targetId += 1) {
-      const impact = this.calculateDamageFromSnapshot({
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, this.nTargets()),
-      }, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, this.nTargets()));
       this.p.addDamage(impact.damage, targetId);
       totalDamage += impact.damage;
       anyCrit = anyCrit || impact.isCrit;
     }
 
+    let earthsurgeCrit = false;
+    if (totalDamage > 0 && canTriggerEarthsurge(this.p)) {
+      const earthsurge = this.earthsurgeAction.executePulse(rng, isComboStrike);
+      earthsurgeCrit = earthsurge.some((damage) => damage.isCrit);
+    }
+
     this.p.recordPendingSpellStat(this.name, totalDamage, 1, anyCrit);
     const procEvents: ActionResult['newEvents'] = [];
     if (totalDamage > 0) {
-      triggerStormsurgeProc(this.p, rng, procEvents);
       triggerMaelstromWeaponProc(this.p, rng, procEvents);
     }
     const flametongue = triggerFlametongueWeapon(this.p, rng, isComboStrike);
-    const splitstream = this.p.hasTalent('splitstream')
-      ? this.splitstreamAction.executeProc(rng, isComboStrike)
-      : { damage: 0, isCrit: false };
     const windfury = triggerWindfuryWeapon(this.p, queue, rng, isComboStrike);
+    if (this.p.hasTalent('lashing_flames')) {
+      for (let targetId = 0; targetId < this.nTargets(); targetId += 1) {
+        this.p.applyTargetDebuff?.('lashing_flames', LASHING_FLAMES_DEBUFF.duration_ms() / 1000, targetId, 1);
+      }
+    }
     if (this.p.hasTalent('primordial_storm')) {
       applyShamanBuffStacks(this.p, 'primordial_storm', 1, windfury.newEvents);
     }
     if (this.p.hasTalent('surging_elements')) {
-      const surgingElementsStacks = countActiveFlameShockTargets(this.p);
-      if (surgingElementsStacks > 0) {
-        applyShamanBuffStacks(this.p, 'surging_elements', surgingElementsStacks, windfury.newEvents);
-      }
+      applyShamanBuffStacks(this.p, 'surging_elements', 1, windfury.newEvents);
+      this.pushMaelstromWeaponStacks(SURGING_ELEMENTS_TALENT.effectN(3).base_value(), windfury.newEvents);
     }
     if (this.p.hasTalent('feral_spirit')) {
       applyFeralSpiritWolfBuff(this.p, 'molten_weapon', windfury.newEvents);
     }
     if (this.p.isBuffActive('whirling_earth')) {
       consumeShamanBuffStacks(this.p, 'whirling_earth', 1, windfury.newEvents);
+      // SimC sundering_t::execute(): if whirling_earth is consumed, spawn a searing totem.
+      spawnSearingTotemEvents(this.p, rng, windfury.newEvents);
     }
 
     return {
       damage: 0,
-      isCrit: anyCrit || flametongue.isCrit || splitstream.isCrit || windfury.isCrit,
+      isCrit: anyCrit || earthsurgeCrit || flametongue.isCrit || windfury.isCrit,
       newEvents: [...procEvents, ...flametongue.newEvents, ...windfury.newEvents],
       buffsApplied: [],
       cooldownAdjustments: [],

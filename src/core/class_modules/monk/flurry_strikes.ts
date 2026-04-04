@@ -11,6 +11,7 @@ import {
   setMonkFlurryCharges,
 } from './monk_runtime';
 import { requireMonkSpellData } from '../../dbc/monk_spell_data';
+import { getMonkFlurryCharges, getMonkHitComboStacks } from './monk_state_keys';
 
 const HIT_COMBO_BUFF_SPELL = requireMonkSpellData(196741);
 const WEAPON_OF_WIND_SPELL = requireMonkSpellData(1272678);
@@ -70,7 +71,7 @@ abstract class MonkFlurryAction extends Action {
     // Hit Combo: 1% per stack to da_mul — applied via parse_effects in SimC.
     // SimC flurry da_mul=0.945 = 0.9×1.05 (5 stacks), confirmed in debug log.
     if (this.p.hasTalent('hit_combo')) {
-      mult *= 1 + this.p.hitComboStacks * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
+      mult *= 1 + getMonkHitComboStacks(this.p) * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
     }
 
     // Zenith + Weapon of Wind: +10% direct damage when zenith buff is active.
@@ -172,7 +173,7 @@ function getSourceSpellId(source: FlurryStrikeSource): string {
 function getFlurryStrikeCount(state: GameState, source: FlurryStrikeSource): number {
   switch (source) {
     case FlurryStrikeSource.FLURRY_STRIKES: {
-      const count = Math.max(state.flurryCharges, state.getBuffStacks('flurry_charge'));
+      const count = Math.max(getMonkFlurryCharges(state), state.getBuffStacks('flurry_charge'));
       setMonkFlurryCharges(state, 0);
       return count;
     }
@@ -262,16 +263,18 @@ export function processDelayedSpellImpact(
   // Multi-target AOE path
   let primaryResult: ActionResult | undefined;
   for (let t = 0; t < n; t++) {
-    const result = action.execute(queue, rng, false);
-    let damage = result.damage;
+    // Use calculateDamage with the per-target index so secondary targets don't
+    // inherit primary-target-only debuffs (e.g. Hunter's Mark).
+    const { damage: rawDamage, isCrit } = action.calculateDamage(rng, false, t);
+    let damage = rawDamage;
     if (t > 0) {
       damage *= action.aoeDamageMultiplier(t, n);
     }
     state.addDamage(damage, t);
-    state.recordPendingSpellStat(action.name, damage, t === 0 ? 1 : 0, result.isCrit);
+    state.recordPendingSpellStat(action.name, damage, t === 0 ? 1 : 0, isCrit);
     if (t === 0) {
-      primaryResult = result;
-      applyActionResult(state, queue, [], result);
+      primaryResult = { damage: rawDamage, isCrit, newEvents: [], buffsApplied: [], cooldownAdjustments: [] };
+      applyActionResult(state, queue, [], primaryResult);
     }
   }
   return primaryResult;

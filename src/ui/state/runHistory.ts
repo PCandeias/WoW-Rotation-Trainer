@@ -42,6 +42,10 @@ function normalizeStoredRun(value: unknown): StoredRunRecord | null {
     return null;
   }
 
+  const report = {
+    ...value.report,
+    targetDebuffUptimes: Array.isArray(value.report.targetDebuffUptimes) ? value.report.targetDebuffUptimes : [],
+  } satisfies RunAnalysisReport;
   const createdAt = typeof value.createdAt === 'string' ? value.createdAt : new Date(0).toISOString();
   const mode = value.mode === 'tutorial' || value.mode === 'practice' || value.mode === 'test' || value.mode === 'challenge'
     ? value.mode
@@ -54,7 +58,7 @@ function normalizeStoredRun(value: unknown): StoredRunRecord | null {
     mode,
     duration: typeof value.duration === 'number' && Number.isFinite(value.duration) ? value.duration : 0,
     endReason: typeof value.endReason === 'string' ? value.endReason : null,
-    report: value.report,
+    report,
   };
 }
 

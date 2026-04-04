@@ -17,7 +17,6 @@ function resolveGitHubPagesBase(): string {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: resolveGitHubPagesBase(),
   plugins: [react()],
   resolve: {
     alias: {
@@ -27,6 +26,7 @@ export default defineConfig({
       '@data': resolve(__dirname, 'src/core/data'),
     },
   },
+  base: resolveGitHubPagesBase(),
   build: {
     rollupOptions: {
       output: {

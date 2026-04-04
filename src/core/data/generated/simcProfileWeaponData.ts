@@ -10,7 +10,7 @@ export const SIMC_PROFILE_WEAPON_ITEMS = {
     flags2: 24576,
     delayMs: 2600,
     dmgRange: 0.35,
-    tableName: 'oneHandCaster',
+    tableName: 'oneHand',
   },
   '237850|0|8793/8960/12066/12214/12214/12214/12214/12214/12214/12497/12693/13622/13667': {
     itemId: 237850,
@@ -22,7 +22,7 @@ export const SIMC_PROFILE_WEAPON_ITEMS = {
     flags2: 24576,
     delayMs: 2600,
     dmgRange: 0.7,
-    tableName: 'oneHandCaster',
+    tableName: 'oneHand',
   },
   '249287|289|': {
     itemId: 249287,
@@ -34,7 +34,7 @@ export const SIMC_PROFILE_WEAPON_ITEMS = {
     flags2: 8192,
     delayMs: 2600,
     dmgRange: 0.25,
-    tableName: 'oneHandCaster',
+    tableName: 'oneHand',
   },
   '251122|0|3190/4786/12806': {
     itemId: 251122,
@@ -46,29 +46,29 @@ export const SIMC_PROFILE_WEAPON_ITEMS = {
     flags2: 8192,
     delayMs: 2600,
     dmgRange: 0.5,
-    tableName: 'oneHandCaster',
+    tableName: 'oneHand',
   },
 } as const;
 
 export const SIMC_PROFILE_WEAPON_DAMAGE_TABLES = {
-  oneHandCaster: {
+  oneHand: {
     285: [
-      20.36658,
-      32.75625,
-      33.9443,
-      33.9443,
-      33.9443,
-      33.9443,
-      33.9443,
+      40.73316,
+      65.5125,
+      67.8886,
+      67.8886,
+      67.8886,
+      67.8886,
+      67.8886,
     ],
     289: [
-      21.13996,
-      34.0001,
-      35.23327,
-      35.23327,
-      35.23327,
-      35.23327,
-      35.23327,
+      42.27992,
+      68.00021,
+      70.46654,
+      70.46654,
+      70.46654,
+      70.46654,
+      70.46654,
     ],
   },
 } as const;

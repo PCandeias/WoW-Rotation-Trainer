@@ -29,6 +29,34 @@ function isBlockedByActiveCast(state: GameState): boolean {
 /** Default spell queue window in seconds (400ms). */
 export const DEFAULT_QUEUE_WINDOW = 0.4;
 
+function effectiveQueuedWindow(state: GameState): number {
+  return state.queuedWindow > 0 ? state.queuedWindow : DEFAULT_QUEUE_WINDOW;
+}
+
+export function peekQueuedAbility(state: GameState): string | null {
+  return state.queuedAbility;
+}
+
+export function clearQueuedAbility(state: GameState): void {
+  state.queuedAbility = null;
+  state.queuedWindow = 0;
+}
+
+export function isQueuedAbilityExpiredAt(state: GameState, fireTime: number): boolean {
+  if (state.queuedAbility === null) {
+    return false;
+  }
+
+  const queueWindow = effectiveQueuedWindow(state);
+  return Number.isFinite(queueWindow) && fireTime - state.queuedAt > queueWindow;
+}
+
+export function consumeQueuedAbility(state: GameState): string | null {
+  const spellId = state.queuedAbility;
+  clearQueuedAbility(state);
+  return spellId;
+}
+
 // ---------------------------------------------------------------------------
 // tryQueueAbility
 // ---------------------------------------------------------------------------
@@ -97,11 +125,12 @@ export function tryQueueAbility(
  * @param state - The current game state
  */
 export function drainQueue(state: GameState): string | null {
-  if (state.queuedAbility === null) {
+  const queuedAbility = peekQueuedAbility(state);
+  if (queuedAbility === null) {
     return null;
   }
 
-  if (isBlockedByActiveChannel(state, state.queuedAbility)) {
+  if (isBlockedByActiveChannel(state, queuedAbility)) {
     return null;
   }
 
@@ -113,15 +142,10 @@ export function drainQueue(state: GameState): string | null {
     return null;
   }
 
-  const queueWindow = state.queuedWindow > 0 ? state.queuedWindow : DEFAULT_QUEUE_WINDOW;
-  if (Number.isFinite(queueWindow) && state.currentTime - state.queuedAt > queueWindow) {
-    state.queuedAbility = null;
-    state.queuedWindow = 0;
+  if (isQueuedAbilityExpiredAt(state, state.currentTime)) {
+    clearQueuedAbility(state);
     return null;
   }
 
-  const spellId = state.queuedAbility;
-  state.queuedAbility = null;
-  state.queuedWindow = 0;
-  return spellId;
+  return consumeQueuedAbility(state);
 }

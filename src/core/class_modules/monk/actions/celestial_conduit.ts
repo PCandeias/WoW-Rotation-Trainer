@@ -49,7 +49,7 @@ export class CelestialConduitAction extends MonkMeleeAction {
     const ZENITH_STOMP_REDUCED_AOE_TARGETS = 5;
     const n = this.p.activeEnemies;
     for (let t = 0; t < n; t++) {
-      const stompResult = calculateDamage(ZENITH_STOMP_SPELL, this.p, rng, false);
+      const stompResult = calculateDamage(ZENITH_STOMP_SPELL, this.p, rng, false, undefined, t);
       let stompDamage = stompResult.finalDamage;
       if (this.p.hasTalent('weapons_of_the_wall')) {
         stompDamage *= 1 + WEAPONS_OF_THE_WALL_SPELL.effectN(1).percent();

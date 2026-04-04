@@ -14,7 +14,7 @@ export interface IGameStateDamageHooks {
   getActionMultiplier?(spell: SpellDef, state: IGameState): number;
   getMasteryMultiplier?(state: IGameState, isComboStrike: boolean): number;
   getHitComboMultiplier?(state: IGameState): number;
-  getTargetMultiplier?(spell: SpellDef, state: IGameState): number;
+  getTargetMultiplier?(spell: SpellDef, state: IGameState, targetIndex?: number): number;
   getSpellCritChanceBonusPercent?(spell: SpellDef, state: IGameState): number;
   getCritDamageMultiplier?(spell: SpellDef, state: IGameState): number;
   /** Percentage of target armor to ignore (e.g. 12 = 12% armor pen). */
@@ -23,7 +23,6 @@ export interface IGameStateDamageHooks {
 
 export interface IGameState {
   readonly currentTime: number;
-  readonly hitComboStacks: number;
   readonly assumeMysticTouch: boolean;
   /** Number of active enemies in the encounter (default 1). */
   readonly activeEnemies: number;
@@ -76,6 +75,8 @@ export interface IGameState {
   getWeaponBothAttackPower?(): number;
   /** Returns current max health after passive raid buffs. */
   getMaxHealth(): number;
+  /** Returns the rating-derived haste percent before shared or spec hook multipliers. */
+  getBaseHastePercent?(): number;
   /** Returns current target health (0 when target health is not tracked). */
   getTargetCurrentHealth?(): number;
   /** Returns configured target max health (0 when target health is not tracked). */
@@ -99,6 +100,7 @@ export interface IGameState {
   getAutoAttackSpeedMultiplier(): number;
   getBuffRemains?(buffId: string): number;
   getBuffStacks(buffId: string): number;
+  getOptionalNumericState?(stateId: string): number | undefined;
   getNumericState?(stateId: string): number;
   isTargetDebuffActive?(debuffId: string, targetId?: number): boolean;
   getTargetDebuffRemains?(debuffId: string, targetId?: number): number;
@@ -116,6 +118,7 @@ export interface IGameState {
   expireBuff(id: string): void;
   expireTargetDebuff?(debuffId: string, targetId?: number): void;
   removeBuffStack(id: string): void;
+  setOptionalNumericState?(stateId: string, value: number | undefined): void;
   setNumericState?(stateId: string, value: number): void;
   adjustNumericState?(stateId: string, delta: number): number;
   settleEnergy(): void;
@@ -134,8 +137,6 @@ export interface IGameState {
   ): void;
 
   // Writable fields
-  nextCombatWisdomAt: number;
-  flurryCharges: number;
   mhSwingTimer: number;
   ohSwingTimer: number;
   lastComboStrikeAbility?: string | null;

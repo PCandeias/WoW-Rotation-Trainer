@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react';
 import { T, FONTS } from '@ui/theme/elvui';
 import { buildHudFrameStyle } from '@ui/theme/stylePrimitives';
 import { AbilityIcon } from './AbilityIcon';
-import { SPELL_ICONS } from './ActionBar';
+import { SPELL_ICONS } from '@ui/specs/spellIcons';
 import type { SpellDef } from '@core/data/spells/types';
 import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';

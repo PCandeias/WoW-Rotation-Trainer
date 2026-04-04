@@ -87,8 +87,8 @@ export abstract class Action {
     return 1 + this.p.getVersatilityPercent() / 100;
   }
 
-  composite_target_multiplier(): number {
-    const hookTargetMultiplier = this.p.damageHooks?.getTargetMultiplier?.(this.spellDef(), this.p) ?? 1.0;
+  composite_target_multiplier(targetIndex?: number): number {
+    const hookTargetMultiplier = this.p.damageHooks?.getTargetMultiplier?.(this.spellDef(), this.p, targetIndex) ?? 1.0;
     const armorPen = this.p.damageHooks?.getArmorPenPercent?.(this.p) ?? 0;
     const armorFactor = this.actionIsPhysical()
       ? computePhysicalArmorMultiplier(this.p, armorPen)
@@ -98,6 +98,10 @@ export abstract class Action {
 
   protected actionIsPhysical(): boolean {
     return true;
+  }
+
+  protected actionSchools(): readonly string[] {
+    return this.actionIsPhysical() ? ['physical'] : [];
   }
 
   /** Crit chance fraction (0–1). Override to add spell-specific bonuses. */
@@ -301,10 +305,10 @@ export abstract class Action {
     return 1.0;
   }
 
-  total_multiplier(isComboStrike: boolean): number {
+  total_multiplier(isComboStrike: boolean, targetIndex?: number): number {
     return this.composite_da_multiplier()
       * this.composite_player_multiplier(isComboStrike)
-      * this.composite_target_multiplier();
+      * this.composite_target_multiplier(targetIndex);
   }
 
   protected snapshotActionMultiplier(): number {
@@ -344,6 +348,7 @@ export abstract class Action {
       id: this.spellData.id(),
       name: this.name,
       displayName: this.spellData.name(),
+      schools: this.actionSchools(),
       energyCost: 0,
       chiCost: 0,
       chiGain: 0,
@@ -415,7 +420,7 @@ export abstract class Action {
    * Compute raw AP/SP-scaled damage using effectN(1) coefficients × total_multiplier().
    * Subclasses override for multi-hit or non-standard formulas.
    */
-  calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
+  calculateDamage(rng: RngInstance, isComboStrike: boolean, targetIndex?: number): { damage: number; isCrit: boolean } {
     const ap = this.effectiveAttackPower();
     const apCoeff = this.spellData.effectN(1).ap_coeff();
     const sp = this.effectiveSpellPower();
@@ -423,7 +428,7 @@ export abstract class Action {
     const critChance = this.composite_crit_chance();
     const isCrit = rng.next() < critChance;
     const critMult = isCrit ? this.critDamageMultiplier() : 1.0;
-    const damage = (ap * apCoeff + sp * spCoeff) * this.total_multiplier(isComboStrike) * critMult;
+    const damage = (ap * apCoeff + sp * spCoeff) * this.total_multiplier(isComboStrike, targetIndex) * critMult;
     return { damage, isCrit };
   }
 
@@ -484,6 +489,8 @@ export abstract class Action {
   protected calculateDamageFromSnapshot(
     snapshot: DamageSnapshot,
     rng: RngInstance,
+    targetIndex?: number,
+    aoeMultiplier?: number,
   ): { damage: number; isCrit: boolean } {
     const base = snapshot.baseDmgMin === snapshot.baseDmgMax
       ? snapshot.baseDmgMin
@@ -491,12 +498,18 @@ export abstract class Action {
     const baseDamage = base
       + snapshot.apCoefficient * snapshot.attackPower
       + (snapshot.spellPowerCoefficient ?? 0) * (snapshot.spellPower ?? 0);
+    // When targetIndex is supplied, recompute the target multiplier live so that
+    // target-specific debuffs (e.g. Hunter's Mark on target 0) are not incorrectly
+    // applied to secondary targets. aoeMultiplier is applied on top for AoE falloff.
+    const targetMult = targetIndex !== undefined
+      ? this.composite_target_multiplier(targetIndex) * (aoeMultiplier ?? 1.0)
+      : snapshot.targetMultiplier;
     const combined = snapshot.actionMultiplier
       * snapshot.playerMultiplier
       * snapshot.masteryMultiplier
       * snapshot.hitComboMultiplier
       * snapshot.versatilityMultiplier
-      * snapshot.targetMultiplier;
+      * targetMult;
     const isCrit = rollChance(rng, snapshot.critChance);
     return { damage: baseDamage * combined * (isCrit ? this.critDamageMultiplier() : 1.0), isCrit };
   }

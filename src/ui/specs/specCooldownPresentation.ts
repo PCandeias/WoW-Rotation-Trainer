@@ -73,11 +73,13 @@ const SHAMAN_COOLDOWN_DEFINITIONS: Record<string, CooldownTrackerDefinition> = {
     emoji: '⚡',
     displayName: 'Stormstrike',
     cooldownQuerySpellId: 'strike',
+    defaultMaxCharges: 2,
     procBuffId: 'stormsurge',
     procOverride: {
       buffId: 'ascendance',
       spellId: 'windstrike',
       cooldownQuerySpellId: 'strike',
+      defaultMaxCharges: 2,
       iconName: 'spell_shaman_windstrike',
       displayName: 'Windstrike',
     },

@@ -74,9 +74,9 @@ function explainRecommendedSpell(spellId: string): AplRuleExplanation | null {
       };
     case 'voltaic_blaze':
       return {
-        title: 'Spend Voltaic Blaze before it backs up',
-        summary: '`Voltaic Blaze` is a hidden-proc window, so delaying it can desync your Flame Shock upkeep and Nature-spell flow.',
-        fix: 'Use `Voltaic Blaze` promptly when it becomes the recommended button instead of pushing it behind filler.',
+        title: 'Use Voltaic Blaze on time',
+        summary: '`Voltaic Blaze` replaces `Flame Shock` when talented, so drifting it delays your DoT upkeep and the follow-up value tied to that cast.',
+        fix: 'Treat `Voltaic Blaze` like your Flame Shock replacement and cast it promptly when its upkeep or priority window comes up.',
       };
     case 'lightning_bolt':
       return {
@@ -120,7 +120,7 @@ export function buildShamanEnhancementAnalysisProfile(_talents: ReadonlySet<stri
     explainRecommendedSpell,
     explainExactDecision,
     getTrackedBuffIds(): string[] {
-      return ['maelstrom_weapon', 'stormsurge', 'stormblast', 'hot_hand', 'doom_winds', 'surging_totem', 'tempest', 'primordial_storm', 'voltaic_blaze', 'lightning_shield'];
+      return ['maelstrom_weapon', 'stormsurge', 'stormblast', 'hot_hand', 'doom_winds', 'surging_totem', 'tempest', 'primordial_storm', 'lightning_shield'];
     },
     getEssentialCooldownSpellIds(): string[] {
       return [...IMPORTANT_COOLDOWNS];

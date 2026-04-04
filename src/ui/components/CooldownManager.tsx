@@ -15,12 +15,14 @@ export interface CooldownTrackerDefinition {
   emoji: string;
   displayName: string;
   cooldownQuerySpellId?: string;
+  defaultMaxCharges?: number;
   procBuffId?: string;
   activeBuffId?: string;
   procOverride?: {
     buffId: string;
     spellId: string;
     cooldownQuerySpellId?: string;
+    defaultMaxCharges?: number;
     iconName?: string;
     displayName?: string;
   };
@@ -140,6 +142,9 @@ export function CooldownManager({
       const effectiveCooldownSpellId = overrideActive
         ? (def.procOverride?.cooldownQuerySpellId ?? effectiveSpellId)
         : (def.cooldownQuerySpellId ?? effectiveSpellId);
+      const defaultMaxCharges = overrideActive
+        ? def.procOverride?.defaultMaxCharges
+        : def.defaultMaxCharges;
       const effectiveIconName = overrideActive ? (def.procOverride?.iconName ?? def.iconName) : def.iconName;
       const effectiveDisplayName = overrideActive ? (def.procOverride?.displayName ?? def.displayName) : def.displayName;
       const effectiveProcBuffId = overrideActive ? def.procOverride?.buffId : def.procBuffId;
@@ -149,9 +154,9 @@ export function CooldownManager({
           : effectiveDisplayName;
 
       const cd = gameState.cooldowns.get(effectiveCooldownSpellId);
-      const chargeInfo = getCooldownCharges(cd, currentTime);
+      const chargeInfo = getCooldownCharges(cd, currentTime, defaultMaxCharges);
       const cdRemaining = chargeInfo
-        ? (chargeInfo.current > 0 ? 0 : chargeInfo.nextChargeIn)
+        ? (chargeInfo.current < chargeInfo.max ? chargeInfo.nextChargeIn : 0)
         : Math.max(0, (cd?.readyAt ?? currentTime) - currentTime);
       const usability = spellInputStatus?.get(effectiveSpellId);
       const activeBuffId = def.activeBuffId ?? effectiveSpellbook.get(def.spellId)?.buffApplied;

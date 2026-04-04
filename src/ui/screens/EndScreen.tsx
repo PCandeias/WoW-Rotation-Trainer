@@ -14,7 +14,7 @@ import { T, FONTS } from '@ui/theme/elvui';
 import { buildControlStyle, buildPanelStyle } from '@ui/theme/stylePrimitives';
 import { AbilityIcon } from '@ui/components/AbilityIcon';
 import type { BuffRegistry } from '@ui/components/BuffTracker';
-import { SPELL_ICONS } from '@ui/components/ActionBar';
+import { SPELL_ICONS } from '@ui/specs/spellIcons';
 import type { SpellDef } from '@core/data';
 import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';

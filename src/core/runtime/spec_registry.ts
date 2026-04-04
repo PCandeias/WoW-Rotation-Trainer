@@ -3,13 +3,13 @@ import type { SpecRuntime } from './spec_runtime';
 import { monkWindwalkerRuntime } from '../class_modules/monk/monk_spec_runtime';
 import { shamanEnhancementRuntime } from '../class_modules/shaman/shaman_spec_runtime';
 
-const RUNTIME_REGISTRY = new Map<string, SpecRuntime>([
-  ['monk', monkWindwalkerRuntime],
-  ['shaman', shamanEnhancementRuntime],
+const RUNTIME_REGISTRY = new Map<string, () => SpecRuntime>([
+  ['monk', () => monkWindwalkerRuntime],
+  ['shaman', () => shamanEnhancementRuntime],
 ]);
 
 export function resolveSpecRuntime(profile: CharacterProfile): SpecRuntime {
-  const runtime = RUNTIME_REGISTRY.get(profile.spec);
+  const runtime = RUNTIME_REGISTRY.get(profile.spec)?.();
   if (runtime) {
     return runtime;
   }

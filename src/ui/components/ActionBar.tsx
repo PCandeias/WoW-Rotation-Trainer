@@ -7,140 +7,22 @@ import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
 import type { SpellInputStatus } from '@core/engine/spell_input';
 import type { SpellDef } from '@core/data/spells';
+import { getCooldownCharges } from '@core/engine/spell_usability';
 import { normalizeKey, normalizeMouseButton, normalizeMouseWheel } from '@ui/utils/keyUtils';
 
 // ---------------------------------------------------------------------------
-// Slot definition
+// Slot definitions and icon catalog — sourced from spec catalog files.
+// Re-exported here for backward compatibility with existing consumers.
 // ---------------------------------------------------------------------------
 
-export interface ActionBarSlotDef {
-  spellId: string;
-  defaultKey: string;
-  cdTotal: number;
-  cooldownQuerySpellId?: string;
-  talentRequired?: string;
-  talentExcluded?: string;
-  replacesSpellId?: string;
-  procOverride?: { buffId: string; spellId: string; cooldownQuerySpellId?: string };
-  procGlow?: { buffId: string };
-  isOffGcd?: boolean;
-}
+export type { ActionBarSlotDef, ActionBarButtonAssignment } from '@ui/specs/actionBarTypes';
+export { SPELL_ICONS } from '@ui/specs/spellIcons';
+export { WW_ACTION_BAR } from '@ui/specs/monk/actionBar';
+export { ENHANCEMENT_ACTION_BAR } from '@ui/specs/shaman/actionBar';
 
-export interface ActionBarButtonAssignment {
-  spellIds: string[];
-  keybind: string;
-}
-
-// Icon and emoji data for each spell (SpellDef lacks iconName/emoji fields)
-export const SPELL_ICONS: Record<string, { iconName: string; emoji: string }> = {
-  tiger_palm:             { iconName: 'ability_monk_tigerpalm',            emoji: '🐯' },
-  blackout_kick:          { iconName: 'ability_monk_roundhousekick',       emoji: '👊' },
-  rising_sun_kick:        { iconName: 'ability_monk_risingsunkick',        emoji: '☀️' },
-  teachings_of_the_monastery: { iconName: 'passive_monk_teachingsofmonastery', emoji: '📖' },
-  fists_of_fury:          { iconName: 'monk_ability_fistoffury',           emoji: '👊' },
-  whirling_dragon_punch:  { iconName: 'ability_monk_hurricanestrike',      emoji: '🐉' },
-  strike_of_the_windlord: { iconName: 'inv_hand_1h_artifactskywall_d_01', emoji: '⚡' },
-  zenith:                 { iconName: 'inv_ability_monk_weaponsoforder',   emoji: '✨' },
-  momentum_boost:         { iconName: 'inv_belt_leather_raidmonk_n_01',    emoji: '⚡' },
-  momentum_boost_damage:  { iconName: 'inv_belt_leather_raidmonk_n_01',    emoji: '⚡' },
-  momentum_boost_speed:   { iconName: 'inv_belt_leather_raidmonk_n_01',    emoji: '⚡' },
-  spinning_crane_kick:    { iconName: 'ability_monk_cranekick_new',        emoji: '🌀' },
-  touch_of_death:         { iconName: 'ability_monk_touchofdeath',         emoji: '💀' },
-  slicing_winds:          { iconName: 'ability_monk_flyingdragonkick',     emoji: '💨' },
-  touch_of_karma:         { iconName: 'ability_monk_touchofkarma',         emoji: '🛡️' },
-  berserking:             { iconName: 'racial_troll_berserk',              emoji: '🔴' },
-  potion:                 { iconName: 'inv_12_profession_alchemy_voidpotion_red', emoji: '🧪' },
-  algethar_puzzle_box:    { iconName: 'inv_misc_enggizmos_18',             emoji: '💎' },
-  rushing_wind_kick:      { iconName: 'inv12_ability_monk_rushingwindkick',emoji: '🌪️' },
-  stormstrike:            { iconName: 'spell_shaman_improvedstormstrike',  emoji: '⚡' },
-  windstrike:             { iconName: 'spell_shaman_windstrike',           emoji: '🌩️' },
-  lava_lash:              { iconName: 'ability_shaman_lavalash',             emoji: '🔥' },
-  flame_shock:            { iconName: 'spell_fire_flameshock',             emoji: '🔥' },
-  voltaic_blaze:          { iconName: 'inv_10_dungeonjewelry_primalist_trinket_1ragingelement_fire', emoji: '⚡' },
-  lightning_bolt:         { iconName: 'spell_nature_lightning',            emoji: '⚡' },
-  chain_lightning:        { iconName: 'spell_nature_chainlightning',       emoji: '🌩️' },
-  crash_lightning:        { iconName: 'spell_shaman_crashlightning',       emoji: '💥' },
-  feral_spirit:           { iconName: 'spell_shaman_feralspirit',          emoji: '🐺' },
-  sundering:              { iconName: 'ability_rhyolith_lavapool',            emoji: '🌋' },
-  ascendance:             { iconName: 'spell_fire_elementaldevastation',           emoji: '🌪️' },
-  doom_winds:             { iconName: 'ability_ironmaidens_swirlingvortex', emoji: '🌪️' },
-  surging_totem:          { iconName: 'inv_ability_totemicshaman_surgingtotem', emoji: '🗿' },
-  feral_lunge:            { iconName: 'spell_beastmaster_wolf',            emoji: '🐾' },
-  astral_shift:           { iconName: 'ability_shaman_astralshift',        emoji: '🛡️' },
-  wind_rush_totem:        { iconName: 'ability_shaman_windwalktotem',      emoji: '💨' },
-  totemic_projection:     { iconName: 'ability_shaman_totemrelocation',    emoji: '🗿' },
-  tempest:                { iconName: 'inv_ability_stormcallershaman_tempest',              emoji: '🌩️' },
-  primordial_storm:       { iconName: 'ability_shaman_ascendance',       emoji: '🌩️' },
-  windfury_weapon:        { iconName: 'spell_nature_cyclone',              emoji: '💨' },
-  flametongue_weapon:     { iconName: 'spell_fire_flametounge',            emoji: '🔥' },
-  hot_hand:               { iconName: 'spell_fire_playingwithfire',        emoji: '🔥' },
-  storm_unleashed:        { iconName: 'inv12_apextalent_shaman_stormunleashed', emoji: '🌩️' },
-  blood_fury:             { iconName: 'racial_orc_berserkerstrength',      emoji: '🩸' },
-  bloodlust:              { iconName: 'spell_nature_bloodlust',            emoji: '⚡' },
-};
-
-export const WW_ACTION_BAR: ActionBarSlotDef[] = [
-  { spellId: 'tiger_palm',             defaultKey: '1', cdTotal: 0 },
-  { spellId: 'blackout_kick',          defaultKey: '2', cdTotal: 0,   procGlow: { buffId: 'combo_breaker' } },
-  { spellId: 'rising_sun_kick',        defaultKey: '3', cdTotal: 10,  procOverride: { buffId: 'rushing_wind_kick', spellId: 'rushing_wind_kick' } },
-  { spellId: 'fists_of_fury',          defaultKey: '4', cdTotal: 20 },
-  { spellId: 'whirling_dragon_punch',  defaultKey: '5', cdTotal: 13,  talentRequired: 'whirling_dragon_punch' },
-  { spellId: 'strike_of_the_windlord', defaultKey: '6', cdTotal: 40,  talentRequired: 'strike_of_the_windlord' },
-  { spellId: 'zenith',                 defaultKey: '7', cdTotal: 90,  talentRequired: 'zenith', isOffGcd: true },
-  { spellId: 'spinning_crane_kick',    defaultKey: '8', cdTotal: 0,   procGlow: { buffId: 'dance_of_chi_ji' } },
-  { spellId: 'slicing_winds',          defaultKey: '9', cdTotal: 30,  talentRequired: 'slicing_winds' },
-  { spellId: 'touch_of_death',         defaultKey: ']', cdTotal: 180 },
-  { spellId: 'touch_of_karma',         defaultKey: '=', cdTotal: 90 },
-  { spellId: 'berserking',             defaultKey: '0', cdTotal: 180, isOffGcd: true },
-  { spellId: 'algethar_puzzle_box',    defaultKey: '-', cdTotal: 120 },
-  { spellId: 'potion',                 defaultKey: '[', cdTotal: 300, isOffGcd: true },
-];
-
-export const ENHANCEMENT_ACTION_BAR: ActionBarSlotDef[] = [
-  {
-    spellId: 'stormstrike',
-    defaultKey: '1',
-    cdTotal: 8,
-    cooldownQuerySpellId: 'strike',
-    procOverride: { buffId: 'ascendance', spellId: 'windstrike', cooldownQuerySpellId: 'strike' },
-    procGlow: { buffId: 'stormsurge' },
-  },
-  { spellId: 'lava_lash',          defaultKey: '2', cdTotal: 18, talentRequired: 'lava_lash', procGlow: { buffId: 'hot_hand' } },
-  {
-    spellId: 'flame_shock',
-    defaultKey: '3',
-    cdTotal: 6,
-    talentExcluded: 'voltaic_blaze',
-  },
-  { spellId: 'voltaic_blaze',     defaultKey: '3', cdTotal: 10, talentRequired: 'voltaic_blaze', replacesSpellId: 'flame_shock' },
-  {
-    spellId: 'lightning_bolt',
-    defaultKey: '4',
-    cdTotal: 0,
-    procGlow: { buffId: 'maelstrom_weapon' },
-    procOverride: { buffId: 'tempest', spellId: 'tempest' },
-  },
-  { spellId: 'crash_lightning',    defaultKey: '5', cdTotal: 15, talentRequired: 'crash_lightning' },
-  { spellId: 'chain_lightning',    defaultKey: '6', cdTotal: 0, talentRequired: 'chain_lightning', procGlow: { buffId: 'maelstrom_weapon' } },
-  {
-    spellId: 'sundering',
-    defaultKey: '7',
-    cdTotal: 30,
-    talentRequired: 'sundering',
-    procOverride: { buffId: 'primordial_storm', spellId: 'primordial_storm' },
-  },
-  { spellId: 'feral_spirit',       defaultKey: '8', cdTotal: 90, talentRequired: 'feral_spirit' },
-  { spellId: 'surging_totem',      defaultKey: '9', cdTotal: 60, talentRequired: 'surging_totem' },
-  { spellId: 'doom_winds',         defaultKey: '0', cdTotal: 60, talentRequired: 'doom_winds', isOffGcd: true },
-  { spellId: 'ascendance',         defaultKey: '-', cdTotal: 180, talentRequired: 'ascendance' },
-  { spellId: 'feral_lunge',        defaultKey: '=', cdTotal: 30 },
-  { spellId: 'astral_shift',       defaultKey: '[', cdTotal: 90, talentRequired: 'astral_shift' },
-  { spellId: 'wind_rush_totem',    defaultKey: ']', cdTotal: 120, talentRequired: 'wind_rush_totem' },
-  { spellId: 'totemic_projection', defaultKey: '\\\\', cdTotal: 10, talentRequired: 'totemic_projection' },
-  { spellId: 'bloodlust',          defaultKey: ';', cdTotal: 600 },
-  { spellId: 'blood_fury',         defaultKey: '\'', cdTotal: 120, isOffGcd: true },
-  { spellId: 'potion',             defaultKey: 'shift+1', cdTotal: 300, isOffGcd: true },
-];
+import { WW_ACTION_BAR } from '@ui/specs/monk/actionBar';
+import { SPELL_ICONS } from '@ui/specs/spellIcons';
+import type { ActionBarSlotDef, ActionBarButtonAssignment } from '@ui/specs/actionBarTypes';
 
 /**
  * Compute available charges for a charge-based cooldown.
@@ -149,14 +31,9 @@ export const ENHANCEMENT_ACTION_BAR: ActionBarSlotDef[] = [
 export function getCharges(
   cd: CooldownState | undefined,
   now: number,
+  defaultMaxCharges?: number,
 ): { current: number; max: number; nextChargeIn: number } | null {
-  if (!cd?.maxCharges || !cd?.readyTimes) return null;
-  const missing = cd.readyTimes.filter(t => t > now).length;
-  return {
-    current: cd.maxCharges - missing,
-    max: cd.maxCharges,
-    nextChargeIn: missing > 0 ? Math.max(0, cd.readyTimes[0] - now) : 0,
-  };
+  return getCooldownCharges(cd, now, defaultMaxCharges);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,24 +160,6 @@ export function resolveActionBarButtonSpellIds(
   return resolved;
 }
 
-function resolveReplacementButtonSpellId(
-  slot: ActionBarSlotDef,
-  spellInputStatus: ReadonlyMap<string, SpellInputStatus> | undefined,
-): string {
-  if (!slot.replacesSpellId) {
-    return slot.spellId;
-  }
-
-  const replacementCanPress = spellInputStatus?.get(slot.spellId)?.canPress ?? true;
-  const replacedCanPress = spellInputStatus?.get(slot.replacesSpellId)?.canPress ?? false;
-
-  if (!replacementCanPress && replacedCanPress) {
-    return slot.replacesSpellId;
-  }
-
-  return slot.spellId;
-}
-
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -399,7 +258,7 @@ export function ActionBar({
       if (overrideActive) {
         return [slot.procOverride?.spellId ?? slot.spellId];
       }
-      return [resolveReplacementButtonSpellId(slot, spellInputStatus)];
+      return [slot.spellId];
     });
 
     if (effectiveSpellIds.length > 0) {
@@ -559,14 +418,13 @@ export function ActionBar({
           : slot.spellId;
         const effectiveSpellId = overrideActive
           ? (slot.procOverride?.spellId ?? slot.spellId)
-          : resolveReplacementButtonSpellId(slot, spellInputStatus);
+          : slot.spellId;
         const effectiveCooldownSpellId = overrideActive
           ? (slot.procOverride?.cooldownQuerySpellId ?? effectiveSpellId)
-          : (
-            effectiveSpellId === slot.replacesSpellId
-              ? effectiveSpellId
-              : (slot.cooldownQuerySpellId ?? effectiveSpellId)
-          );
+          : (slot.cooldownQuerySpellId ?? effectiveSpellId);
+        const defaultMaxCharges = overrideActive
+          ? slot.procOverride?.defaultMaxCharges
+          : slot.defaultMaxCharges;
         const effectiveSpellIds = spellIds.flatMap((spellId) => {
           const buttonSlot = slotBySpellId.get(spellId);
           if (!buttonSlot) {
@@ -590,11 +448,11 @@ export function ActionBar({
 
         // Cooldown — use override spell's CD when override is active
         const cd = gameState.cooldowns.get(effectiveCooldownSpellId);
-        const charges = getCharges(cd, gameState.currentTime);
+        const charges = getCharges(cd, gameState.currentTime, defaultMaxCharges);
 
         let cdRemaining: number;
         if (charges) {
-          cdRemaining = charges.current <= 0 ? charges.nextChargeIn : 0;
+          cdRemaining = charges.current < charges.max ? charges.nextChargeIn : 0;
         } else {
           cdRemaining = cd?.readyAt != null ? Math.max(0, cd.readyAt - gameState.currentTime) : 0;
         }
@@ -602,6 +460,9 @@ export function ActionBar({
         const inputStatus = spell ? spellInputStatus?.get(effectiveSpellId) : undefined;
         const usable = inputStatus?.visuallyUsable ?? true;
         const canPress = inputStatus?.canPress ?? true;
+        const cooldownBlocksCast = charges
+          ? charges.current <= 0 && charges.nextChargeIn > 0
+          : cdRemaining > 0;
         const buttonHasOffGcdOption = effectiveSpellIds.some((buttonSpellId) => {
           const buttonSpell = getSpellDef(buttonSpellId);
           const buttonSlot = slotBySpellId.get(buttonSpellId);
@@ -612,15 +473,19 @@ export function ActionBar({
           const buttonSlot = slotBySpellId.get(buttonSpellId);
           return buttonSlot?.isOffGcd !== true && buttonSpell?.isOnGcd !== false;
         });
+        const activeBuffId = slot.activeBuffId ?? baseSpell?.buffApplied;
+        const activeBuffRemaining = activeBuffId
+          ? Math.max(0, (gameState.buffs.get(activeBuffId)?.expiresAt ?? 0) - gameState.currentTime)
+          : 0;
 
         const slotGcdRemaining = buttonHasOnGcdOption
           ? gcdRemaining
           : ((slot.isOffGcd || buttonHasOffGcdOption) ? 0 : (baseSpell?.isOnGcd ? gcdRemaining : 0));
 
         // Keep usability ref current for keyboard handler
-        usabilityRef.current.set(effectiveSpellId, canPress && cdRemaining === 0);
+        usabilityRef.current.set(effectiveSpellId, canPress && !cooldownBlocksCast);
         if (effectiveSpellId !== slot.spellId) {
-          usabilityRef.current.set(slot.spellId, canPress && cdRemaining === 0);
+          usabilityRef.current.set(slot.spellId, canPress && !cooldownBlocksCast);
         }
 
         const isRecommended = showRecommendations
@@ -651,6 +516,7 @@ export function ActionBar({
             onClick={() => dispatchSpellIds(effectiveSpellIds)}
             pressed={pressedSpellId === slot.spellId || pressedSpellId === effectiveSpellId}
             usable={usable}
+            activeBuffRemaining={activeBuffRemaining}
             tooltipText={tooltipId !== undefined ? `${displayName}\nSpell ID: ${tooltipId}` : displayName}
           />
         );

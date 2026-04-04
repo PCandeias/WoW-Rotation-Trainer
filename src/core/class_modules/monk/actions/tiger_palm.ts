@@ -7,16 +7,19 @@ import { EventType } from '../../../engine/eventQueue';
 import type { RngInstance } from '../../../engine/rng';
 import { rollChance } from '../../../engine/rng';
 import type { GameState } from '../../../engine/gameState';
-import { MONK_WW_BUFFS } from '../../../data/spells/monk_windwalker';
 import { COMBAT_WISDOM_EXPEL_HARM_SPELL, calculateCombatWisdomExpelHarmDamage } from '../monk_proc_spells';
+import {
+  COMBO_BREAKER_MAX_STACKS,
+  COMBO_BREAKER_DURATION_SECONDS,
+  TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS,
+  TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS,
+} from '../monk_derived_values';
 
 const COMBO_BREAKER_SPELL = requireMonkSpellData(137384);
 const MEMORY_OF_THE_MONASTERY_SPELL = requireMonkSpellData(454969);
 const TOUCH_OF_THE_TIGER_SPELL = requireMonkSpellData(388856);
 const EFFICIENT_TRAINING_SPELL = requireMonkSpellData(450989);
 const KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL = requireMonkSpellData(451529);
-const TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.maxStacks ?? 4;
-const TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.duration ?? 20;
 
 export class TigerPalmAction extends MonkMeleeAction {
   readonly name = 'tiger_palm';
@@ -53,8 +56,8 @@ export class TigerPalmAction extends MonkMeleeAction {
       : baseBkProcChance;
     if (this.p.hasTalent('combo_breaker') && rollChance(rng, bkProcChance)) {
       const stacksBefore = this.p.getBuffStacks('combo_breaker');
-      const stacksAfter = Math.min(2, Math.max(1, stacksBefore + 1));
-      this.p.applyBuff('combo_breaker', 15, stacksAfter);
+      const stacksAfter = Math.min(COMBO_BREAKER_MAX_STACKS, Math.max(1, stacksBefore + 1));
+      this.p.applyBuff('combo_breaker', COMBO_BREAKER_DURATION_SECONDS, stacksAfter);
       result.newEvents.push(
         stacksBefore > 0
           ? {

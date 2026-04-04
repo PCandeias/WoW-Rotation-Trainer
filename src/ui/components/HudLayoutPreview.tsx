@@ -7,10 +7,9 @@ import {
   augmentActionBarSlots,
   getVisibleActionBarSlots,
   resolveActionBarButtonSpellIds,
-  SPELL_ICONS,
-  type ActionBarButtonAssignment,
-  type ActionBarSlotDef,
 } from './ActionBar';
+import type { ActionBarButtonAssignment, ActionBarSlotDef } from '@ui/specs/actionBarTypes';
+import { SPELL_ICONS } from '@ui/specs/spellIcons';
 import { PlayerFrame } from './PlayerFrame';
 import { EnergyChiDisplay } from './EnergyChiDisplay';
 import { CooldownManager } from './CooldownManager';
@@ -304,11 +303,6 @@ const PREVIEW_GAME_STATE: GameStateSnapshot = {
   energyWasted: 3,
   mhSwingTimer: 1.4,
   ohSwingTimer: 1.4,
-  flurryCharges: 0,
-  hitComboStacks: 4,
-  nextCombatWisdomAt: 0,
-  dualThreatMhAllowed: true,
-  dualThreatOhAllowed: true,
   queuedAbility: null,
   queuedAt: 0,
   queuedWindow: 0.4,

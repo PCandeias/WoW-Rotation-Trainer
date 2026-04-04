@@ -4,17 +4,17 @@ import type { SimEvent, SimEventQueue } from '../../../engine/eventQueue';
 import type { RngInstance } from '../../../engine/rng';
 import { rollChance } from '../../../engine/rng';
 import { requireShamanSpellData } from '../../../dbc/shaman_spell_data';
-import { applyTemporaryCooldownRate } from './lava_lash';
+import { adjustLavaLashCooldownForHotHandWindow } from './hot_hand';
 import { applyShamanBuffStacks, ShamanAction, ShamanMeleeAction, triggerMaelstromWeaponProc } from '../shaman_action';
 
 const DOOM_WINDS_BUFF = requireShamanSpellData(466772);
 const ENHANCED_ELEMENTS = requireShamanSpellData(77223);
 const FLAMETONGUE_ATTACK = requireShamanSpellData(10444);
 const FLAMETONGUE_ATTACK_IMBUEMENT_MASTERY = requireShamanSpellData(467386);
-const FORCEFUL_WINDS_BUFF = requireShamanSpellData(262652);
 const FORCEFUL_WINDS_TALENT = requireShamanSpellData(262647);
 const HOT_HAND_TALENT = requireShamanSpellData(201900);
 const IMBUEMENT_MASTERY = requireShamanSpellData(445028);
+const ENHANCED_IMBUES = requireShamanSpellData(462796);
 const STORMS_WRATH = requireShamanSpellData(392352);
 const WINDFURY_ATTACK = requireShamanSpellData(25504);
 const WINDFURY_WEAPON = requireShamanSpellData(319773);
@@ -28,6 +28,18 @@ export class FlametongueAttackAction extends ShamanAction {
   protected override actionIsPhysical(): boolean {
     return false;
   }
+
+  protected override actionSchools(): readonly ['fire'] {
+    return ['fire'];
+  }
+
+  override composite_da_multiplier(): number {
+    let multiplier = super.composite_da_multiplier();
+    if (this.p.hasTalent('enhanced_imbues')) {
+      multiplier *= 1 + ENHANCED_IMBUES.effectN(2).percent();
+    }
+    return multiplier;
+  }
 }
 
 class ImbuementMasteryAction extends ShamanAction {
@@ -40,6 +52,18 @@ class ImbuementMasteryAction extends ShamanAction {
     return false;
   }
 
+  protected override actionSchools(): readonly ['fire'] {
+    return ['fire'];
+  }
+
+  override composite_da_multiplier(): number {
+    let multiplier = super.composite_da_multiplier();
+    if (this.p.hasTalent('enhanced_imbues')) {
+      multiplier *= 1 + ENHANCED_IMBUES.effectN(3).percent();
+    }
+    return multiplier;
+  }
+
   executeProc(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
     const snapshot = this.captureSnapshot(isComboStrike);
     const nTargets = this.nTargets();
@@ -47,10 +71,7 @@ class ImbuementMasteryAction extends ShamanAction {
     let anyCrit = false;
 
     for (let targetId = 0; targetId < nTargets; targetId += 1) {
-      const impact = this.calculateDamageFromSnapshot({
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, nTargets),
-      }, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, nTargets));
       this.p.addDamage(impact.damage, targetId);
       totalDamage += impact.damage;
       anyCrit = anyCrit || impact.isCrit;
@@ -110,13 +131,7 @@ export function triggerFlametongueWeapon(
   ) {
     applyShamanBuffStacks(state, 'hot_hand', 1, newEvents);
     const hotHandWindow = state.getBuffRemains?.('hot_hand') ?? 0;
-    const hotHandRank = state.getTalentRank('hot_hand');
-    const hotHandRateBonusPct = hotHandRank >= 2 ? 100 : 34;
-    const lavaLashRemains = state.getCooldownRemains('lava_lash');
-    const adjustedRemains = applyTemporaryCooldownRate(lavaLashRemains, hotHandRateBonusPct, hotHandWindow);
-    if (lavaLashRemains > adjustedRemains) {
-      state.adjustCooldown('lava_lash', lavaLashRemains - adjustedRemains);
-    }
+    adjustLavaLashCooldownForHotHandWindow(state, hotHandWindow);
   }
 
   return {
@@ -184,12 +199,16 @@ export class WindfuryAttackAction extends ShamanMeleeAction {
     let multiplier = super.composite_da_multiplier();
 
     if (this.p.hasTalent('forceful_winds')) {
+      // SimC applies forceful_winds only as a static passive talent multiplier via
+      // parse_passive_effects(); the stacking buff (spell 262652) is never triggered.
       multiplier *= 1 + FORCEFUL_WINDS_TALENT.effectN(1).percent();
-      multiplier *= 1 + FORCEFUL_WINDS_BUFF.effectN(1).percent() * this.p.getBuffStacks('forceful_winds');
     }
 
     if (this.p.hasTalent('imbuement_mastery')) {
       multiplier *= 1 + IMBUEMENT_MASTERY.effectN(2).percent();
+    }
+    if (this.p.hasTalent('enhanced_imbues')) {
+      multiplier *= 1 + ENHANCED_IMBUES.effectN(1).percent();
     }
 
     if (this.p.isBuffActive('doom_winds')) {
@@ -216,19 +235,18 @@ export class WindfuryAttackAction extends ShamanMeleeAction {
       this.p.addDamage(impact.damage);
       totalDamage += impact.damage;
       anyCrit = anyCrit || impact.isCrit;
+      this.p.recordPendingSpellStat(this.name, impact.damage, 1, impact.isCrit);
       triggerMaelstromWeaponProc(this.p, rng, newEvents);
     }
 
     const flametongue = triggerFlametongueWeapon(this.p, rng, isComboStrike, {
       attacks,
-      allowHotHandProc: true,
+      allowHotHandProc: false,
       allowImbuementMasteryProc: true,
     });
     flametongueDamage += flametongue.damage;
     flametongueCrit = flametongue.isCrit;
     newEvents.push(...flametongue.newEvents);
-
-    this.p.recordPendingSpellStat(this.name, totalDamage, attacks, anyCrit);
 
     return {
       damage: totalDamage + flametongueDamage,
@@ -268,9 +286,8 @@ export function triggerWindfuryWeapon(
   }
 
   const newEvents: SimEvent[] = [];
-  if (state.hasTalent('forceful_winds')) {
-    applyShamanBuffStacks(state, 'forceful_winds', state.getBuffStacks('forceful_winds') + 1, newEvents);
-  }
+  // SimC does not trigger the forceful_winds stacking buff (spell 262652); the talent
+  // is fully passive (+50% WF damage) via parse_passive_effects().
 
   const result = new WindfuryAttackAction(state).executeProc(queue, rng, isComboStrike);
   return {

@@ -10,6 +10,7 @@ import { createStaticAccumulationEvents } from './ascendance';
 const DOOM_WINDS_ACTIVE = requireShamanSpellData(384352);
 const DOOM_WINDS_BUFF = requireShamanSpellData(466772);
 const DOOM_WINDS_DAMAGE = requireShamanSpellData(469270);
+const THORIMS_INVOCATION = requireShamanSpellData(384444);
 const WINNING_STREAK = requireShamanSpellData(1218616);
 const ELECTROSTATIC_WAGER_DAMAGE = requireShamanSpellData(1223332);
 
@@ -17,13 +18,22 @@ const DOOM_WINDS_DIRECT_DELAY_SECONDS = 0.1;
 const DOOM_WINDS_PERIODIC_START_SECONDS = 0.001;
 const DOOM_WINDS_PERIOD_SECONDS = 1;
 
-export function createDoomWindsEvents(currentTime: number): { damageEvents: ActionResult['newEvents']; totalPulses: number } {
+export function doomWindsDurationSeconds(state: Pick<IGameState, 'hasTalent'>): number {
+  return state.hasTalent('thorims_invocation')
+    ? THORIMS_INVOCATION.effectN(1).base_value()
+    : DOOM_WINDS_BUFF.duration_ms() / 1000;
+}
+
+export function createDoomWindsEvents(
+  currentTime: number,
+  durationSeconds: number,
+): { damageEvents: ActionResult['newEvents']; totalPulses: number } {
   const damageEvents = [{
     type: EventType.DELAYED_SPELL_IMPACT as const,
     time: currentTime + DOOM_WINDS_DIRECT_DELAY_SECONDS,
     spellId: 'doom_winds_damage' as const,
   }];
-  const pulses = Math.floor(DOOM_WINDS_BUFF.duration_ms() / 1000);
+  const pulses = Math.floor(durationSeconds);
   for (let pulse = 0; pulse < pulses; pulse += 1) {
     damageEvents.push({
       type: EventType.DELAYED_SPELL_IMPACT,
@@ -69,10 +79,7 @@ export class DoomWindsDamageAction extends ShamanAction {
 
     for (let targetId = 0; targetId < this.nTargets(); targetId += 1) {
       const snapshot = this.captureSnapshot(isComboStrike);
-      const impact = this.calculateDamageFromSnapshot({
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, this.nTargets()),
-      }, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, this.nTargets()));
       this.p.addDamage(impact.damage, targetId);
       damages.push({ amount: impact.damage, isCrit: impact.isCrit });
     }
@@ -113,21 +120,22 @@ export class DoomWindsAction extends ShamanMeleeAction {
     _rng: RngInstance,
     _isComboStrike: boolean,
   ): ActionResult {
-    const { damageEvents } = createDoomWindsEvents(this.p.currentTime);
+    const durationSeconds = doomWindsDurationSeconds(this.p);
+    const { damageEvents } = createDoomWindsEvents(this.p.currentTime, durationSeconds);
     const newEvents = [...damageEvents];
     if (this.p.hasTalent('feral_spirit')) {
       applyFeralSpiritWolfBuff(this.p, 'crackling_surge', newEvents);
     }
     if (this.p.hasTalent('static_accumulation')) {
       applyShamanBuffStacks(this.p, 'static_accumulation', 1, newEvents);
-      newEvents.push(...createStaticAccumulationEvents(this.p.currentTime, DOOM_WINDS_BUFF.duration_ms() / 1000));
+      newEvents.push(...createStaticAccumulationEvents(this.p.currentTime, durationSeconds));
     }
 
     return {
       damage: 0,
       isCrit: false,
       newEvents,
-      buffsApplied: [],
+      buffsApplied: [{ id: 'doom_winds', duration: durationSeconds, stacks: 1 }],
       cooldownAdjustments: [],
     };
   }

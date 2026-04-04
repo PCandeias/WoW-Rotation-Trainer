@@ -1,4 +1,5 @@
 import type { GameState } from '../../engine/gameState';
+import type { BuffState } from '../../engine/gameState';
 import type { IGameState } from '../../engine/i_game_state';
 import { createRppmTracker } from '../../engine/rppm';
 import type { RppmTracker } from '../../engine/rppm';
@@ -8,8 +9,19 @@ import { MONK_DBC, requireMonkSpellData } from '../../dbc/monk_spell_data';
 import { EventType } from '../../engine/eventQueue';
 import type { SimEvent } from '../../engine/eventQueue';
 import type { SpellDef } from '../../data/spells';
-import { MONK_WW_SPELLS } from '../../data/spells/monk_windwalker';
+import { MONK_WW_BUFFS, MONK_WW_SPELLS } from '../../data/spells/monk_windwalker';
 import { SHARED_PLAYER_SPELLS } from '../../shared/player_effects';
+import {
+  MONK_KEY_FLURRY_CHARGES,
+  getMonkFlurryCharges,
+  getMonkHitComboStacks,
+} from './monk_state_keys';
+
+import {
+  BOK_WW_SPEC_MULTIPLIER,
+  MARTIAL_AGILITY_BASE_HASTE_PCT,
+  MARTIAL_AGILITY_ZENITH_HASTE_PCT,
+} from './monk_derived_values';
 
 const MAX_FLURRY_CHARGES = 30;
 const SIMC_BUFFED_SNAPSHOT_SOURCE = 'simc_buffed_snapshot';
@@ -172,7 +184,7 @@ export function initializeMonkRuntimeState(state: GameState): void {
         return 0;
       }
 
-      return s.isBuffActive('zenith') ? 60 : 30;
+      return s.isBuffActive('zenith') ? MARTIAL_AGILITY_ZENITH_HASTE_PCT : MARTIAL_AGILITY_BASE_HASTE_PCT;
     },
     getAutoAttackSpeedMultiplier: (s: IGameState): number => {
       let multiplier = 1;
@@ -192,8 +204,13 @@ export function initializeMonkRuntimeState(state: GameState): void {
     getAttackPowerWeaponMultiplierBonus: (_s: IGameState): number => 0,
   };
 
+  const inheritedExecutionHooks = state.executionHooks;
   state.executionHooks = {
     ...state.executionHooks,
+    getBuffStackExpirationModel(currentState, buffId) {
+      return MONK_WW_BUFFS.get(buffId)?.stackExpirationModel
+        ?? inheritedExecutionHooks.getBuffStackExpirationModel?.(currentState, buffId);
+    },
     preCastFailReason: (
       s,
       spell,
@@ -209,7 +226,7 @@ export function initializeMonkRuntimeState(state: GameState): void {
         return 'execute_not_ready';
       }
       if (spell.name === 'rushing_wind_kick' && !s.isBuffActive('rushing_wind_kick')) {
-        return 'talent_missing';
+        return 'not_available';
       }
       if (spell.isWdp && !s.isBuffActive('whirling_dragon_punch')) {
         return 'wdp_constraint';
@@ -341,11 +358,11 @@ export function initializeMonkRuntimeState(state: GameState): void {
         mult *= getWindwalkerJadefireStompDirectMultiplier();
       }
       if (spell.name === 'teachings_of_the_monastery') {
-        // WW aura (137025) eff#14 applies +329% (×4.29) to BOK family including 228649.
+        // WW aura (137025) eff#14 applies +329% (×BOK_WW_SPEC_MULTIPLIER) to BoK family including 228649.
         // WW aura (1258122) eff#20 applies -75% (×0.25) to 228649 only.
-        // BOK action class hardcodes eff#14 in composite_da_multiplier(); teachings
-        // bypasses that path, so we apply the net factor here: 4.29 × 0.25 = 1.0725.
-        mult *= 4.29 * 0.25;
+        // BoK action class applies BOK_WW_SPEC_MULTIPLIER in composite_da_multiplier(); teachings
+        // bypasses that path, so we apply the net factor here: BOK_WW_SPEC_MULTIPLIER × 0.25 = 1.0725.
+        mult *= BOK_WW_SPEC_MULTIPLIER * 0.25;
       }
       if (spell.isPhysical !== false) {
         mult *= getMartialInstinctsPhysicalDamageMultiplier(s);
@@ -374,7 +391,7 @@ export function initializeMonkRuntimeState(state: GameState): void {
       if (!s.hasTalent('hit_combo')) {
         return 1.0;
       }
-      return 1 + s.hitComboStacks * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
+      return 1 + getMonkHitComboStacks(s) * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
     },
     getSpellCritChanceBonusPercent: (spell, s): number => {
       // zenith_teb_crit is now in getCritPercentBonus (STAT_PCT_BUFF_CRIT — applies to all melee).
@@ -441,6 +458,47 @@ export function initializeMonkRuntimeState(state: GameState): void {
       return s.hasTalent('martial_precision') ? 12 : 0;
     },
   };
+
+  state.evaluatorHooks = {
+    /**
+     * `zenith` is a logical alias for either `zenith` (the direct buff) or
+     * `celestial_conduit_active` (the alternate Celestial Conduit active state).
+     * SimC APLs always reference `buff.zenith`, so we resolve whichever is
+     * currently active. (sc_monk.cpp: both effects use the same APL condition.)
+     */
+    resolveBuffAlias(buffName, lookupBuff, currentTime): BuffState | undefined {
+      if (buffName !== 'zenith') return undefined;
+      const zenith = lookupBuff('zenith');
+      if (zenith !== undefined && (zenith.expiresAt === 0 || zenith.expiresAt > currentTime)) {
+        return zenith;
+      }
+      return lookupBuff('celestial_conduit_active');
+    },
+
+    /**
+     * `flurry_charge` is backed by `monk_flurry_charges` in numeric state rather
+     * than by independent per-stack timers. The standard `buff.X.stack` path would
+     * return the stackTimers count, which can lag behind the canonical counter.
+     * Redirect to `getNumericState` so APL expressions always see the live count.
+     */
+    resolveCustomBuffState(buffName, prop, lookupBuff, currentTime, getNumericState): number | undefined {
+      if (buffName !== 'flurry_charge') return undefined;
+      const flurryBuff = lookupBuff('flurry_charge');
+      const flurryStacks = flurryBuff !== undefined && (flurryBuff.expiresAt === 0 || flurryBuff.expiresAt > currentTime)
+        ? flurryBuff.stackTimers.filter(t => t === 0 || t > currentTime).length
+        : getNumericState(MONK_KEY_FLURRY_CHARGES);
+      switch (prop) {
+        case 'up':
+          return flurryStacks > 0 ? 1 : 0;
+        case 'remains':
+          return 0;
+        case 'stack':
+          return flurryStacks;
+        default:
+          return undefined;
+      }
+    },
+  };
 }
 
 /**
@@ -470,7 +528,7 @@ export function getDanceOfChiJiRppm(state: GameState): RppmTracker {
  */
 export function setMonkFlurryCharges(state: GameState, value: number): number {
   const clamped = state.setPermanentStackingBuff('flurry_charge', value, MAX_FLURRY_CHARGES);
-  state.flurryCharges = clamped;
+  state.setNumericState(MONK_KEY_FLURRY_CHARGES, clamped);
   return clamped;
 }
 
@@ -478,5 +536,5 @@ export function setMonkFlurryCharges(state: GameState, value: number): number {
  * Add Flurry Charges and synchronize the permanent buff stack.
  */
 export function addMonkFlurryCharges(state: GameState, delta: number): number {
-  return setMonkFlurryCharges(state, state.flurryCharges + delta);
+  return setMonkFlurryCharges(state, getMonkFlurryCharges(state) + delta);
 }

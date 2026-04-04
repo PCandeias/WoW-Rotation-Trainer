@@ -21,7 +21,12 @@ import {
 } from './autoAttack';
 import { processChannelTickDetailed, processChannelEnd } from './channel';
 import { processDotTickDetailed } from './dot';
-import { drainQueue } from './spellQueue';
+import {
+  clearQueuedAbility,
+  consumeQueuedAbility,
+  isQueuedAbilityExpiredAt,
+  peekQueuedAbility,
+} from './spellQueue';
 import type { SpellDef } from '../data/spells';
 import { spellRequiresGcdReady } from '../data/spells';
 import { spellUsableDuringCurrentGcd } from '../data/spells';
@@ -111,6 +116,7 @@ export interface HeadlessLatencyModel {
   channelLag: number;
   channelLagStddev: number;
   strictGcdQueue: boolean;
+  queueGcdReduction?: number;
 }
 
 export interface CastRecord {
@@ -135,6 +141,36 @@ export type ForegroundTimelineEntry = ActionSequenceEntry | WaitSequenceEntry;
 interface ForegroundWaitState {
   token: number;
   startedAt: number;
+}
+
+type ForegroundReadyReason =
+  | 'initial'
+  | 'post_execute'
+  | 'idle_poll'
+  | 'stimulus'
+  | 'resource_threshold'
+  | 'channel_poll'
+  | 'channel_end'
+  | 'queued_action'
+  | 'strict_queue';
+
+interface PendingForegroundReady {
+  token: number;
+  time: number;
+  reason: ForegroundReadyReason;
+}
+
+interface PendingQueuedAbilityFire {
+  token: number;
+  time: number;
+}
+
+function getPendingForegroundReadyToken(pending: PendingForegroundReady | null): number | undefined {
+  return pending?.token;
+}
+
+function getPendingQueuedAbilityFireToken(pending: PendingQueuedAbilityFire | null): number | undefined {
+  return pending?.token;
 }
 
 export interface SpellEventEntry {
@@ -364,6 +400,10 @@ function sampleForegroundReadyLag(latencyModel: HeadlessLatencyModel | undefined
   return sampleQueueLag(latencyModel, rng);
 }
 
+function getQueueGcdReduction(latencyModel: HeadlessLatencyModel | undefined): number {
+  return latencyModel?.queueGcdReduction ?? 0.1;
+}
+
 function sampleReadyPollDelay(rng: RngInstance): number {
   return sampleNonNegativeNormal(rng, SIMC_READY_POLL_MEAN, SIMC_READY_POLL_STDDEV);
 }
@@ -506,7 +546,6 @@ function processPrecombatEventsUntilPull(
       case EventType.ENERGY_CAP_CHECK:
       case EventType.GCD_READY:
       case EventType.OFF_GCD_READY:
-      case EventType.CWC_READY:
       case EventType.PLAYER_INPUT:
       case EventType.PLAYER_CANCEL:
       case EventType.QUEUED_ABILITY_FIRE:
@@ -1016,6 +1055,7 @@ function scheduleOffGcdReady(
   encounterDuration: number,
   latencyModel: HeadlessLatencyModel | undefined,
   rng: RngInstance,
+  nextForegroundReadyTime: number,
 ): void {
   if (!latencyModel) {
     return;
@@ -1030,7 +1070,7 @@ function scheduleOffGcdReady(
   }
 
   const earliestQueueableTime = findEarliestOffGcdQueueableTime(state, actionLists, runtime, latencyModel);
-  if (earliestQueueableTime === null || earliestQueueableTime >= state.gcdReady) {
+  if (earliestQueueableTime === null || earliestQueueableTime >= nextForegroundReadyTime) {
     return;
   }
 
@@ -1038,29 +1078,11 @@ function scheduleOffGcdReady(
     state.currentTime + sampleQueueLag(latencyModel, rng),
     earliestQueueableTime,
   );
-  if (nextPollTime >= state.gcdReady || nextPollTime >= encounterDuration) {
+  if (nextPollTime >= nextForegroundReadyTime || nextPollTime >= encounterDuration) {
     return;
   }
 
   queue.push({ type: EventType.OFF_GCD_READY, time: nextPollTime });
-}
-
-function scheduleCastWhileCastingReady(
-  state: ReturnType<typeof createGameState>,
-  queue: SimEventQueue,
-  encounterDuration: number,
-): void {
-  const activeChannel = state.getActiveChannel();
-  if (!activeChannel) {
-    return;
-  }
-
-  const nextPollTime = Math.max(state.currentTime, state.gcdReady);
-  if (nextPollTime >= activeChannel.endsAt || nextPollTime >= encounterDuration) {
-    return;
-  }
-
-  queue.push({ type: EventType.CWC_READY, time: nextPollTime });
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,6 +1142,10 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   let waitingTime = 0;
   let resourceThresholdWaitToken = 0;
   let waitingForTrigger: ForegroundWaitState | null = null;
+  let nextForegroundReadyToken = 0;
+  let pendingForegroundReady: PendingForegroundReady | null = null;
+  let nextQueuedAbilityFireToken = 0;
+  let pendingQueuedAbilityFire: PendingQueuedAbilityFire | null = null;
 
   applyPrecombatActions(state, actionLists, runtime, rng, config.encounter.duration);
 
@@ -1132,6 +1158,49 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       time: startedAt,
       wait: duration,
     });
+  };
+
+  const scheduleForegroundReadyAt = (time: number, reason: ForegroundReadyReason): void => {
+    const nextReadyTime = Math.max(state.currentTime, time);
+    if (nextReadyTime >= config.encounter.duration) {
+      return;
+    }
+
+    if (pendingForegroundReady && pendingForegroundReady.time <= nextReadyTime) {
+      return;
+    }
+
+    const token = ++nextForegroundReadyToken;
+    pendingForegroundReady = {
+      token,
+      time: nextReadyTime,
+      reason,
+    };
+    if (logger) {
+      logger(`${state.currentTime.toFixed(3)} schedule_foreground_ready(${reason}) ${nextReadyTime.toFixed(6)}`);
+    }
+    queue.push({ type: EventType.GCD_READY, time: nextReadyTime, token });
+  };
+
+  const scheduleQueuedAbilityFireAt = (time: number): void => {
+    const nextFireTime = Math.max(state.currentTime, time);
+    if (nextFireTime >= config.encounter.duration) {
+      return;
+    }
+
+    if (pendingQueuedAbilityFire && pendingQueuedAbilityFire.time <= nextFireTime) {
+      return;
+    }
+
+    const token = ++nextQueuedAbilityFireToken;
+    pendingQueuedAbilityFire = {
+      token,
+      time: nextFireTime,
+    };
+    if (logger) {
+      logger(`${state.currentTime.toFixed(3)} schedule_queued_ability_fire() ${nextFireTime.toFixed(6)}`);
+    }
+    queue.push({ type: EventType.QUEUED_ABILITY_FIRE, time: nextFireTime, token });
   };
 
   const wakeForegroundIfWaiting = (): void => {
@@ -1150,10 +1219,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     recordForegroundWait(waitingForTrigger.startedAt, totalWait);
     waitingForTrigger = null;
 
-    const nextReadyTime = state.currentTime + readyDelay;
-    if (nextReadyTime < config.encounter.duration) {
-      queue.push({ type: EventType.GCD_READY, time: nextReadyTime });
-    }
+    scheduleForegroundReadyAt(state.currentTime + readyDelay, 'stimulus');
   };
 
   const scheduleForegroundWait = (): void => {
@@ -1162,9 +1228,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       const waitDuration = Math.max(0, nextReadyTime - state.currentTime);
       waitingTime += waitDuration;
       recordForegroundWait(state.currentTime, waitDuration);
-      if (nextReadyTime < config.encounter.duration) {
-        queue.push({ type: EventType.GCD_READY, time: nextReadyTime });
-      }
+      scheduleForegroundReadyAt(nextReadyTime, 'idle_poll');
       return;
     }
 
@@ -1184,20 +1248,21 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   };
 
   const recordSuccessfulCast = (
-    selected: SelectedAction,
+    spell: SpellDef,
     result: ReturnType<typeof executeAbility>,
     castStartedAt: number,
     chiBeforeExec: number,
     chiCostForSpell: number,
     energyBeforeExec: number,
+    selectedSpellRecordedByPendingStat: boolean,
   ): void => {
-    const selectedSpellId = selected.spell.name;
+    const selectedSpellId = spell.name;
     const chiGained = Math.max(0, state.chi - chiBeforeExec + chiCostForSpell);
     // Note: chiSpent reflects the pre-execution cost, not the net chi delta.
     // This is accurate for all current WW spells (no simultaneous refund mechanics).
     const chiSpent = Math.max(0, chiCostForSpell);
-    const energySpent = Math.max(0, selected.spell.energyCost);
-    const executeTime = result.executeTime ?? (selected.spell.isOnGcd ? Math.max(0, state.gcdReady - castStartedAt) : 0);
+    const energySpent = Math.max(0, spell.energyCost);
+    const executeTime = result.executeTime ?? (spell.isOnGcd ? Math.max(0, state.gcdReady - castStartedAt) : 0);
     executeTimeBySpell[selectedSpellId] = (executeTimeBySpell[selectedSpellId] ?? 0) + executeTime;
     castLog.push({
       time: state.currentTime,
@@ -1213,18 +1278,20 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       time: state.currentTime,
       spellId: selectedSpellId,
     });
-    recordSpellStats(damageBySpell, selectedSpellId, result.damage, 1, result.isCrit, chiGained);
     addSpellResourceTotals(damageBySpell, selectedSpellId, {
       energySpent,
       chiSpent,
     });
-    pushSpellEvent({
-      time: castStartedAt,
-      spellId: selectedSpellId,
-      damage: result.damage,
-      isCrit: result.isCrit,
-      outcome: 'landed',
-    });
+    if (!selectedSpellRecordedByPendingStat) {
+      recordSpellStats(damageBySpell, selectedSpellId, result.damage, 1, result.isCrit, chiGained);
+      pushSpellEvent({
+        time: castStartedAt,
+        spellId: selectedSpellId,
+        damage: result.damage,
+        isCrit: result.isCrit,
+        outcome: 'landed',
+      });
+    }
     if (logger) {
       const spellId = resolveSpellId(selectedSpellId);
       const t = castStartedAt;
@@ -1255,14 +1322,228 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     const chiBeforeExec = state.chi;
     const chiCostForSpell = getEffectiveChiCost(selected.spell, state);
     const energyBeforeExec = state.getEnergy();
+    const pendingStatCountBefore = state.getPendingSpellStats().length;
     const result = executeAbility(selected.spell, state, queue, rng);
     if (!result.success) {
       return undefined;
     }
+    const selectedSpellRecordedByPendingStat = state
+      .getPendingSpellStats()
+      .slice(pendingStatCountBefore)
+      .some((pending) => pending.spellId === selected.spell.name && pending.casts > 0);
 
     applyActionLineCooldown(selected.action, state);
-    recordSuccessfulCast(selected, result, castStartedAt, chiBeforeExec, chiCostForSpell, energyBeforeExec);
+    recordSuccessfulCast(
+      selected.spell,
+      result,
+      castStartedAt,
+      chiBeforeExec,
+      chiCostForSpell,
+      energyBeforeExec,
+      selectedSpellRecordedByPendingStat,
+    );
     return selected.spell;
+  };
+
+  const resolveQueuedSpell = (spellId: string): SpellDef | undefined => (
+    state.executionHooks.resolveSpellDef?.(state, spellId)
+  );
+
+  const tryExecuteSpell = (spell: SpellDef): SpellDef | undefined => {
+    const castStartedAt = state.currentTime;
+    const chiBeforeExec = state.chi;
+    const chiCostForSpell = getEffectiveChiCost(spell, state);
+    const energyBeforeExec = state.getEnergy();
+    const result = executeAbility(spell, state, queue, rng);
+    if (!result.success) {
+      return undefined;
+    }
+
+    recordSuccessfulCast(spell, result, castStartedAt, chiBeforeExec, chiCostForSpell, energyBeforeExec, false);
+    return spell;
+  };
+
+  const hasStrictQueueEligibleInput = (): SpellDef | undefined => {
+    if (!config.latencyModel?.strictGcdQueue) {
+      return undefined;
+    }
+
+    const queuedAbility = peekQueuedAbility(state);
+    if (!queuedAbility) {
+      return undefined;
+    }
+
+    const spell = resolveQueuedSpell(queuedAbility);
+    if (!spell?.isOnGcd) {
+      return undefined;
+    }
+
+    if (state.getActiveChannel() || state.getActiveCast()) {
+      return undefined;
+    }
+
+    return spell;
+  };
+
+  const tryExecuteQueuedAbility = (fireTime: number): SpellDef | undefined => {
+    const queuedAbility = peekQueuedAbility(state);
+    if (!queuedAbility) {
+      return undefined;
+    }
+
+    const spell = resolveQueuedSpell(queuedAbility);
+    if (!spell || isQueuedAbilityExpiredAt(state, fireTime)) {
+      clearQueuedAbility(state);
+      return undefined;
+    }
+
+    const failReason = getAbilityFailReason(spell, state);
+    if (failReason === 'channel_locked' || failReason === 'cast_locked') {
+      return undefined;
+    }
+    if (failReason !== undefined) {
+      clearQueuedAbility(state);
+      return undefined;
+    }
+
+    const executed = tryExecuteSpell(spell);
+    if (executed) {
+      consumeQueuedAbility(state);
+      return executed;
+    }
+
+    clearQueuedAbility(state);
+    return undefined;
+  };
+
+  const computeForegroundReadyTime = (lastSuccessfulSpell: SpellDef | undefined): number => {
+    const readyLag = lastSuccessfulSpell?.isOnGcd ? sampleForegroundReadyLag(config.latencyModel, rng) : 0;
+    const strictQueuedSpell = lastSuccessfulSpell?.isOnGcd ? hasStrictQueueEligibleInput() : undefined;
+    if (strictQueuedSpell) {
+      return state.gcdReady - getQueueGcdReduction(config.latencyModel) + readyLag;
+    }
+    return state.gcdReady + readyLag;
+  };
+
+  const rescheduleStrictQueuedForegroundReady = (): void => {
+    if (!config.latencyModel?.strictGcdQueue || state.currentTime >= state.gcdReady) {
+      return;
+    }
+
+    if (!hasStrictQueueEligibleInput()) {
+      return;
+    }
+
+    if (pendingForegroundReady && pendingForegroundReady.time < state.gcdReady) {
+      return;
+    }
+
+    const readyLag = sampleForegroundReadyLag(config.latencyModel, rng);
+    pendingForegroundReady = null;
+    scheduleForegroundReadyAt(state.gcdReady - getQueueGcdReduction(config.latencyModel) + readyLag, 'strict_queue');
+  };
+
+  const resolveForegroundTurn = (): {
+    castAnyAction: boolean;
+    lastSuccessfulSpell: SpellDef | undefined;
+    nextForegroundReadyTime: number | undefined;
+  } => {
+    waitingForTrigger = null;
+
+    let castAnyAction = false;
+    let lastSuccessfulSpell: SpellDef | undefined;
+    let nextForegroundReadyTime: number | undefined;
+    let attemptedQueuedAbility = false;
+
+    while (state.gcdReady <= state.currentTime) {
+      let successfulSpell: SpellDef | undefined;
+      if (!attemptedQueuedAbility) {
+        attemptedQueuedAbility = true;
+        const queuedAbilityBeforeAttempt = peekQueuedAbility(state);
+        successfulSpell = tryExecuteQueuedAbility(state.currentTime);
+        const queuedAbilityAfterAttempt = peekQueuedAbility(state);
+        if (
+          !successfulSpell
+          && (queuedAbilityBeforeAttempt === null || queuedAbilityAfterAttempt === null)
+        ) {
+          successfulSpell = tryExecuteSelectedAction(
+            selectAction(state, actionLists, runtime, rng, 'any', debugMode ? logger : undefined, playerName),
+          );
+        }
+      } else {
+        successfulSpell = tryExecuteSelectedAction(
+          selectAction(state, actionLists, runtime, rng, 'any', debugMode ? logger : undefined, playerName),
+        );
+      }
+
+      if (!successfulSpell) {
+        break;
+      }
+
+      castAnyAction = true;
+      lastSuccessfulSpell = successfulSpell;
+
+      if (successfulSpell.isOnGcd) {
+        nextForegroundReadyTime = computeForegroundReadyTime(successfulSpell);
+        scheduleOffGcdReady(
+          state,
+          queue,
+          actionLists,
+          runtime,
+          config.encounter.duration,
+          config.latencyModel,
+          rng,
+          nextForegroundReadyTime,
+        );
+      }
+
+      if (peekQueuedAbility(state) === null) {
+        attemptedQueuedAbility = true;
+      }
+    }
+
+    return {
+      castAnyAction,
+      lastSuccessfulSpell,
+      nextForegroundReadyTime,
+    };
+  };
+
+  const scheduleAfterForegroundTurn = (
+    castAnyAction: boolean,
+    lastSuccessfulSpell: SpellDef | undefined,
+    nextForegroundReadyTime: number | undefined,
+  ): void => {
+    const activeChannel = state.getActiveChannel();
+    if (activeChannel) {
+      if (state.gcdReady > state.currentTime && state.gcdReady < activeChannel.endsAt) {
+        scheduleForegroundReadyAt(state.gcdReady, 'channel_poll');
+        return;
+      }
+
+      const nextPollTime = state.currentTime + sampleReadyPollDelay(rng);
+      if (nextPollTime < activeChannel.endsAt) {
+        scheduleForegroundReadyAt(nextPollTime, 'channel_poll');
+      }
+      return;
+    }
+
+    if (state.gcdReady > state.currentTime) {
+      scheduleForegroundReadyAt(nextForegroundReadyTime ?? computeForegroundReadyTime(lastSuccessfulSpell), 'post_execute');
+      return;
+    }
+
+    if (!castAnyAction) {
+      scheduleForegroundWait();
+      return;
+    }
+
+    scheduleForegroundWait();
+  };
+
+  const getPendingForegroundReadyTime = (): number => {
+    const pendingTime = pendingForegroundReady?.time;
+    return typeof pendingTime === 'number' ? pendingTime : state.gcdReady;
   };
 
   const pushSpellEvent = (entry: SpellEventEntry): void => {
@@ -1339,7 +1620,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         runtime.module.combat_begin(state, queue);
         scheduleInitialTimedBuffExpiryEvents(state, queue, config.encounter.duration);
         // Bot starts immediately
-        queue.push({ type: EventType.GCD_READY, time: 0 });
+        scheduleForegroundReadyAt(0, 'initial');
         break;
       }
 
@@ -1366,63 +1647,37 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       }
 
       case EventType.GCD_READY: {
-        waitingForTrigger = null;
-        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
-        const activeChannel = state.getActiveChannel();
-        if (activeChannel) {
+        const eventToken = event.token;
+        const pendingReadyToken = getPendingForegroundReadyToken(pendingForegroundReady);
+        if (eventToken !== undefined && pendingReadyToken !== undefined && pendingReadyToken !== eventToken) {
           break;
         }
 
-        let selectedSpellId: string | undefined;
-        let castAnyAction = false;
-        let lastSuccessfulSpell: SpellDef | undefined;
-
-        while (!state.getActiveChannel() && state.gcdReady <= state.currentTime) {
-          const selected = selectAction(state, actionLists, runtime, rng, 'any', debugMode ? logger : undefined, playerName);
-          selectedSpellId = selected?.spell.name;
-          if (!selected || selectedSpellId === undefined) {
-            break;
-          }
-
-          const successfulSpell = tryExecuteSelectedAction(selected);
-          if (!successfulSpell) {
-            break;
-          }
-          castAnyAction = true;
-          lastSuccessfulSpell = successfulSpell;
-
-          if (successfulSpell.isOnGcd) {
-            scheduleOffGcdReady(state, queue, actionLists, runtime, config.encounter.duration, config.latencyModel, rng);
-            scheduleCastWhileCastingReady(state, queue, config.encounter.duration);
-          }
+        if (pendingReadyToken !== undefined && pendingReadyToken === eventToken) {
+          pendingForegroundReady = null;
         }
 
-        // Drain spell queue after GCD_READY
-        drainQueue(state);
+        const strictQueuedSpell = hasStrictQueueEligibleInput();
+        if (strictQueuedSpell && state.currentTime < state.gcdReady) {
+          if (isQueuedAbilityExpiredAt(state, state.gcdReady)) {
+            clearQueuedAbility(state);
+            scheduleForegroundReadyAt(state.gcdReady, 'queued_action');
+            break;
+          }
+
+          scheduleQueuedAbilityFireAt(state.gcdReady);
+          break;
+        }
+
+        if (state.currentTime < state.gcdReady) {
+          scheduleForegroundReadyAt(state.gcdReady, 'post_execute');
+          break;
+        }
+
+        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
+        const { castAnyAction, lastSuccessfulSpell, nextForegroundReadyTime } = resolveForegroundTurn();
         rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
-
-        // Determine when to schedule the next GCD_READY event
-        let nextGcdTime: number;
-        const nextActiveChannel = state.getActiveChannel();
-        if (nextActiveChannel && nextActiveChannel.endsAt > state.currentTime) {
-          nextGcdTime = nextActiveChannel.endsAt + sampleChannelLag(config.latencyModel, rng);
-        } else if (state.gcdReady > state.currentTime) {
-          // GCD is running — wait for it to finish
-          const readyLag = lastSuccessfulSpell?.isOnGcd ? sampleForegroundReadyLag(config.latencyModel, rng) : 0;
-          nextGcdTime = state.gcdReady + readyLag;
-        } else if (!castAnyAction) {
-          // GCD is up but nothing castable — poll until something becomes available
-          scheduleForegroundWait();
-          nextGcdTime = Number.NaN;
-        } else {
-          // Off-GCD-only cast left GCD idle — poll for on-GCD opportunity
-          scheduleForegroundWait();
-          nextGcdTime = Number.NaN;
-        }
-
-        if (Number.isFinite(nextGcdTime) && nextGcdTime < config.encounter.duration) {
-          queue.push({ type: EventType.GCD_READY, time: nextGcdTime });
-        }
+        scheduleAfterForegroundTurn(castAnyAction, lastSuccessfulSpell, nextForegroundReadyTime);
         break;
       }
 
@@ -1433,47 +1688,80 @@ export function runHeadless(config: HeadlessConfig): SimResult {
 
         const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         const successfulSpell = tryExecuteSelectedAction(selectAction(state, actionLists, runtime, rng, 'off-gcd', debugMode ? logger : undefined, playerName));
+        const nextForegroundReadyTime = getPendingForegroundReadyTime();
         if (!successfulSpell) {
-          scheduleOffGcdReady(state, queue, actionLists, runtime, config.encounter.duration, config.latencyModel, rng);
+          scheduleOffGcdReady(
+            state,
+            queue,
+            actionLists,
+            runtime,
+            config.encounter.duration,
+            config.latencyModel,
+            rng,
+            nextForegroundReadyTime,
+          );
           break;
         }
 
         rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
-        scheduleOffGcdReady(state, queue, actionLists, runtime, config.encounter.duration, config.latencyModel, rng);
+        scheduleOffGcdReady(
+          state,
+          queue,
+          actionLists,
+          runtime,
+          config.encounter.duration,
+          config.latencyModel,
+          rng,
+          nextForegroundReadyTime,
+        );
         break;
       }
 
-      case EventType.CWC_READY: {
-        const activeChannel = state.getActiveChannel();
-        if (!activeChannel || state.gcdReady > state.currentTime) {
+      case EventType.QUEUED_ABILITY_FIRE: {
+        const eventToken = event.token;
+        const pendingFireToken = getPendingQueuedAbilityFireToken(pendingQueuedAbilityFire);
+        if (eventToken !== undefined && pendingFireToken !== undefined && pendingFireToken !== eventToken) {
           break;
+        }
+
+        const nextEvent = queue.peek();
+        if (nextEvent?.time === state.currentTime) {
+          queue.push({ type: EventType.QUEUED_ABILITY_FIRE, time: state.currentTime, token: eventToken });
+          break;
+        }
+
+        if (pendingFireToken !== undefined && pendingFireToken === eventToken) {
+          pendingQueuedAbilityFire = null;
         }
 
         const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
-        const successfulSpell = tryExecuteSelectedAction(selectAction(state, actionLists, runtime, rng, 'any', debugMode ? logger : undefined, playerName));
-        if (!successfulSpell) {
-          const nextPollTime = state.currentTime + sampleReadyPollDelay(rng);
-          if (nextPollTime < activeChannel.endsAt && nextPollTime < config.encounter.duration) {
-            queue.push({ type: EventType.CWC_READY, time: nextPollTime });
+        let castAnyAction = false;
+        let lastSuccessfulSpell = tryExecuteQueuedAbility(state.currentTime);
+        let nextForegroundReadyTime: number | undefined;
+        if (lastSuccessfulSpell) {
+          castAnyAction = true;
+          if (lastSuccessfulSpell.isOnGcd) {
+            nextForegroundReadyTime = computeForegroundReadyTime(lastSuccessfulSpell);
+            scheduleOffGcdReady(
+              state,
+              queue,
+              actionLists,
+              runtime,
+              config.encounter.duration,
+              config.latencyModel,
+              rng,
+              nextForegroundReadyTime,
+            );
           }
-          break;
+        } else {
+          const resolved = resolveForegroundTurn();
+          castAnyAction = resolved.castAnyAction;
+          lastSuccessfulSpell = resolved.lastSuccessfulSpell;
+          nextForegroundReadyTime = resolved.nextForegroundReadyTime;
         }
 
         rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
-
-        if (successfulSpell.isOnGcd) {
-          scheduleOffGcdReady(state, queue, actionLists, runtime, config.encounter.duration, config.latencyModel, rng);
-          scheduleCastWhileCastingReady(state, queue, config.encounter.duration);
-        }
-
-        if (!state.getActiveChannel()) {
-          const nextReadyTime = state.gcdReady > state.currentTime
-            ? state.gcdReady + (successfulSpell.isOnGcd ? sampleForegroundReadyLag(config.latencyModel, rng) : 0)
-            : state.currentTime;
-          if (nextReadyTime < config.encounter.duration) {
-            queue.push({ type: EventType.GCD_READY, time: nextReadyTime });
-          }
-        }
+        scheduleAfterForegroundTurn(castAnyAction, lastSuccessfulSpell, nextForegroundReadyTime);
         break;
       }
 
@@ -1494,7 +1782,9 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       }
 
       case EventType.ABILITY_CAST: {
+        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         const result = processAbilityCast(event, state, queue, rng);
+        rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
         recordSpellStats(damageBySpell, event.spellId, result.damage, 0, result.isCrit);
         pushSpellEvent({
           time: state.currentTime,
@@ -1586,6 +1876,8 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         processChannelEnd(event, state, queue, rng);
         rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
+        pendingForegroundReady = null;
+        scheduleForegroundReadyAt(state.currentTime + sampleChannelLag(config.latencyModel, rng), 'channel_end');
         break;
       }
 
@@ -1642,7 +1934,9 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         if (!isCurrentSwingEvent('mainHand', state)) {
           break;
         }
+        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         const aaDmg = processAutoAttack('mainHand', state, queue, rng, runtime.module);
+        rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
         castLog.push({ time: state.currentTime, spellId: 'auto_attack_mh', damage: aaDmg, isComboStrike: false });
         // on_auto_attack calls recordPendingSpellStat — drained below at drainPendingSpellStats()
         if (logger) {
@@ -1656,7 +1950,9 @@ export function runHeadless(config: HeadlessConfig): SimResult {
         if (!isCurrentSwingEvent('offHand', state)) {
           break;
         }
+        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         const aaDmg = processAutoAttack('offHand', state, queue, rng, runtime.module);
+        rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
         castLog.push({ time: state.currentTime, spellId: 'auto_attack_oh', damage: aaDmg, isComboStrike: false });
         // on_auto_attack calls recordPendingSpellStat — drained below at drainPendingSpellStats()
         if (logger) {
@@ -1669,7 +1965,9 @@ export function runHeadless(config: HeadlessConfig): SimResult {
       case EventType.DELAYED_SPELL_IMPACT:
       case EventType.TIGEREYE_BREW_TICK:
       case EventType.COMBAT_WISDOM_TICK: {
+        const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
         const result = runtime.processScheduledEvent?.(event, state, queue, rng, config.encounter.duration);
+        rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
         if (result?.handled) {
           const damages = result.damages ?? (result.damage ? [result.damage] : []);
           for (const damage of damages) {
@@ -1688,6 +1986,7 @@ export function runHeadless(config: HeadlessConfig): SimResult {
             });
           }
         }
+        rescheduleStrictQueuedForegroundReady();
         wakeForegroundIfWaiting();
         break;
       }
@@ -1702,12 +2001,6 @@ export function runHeadless(config: HeadlessConfig): SimResult {
 
       /* istanbul ignore next -- headless mode never emits ENERGY_CAP_CHECK */
       case EventType.ENERGY_CAP_CHECK: {
-        // No-op
-        break;
-      }
-
-      /* istanbul ignore next -- headless mode never emits QUEUED_ABILITY_FIRE */
-      case EventType.QUEUED_ABILITY_FIRE: {
         // No-op
         break;
       }
@@ -1794,6 +2087,28 @@ export function runHeadless(config: HeadlessConfig): SimResult {
     }
     return timeline;
   };
+  const fillAuraTimelineGaps = (timeline: number[]): number[] => {
+    if (timeline.length === 0) return timeline;
+    let firstKnown = -1;
+    for (let i = 0; i < timeline.length; i += 1) {
+      if (Number.isFinite(timeline[i])) {
+        firstKnown = i;
+        break;
+      }
+    }
+    if (firstKnown === -1) {
+      return timeline.fill(0);
+    }
+    for (let i = 0; i < firstKnown; i += 1) {
+      timeline[i] = 0;
+    }
+    for (let i = firstKnown + 1; i < timeline.length; i += 1) {
+      if (!Number.isFinite(timeline[i])) {
+        timeline[i] = timeline[i - 1];
+      }
+    }
+    return timeline;
+  };
 
   fillTimelineGaps(energyTimelineBySecond);
   fillTimelineGaps(chiTimelineBySecond);
@@ -1807,10 +2122,10 @@ export function runHeadless(config: HeadlessConfig): SimResult {
   fillTimelineGaps(masteryPctTimelineBySecond);
   fillTimelineGaps(versPctTimelineBySecond);
   for (const timeline of Object.values(buffStacksTimelineBySecond)) {
-    fillTimelineGaps(timeline);
+    fillAuraTimelineGaps(timeline);
   }
   for (const timeline of Object.values(targetDebuffStacksTimelineBySecond)) {
-    fillTimelineGaps(timeline);
+    fillAuraTimelineGaps(timeline);
   }
 
   return {

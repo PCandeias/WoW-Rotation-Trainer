@@ -12,6 +12,12 @@ import { calculateDamage } from '../../../engine/damage';
 import { CHI_EXPLOSION_SPELL } from '../monk_proc_spells';
 import type { SpellDef } from '../../../data/spells';
 
+import {
+  SCK_WW_SPEC_MULTIPLIER,
+  COMBO_BREAKER_MAX_STACKS,
+  COMBO_BREAKER_DURATION_SECONDS,
+} from '../monk_derived_values';
+
 const FAST_FEET_SPELL = requireMonkSpellData(388809);
 
 const CAST_DURING_SCK_SPELLS = new Set([
@@ -56,12 +62,12 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
   }
 
   /**
-   * WW spec aura (id=137025) effect #18: +1647% to SCK (107270) → 17.47× multiplier.
+   * WW spec aura (id=137025) effect #18: +1647% to SCK (107270) → ×SCK_WW_SPEC_MULTIPLIER.
    * Stacks with the inherited WW base 0.9× from MonkMeleeAction.
    * Fast Feet (388809 effectN(2)): +10% to SCK when talent is selected.
    */
   override composite_da_multiplier(): number {
-    let m = super.composite_da_multiplier() * 17.47;
+    let m = super.composite_da_multiplier() * SCK_WW_SPEC_MULTIPLIER;
     if (this.p.hasTalent('fast_feet')) m *= 1 + FAST_FEET_SPELL.effectN(2).percent();
     return m;
   }
@@ -126,8 +132,8 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
     // DBC: spell 451515, effect 1152152, value 100.0 → 100% chance.
     if (danceWasActive && this.p.hasTalent('sequenced_strikes')) {
       const stacksBefore = this.p.getBuffStacks('combo_breaker');
-      const stacksAfter = Math.min(2, stacksBefore + 1);
-      this.p.applyBuff('combo_breaker', 15, stacksAfter);
+      const stacksAfter = Math.min(COMBO_BREAKER_MAX_STACKS, stacksBefore + 1);
+      this.p.applyBuff('combo_breaker', COMBO_BREAKER_DURATION_SECONDS, stacksAfter);
       newEvents.push(
         stacksBefore > 0
           ? { type: EventType.BUFF_STACK_CHANGE, time: this.p.currentTime,
@@ -185,7 +191,7 @@ export class SpinningCraneKickAction extends MonkMeleeAction {
     let primaryIsCrit = false;
 
     for (let t = 0; t < n; t++) {
-      const { damage: baseDmg, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
+      const { damage: baseDmg, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng, t);
       let damage = baseDmg;
       if (t > 0) {
         damage *= this.aoeDamageMultiplier(t, n);

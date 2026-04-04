@@ -104,7 +104,17 @@ export class BloodlustAction extends SharedPlayerAction {
 
 export class PotionOfRecklessnessAction extends SharedPlayerAction {
   readonly name = 'potion';
-  readonly spellData = new SpellData(1236994, 'Potion of Recklessness');
+  readonly spellData: SpellData;
+
+  constructor(
+    state: IGameState,
+    private readonly potionKind: 'recklessness' | 'lights_potential' = 'recklessness',
+  ) {
+    super(state);
+    this.spellData = potionKind === 'lights_potential'
+      ? new SpellData(1236616, "Light's Potential")
+      : new SpellData(1236994, 'Potion of Recklessness');
+  }
 
   override execute(
     _queue: SimEventQueue,
@@ -112,10 +122,12 @@ export class PotionOfRecklessnessAction extends SharedPlayerAction {
     _isComboStrike: boolean,
   ): ActionResult {
     this.p.settleEnergy();
-    const newEvents = [
-      ...this.applyTimedBuff('potion_of_recklessness_haste', 30),
-      ...this.applyTimedBuff('potion_of_recklessness_penalty_vers', 30),
-    ];
+    const newEvents = this.potionKind === 'lights_potential'
+      ? this.applyTimedBuff('lights_potential', 30)
+      : [
+          ...this.applyTimedBuff('potion_of_recklessness_haste', 30),
+          ...this.applyTimedBuff('potion_of_recklessness_penalty_vers', 30),
+        ];
     this.p.recomputeEnergyRegenRate();
 
     return {
@@ -183,10 +195,15 @@ export function getAllSharedRacialActionNames(): readonly string[] {
   return [...new Set([...RACIAL_ACTIONS_BY_RACE.values()].flat())];
 }
 
-export function createSharedPlayerActions(state: IGameState, race?: string): Map<string, Action> {
+export function createSharedPlayerActions(
+  state: IGameState,
+  race?: string,
+  potionName?: string | null,
+): Map<string, Action> {
+  const potionKind = potionName?.startsWith('lights_potential') ? 'lights_potential' : 'recklessness';
   const actions = new Map<string, Action>([
     ['bloodlust', new BloodlustAction(state)],
-    ['potion', new PotionOfRecklessnessAction(state)],
+    ['potion', new PotionOfRecklessnessAction(state, potionKind)],
     ['algethar_puzzle_box', new AlgetharPuzzleBoxAction(state)],
   ]);
 

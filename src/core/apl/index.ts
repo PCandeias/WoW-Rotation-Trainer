@@ -11,6 +11,7 @@ export type { AstNode, NumberLiteralNode, PropertyAccessNode, UnaryOpNode, Binar
 
 export { evaluate, AplError } from './evaluator';
 export type { EvalContext, GameState, BuffState, CooldownState, TrinketState, SpellId } from './evaluator';
+export type { EvaluatorHooks } from './evaluator_hooks';
 
 export { parseActionLists, ActionListParseError } from './actionList';
 export type {

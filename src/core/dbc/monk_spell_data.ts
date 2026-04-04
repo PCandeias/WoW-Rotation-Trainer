@@ -340,16 +340,6 @@ export const MONK_DBC: Record<number, SpellData> = {
   458623: new SpellData(458623, 'Ferociousness',
     [{ _id: 1164724, _subtype: 290, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 }]),
 
-  // Skyfury (462854): external raid buff auto-attack repeat driver.
-  // Source: SimC SpellDataDump/shaman.txt (proc chance 20%, internal cooldown 0.1s).
-  462854: new SpellData(462854, 'Skyfury',
-    [
-      { _id: 1173055, _subtype: 318, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 },
-      { _id: 1286687, _subtype: 0, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
-    ],
-    0, 1500,
-    { _proc_chance_pct: 20, _internal_cooldown_ms: 100, _duration_ms: 3_600_000 }),
-
   // Hit Combo buff (196741): effectN(1) = +1% damage per stack.
   196741: new SpellData(196741, 'Hit Combo',
     [{ _id: 288843, _subtype: 108, _value: 1, _ap_coefficient: 0, _sp_coefficient: 0 }]),
@@ -406,4 +396,3 @@ export function requireMonkSpellData(spellId: number): SpellData {
   }
   return spell;
 }
-

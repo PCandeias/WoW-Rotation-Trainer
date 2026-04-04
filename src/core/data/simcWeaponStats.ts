@@ -4,7 +4,7 @@ import {
 } from './generated/simcProfileWeaponData';
 import type { LoadoutGearItem } from './loadout';
 
-const ITEM_FLAG2_CASTER_WEAPON = 0x00002000;
+const ITEM_FLAG2_CASTER_WEAPON = 0x00000200; // SimC: data_enums.hh ITEM_FLAG2_CASTER_WEAPON
 const INVTYPE_WEAPON = 13;
 const INVTYPE_2HWEAPON = 17;
 const INVTYPE_RANGED = 15;

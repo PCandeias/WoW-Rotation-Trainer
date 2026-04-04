@@ -63,7 +63,7 @@ export class AscendanceAction extends ShamanMeleeAction {
     let anyCrit = false;
 
     for (let targetId = 0; targetId < this.damageAction.nTargets(); targetId += 1) {
-      const impact = this.damageAction.calculateDamage(rng, isComboStrike);
+      const impact = this.damageAction.calculateDamage(rng, isComboStrike, targetId);
       this.p.addDamage(impact.damage, targetId);
       totalDamage += impact.damage;
       anyCrit = anyCrit || impact.isCrit;

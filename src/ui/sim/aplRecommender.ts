@@ -94,16 +94,21 @@ interface SelectedAction {
   spell: SpellDef;
 }
 
-interface ProjectedActionableTimeSearchResult {
-  earliestTime: number | null;
-  terminated: boolean;
-}
-
 interface LookaheadContext {
   state: GameState;
   queue: SimEventQueue;
   rng: RngInstance;
   runtime: SpecRuntime;
+}
+
+const LOOKAHEAD_POLL_INTERVAL_SECONDS = 0.05;
+const LOOKAHEAD_MAX_WAIT_SECONDS = 8;
+
+export interface RecommendationPreview {
+  recommendations: string[];
+  firstRecommendationReadyAt: number | null;
+  firstRecommendationReadyIn: number | null;
+  hasImmediateRecommendation: boolean;
 }
 
 function walkActionList(
@@ -210,10 +215,9 @@ function findEarliestProjectedActionableTimeInList(
   list: ActionList,
   allLists: ActionList[],
   state: GameState,
-  ctx: EvalContext,
   runtime: SpecRuntime,
-): ProjectedActionableTimeSearchResult {
-  let earliestTime: number | null = null;
+): number | null {
+  let earliestWakeTime: number | null = null;
 
   for (const action of list.actions) {
     if (action.type === 'cast') {
@@ -222,34 +226,16 @@ function findEarliestProjectedActionableTimeInList(
         continue;
       }
 
-      if (action.condition) {
-        const castCtx: EvalContext = { ...ctx, candidateAbility: spell.name };
-        try {
-          const value = evaluate(action.condition.ast, state, castCtx);
-          if (value === 0) {
-            continue;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      earliestTime = mergeProjectedActionableTime(
-        earliestTime,
-        getProjectedActionableTimeForSpell(spell, state),
-      );
-      continue;
-    }
-
-    if (action.condition) {
-      try {
-        const value = evaluate(action.condition.ast, state, ctx);
-        if (value === 0) {
-          continue;
-        }
-      } catch {
+      const projectedReadyAt = getProjectedActionableTimeForSpell(spell, state);
+      if (projectedReadyAt === null || projectedReadyAt <= state.currentTime + Number.EPSILON) {
         continue;
       }
+
+      earliestWakeTime = mergeProjectedActionableTime(
+        earliestWakeTime,
+        projectedReadyAt,
+      );
+      continue;
     }
 
     if (action.type === 'call_list') {
@@ -258,21 +244,17 @@ function findEarliestProjectedActionableTimeInList(
         continue;
       }
 
-      const result = findEarliestProjectedActionableTimeInList(subList, allLists, state, ctx, runtime);
-      earliestTime = mergeProjectedActionableTime(earliestTime, result.earliestTime);
+      const subWakeTime = findEarliestProjectedActionableTimeInList(subList, allLists, state, runtime);
+      earliestWakeTime = mergeProjectedActionableTime(earliestWakeTime, subWakeTime);
 
-      if (action.callType === 'run' || result.terminated) {
-        return { earliestTime, terminated: true };
+      if (action.callType === 'run') {
+        return earliestWakeTime;
       }
       continue;
     }
-
-    if (action.type === 'variable') {
-      applyVariable(action, state, ctx);
-    }
   }
 
-  return { earliestTime, terminated: false };
+  return earliestWakeTime;
 }
 
 function findEarliestProjectedActionableTime(state: GameState, runtime: SpecRuntime): number | null {
@@ -282,8 +264,7 @@ function findEarliestProjectedActionableTime(state: GameState, runtime: SpecRunt
     return null;
   }
 
-  const ctx: EvalContext = { variables: new Map() };
-  return findEarliestProjectedActionableTimeInList(defaultList, actionLists, state, ctx, runtime).earliestTime;
+  return findEarliestProjectedActionableTimeInList(defaultList, actionLists, state, runtime);
 }
 
 function createPreviewRng(): RngInstance {
@@ -302,10 +283,7 @@ function createPreviewRng(): RngInstance {
   };
 }
 
-function normalizeRecommendedSpellId(spellId: string, state: GameState): string {
-  if (spellId === 'flame_shock' && state.hasTalent('voltaic_blaze')) {
-    return 'voltaic_blaze';
-  }
+function normalizeRecommendedSpellId(spellId: string, _state: GameState): string {
   return spellId;
 }
 
@@ -405,7 +383,6 @@ function processLookaheadEvent(ctx: LookaheadContext, event: SimEvent): void {
     case EventType.BUFF_STACK_CHANGE:
     case EventType.GCD_READY:
     case EventType.OFF_GCD_READY:
-    case EventType.CWC_READY:
     case EventType.RESOURCE_THRESHOLD_READY:
     case EventType.PLAYER_INPUT:
     case EventType.PLAYER_CANCEL:
@@ -447,6 +424,40 @@ function projectToGcdReady(ctx: LookaheadContext): void {
   }
 }
 
+function getNextQueuedEventTime(ctx: LookaheadContext, targetTime: number): number | null {
+  if (ctx.queue.isEmpty()) {
+    return null;
+  }
+
+  const nextQueuedTime = ctx.queue.peek().time;
+  if (nextQueuedTime <= ctx.state.currentTime + Number.EPSILON || nextQueuedTime > targetTime) {
+    return null;
+  }
+
+  return nextQueuedTime;
+}
+
+function getNextLookaheadTime(ctx: LookaheadContext, deadline: number): number | null {
+  const pollTime = Math.min(deadline, ctx.state.currentTime + LOOKAHEAD_POLL_INTERVAL_SECONDS);
+  const queuedTime = getNextQueuedEventTime(ctx, deadline);
+  const energyExpiryTime = getNextEnergyBuffExpiry(ctx.state, deadline);
+  const projectedActionableTime = findEarliestProjectedActionableTime(ctx.state, ctx.runtime);
+
+  let nextTime = pollTime > ctx.state.currentTime + Number.EPSILON ? pollTime : null;
+  nextTime = mergeProjectedActionableTime(nextTime, queuedTime);
+  nextTime = mergeProjectedActionableTime(nextTime, energyExpiryTime);
+
+  if (
+    projectedActionableTime !== null
+    && projectedActionableTime > ctx.state.currentTime + Number.EPSILON
+    && projectedActionableTime <= deadline
+  ) {
+    nextTime = mergeProjectedActionableTime(nextTime, projectedActionableTime);
+  }
+
+  return nextTime;
+}
+
 function executeLookaheadSpell(ctx: LookaheadContext, spell: SpellDef): ReturnType<typeof executeAbility> {
   const result = executeAbility(spell, ctx.state, ctx.queue, ctx.rng);
   if (!result.success) {
@@ -459,6 +470,31 @@ function executeLookaheadSpell(ctx: LookaheadContext, spell: SpellDef): ReturnTy
   }
 
   return result;
+}
+
+function buildRecommendationPreview(
+  state: GameState,
+  selected: SelectedAction | null,
+  firstRecommendationReadyAt: number | null,
+  recommendations: string[],
+): RecommendationPreview {
+  if (!selected || recommendations.length === 0 || firstRecommendationReadyAt === null) {
+    return {
+      recommendations,
+      firstRecommendationReadyAt: null,
+      firstRecommendationReadyIn: null,
+      hasImmediateRecommendation: false,
+    };
+  }
+
+  const firstRecommendationReadyIn = Math.max(0, firstRecommendationReadyAt - state.currentTime);
+
+  return {
+    recommendations,
+    firstRecommendationReadyAt,
+    firstRecommendationReadyIn,
+    hasImmediateRecommendation: firstRecommendationReadyIn <= Number.EPSILON,
+  };
 }
 
 function selectActionWithChannelProjection(ctx: LookaheadContext): SelectedAction | null {
@@ -489,13 +525,14 @@ function selectActionWithChannelProjection(ctx: LookaheadContext): SelectedActio
     }
   }
 
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const nextActionableTime = findEarliestProjectedActionableTime(ctx.state, ctx.runtime);
-    if (nextActionableTime === null || nextActionableTime <= ctx.state.currentTime + Number.EPSILON) {
+  const searchDeadline = ctx.state.currentTime + LOOKAHEAD_MAX_WAIT_SECONDS;
+  while (ctx.state.currentTime < searchDeadline - Number.EPSILON) {
+    const nextWakeTime = getNextLookaheadTime(ctx, searchDeadline);
+    if (nextWakeTime === null || nextWakeTime <= ctx.state.currentTime + Number.EPSILON) {
       return null;
     }
 
-    advanceLookaheadTime(ctx, nextActionableTime);
+    advanceLookaheadTime(ctx, nextWakeTime);
     flushLookaheadEventsAtCurrentTime(ctx);
     projectToGcdReady(ctx);
 
@@ -520,9 +557,7 @@ export function getRecommendation(
   state: GameState,
   runtime: SpecRuntime = monkWindwalkerRuntime,
 ): string | null {
-  const ctx = createLookaheadContext(state, runtime);
-  const selected = selectActionWithChannelProjection(ctx);
-  return selected ? normalizeRecommendedSpellId(selected.spell.name, state) : null;
+  return getRecommendationPreview(state, 1, runtime).recommendations[0] ?? null;
 }
 
 /**
@@ -557,15 +592,37 @@ export function getTopNRecommendations(
   n: number,
   runtime: SpecRuntime = monkWindwalkerRuntime,
 ): string[] {
+  return getRecommendationPreview(state, n, runtime).recommendations;
+}
+
+/**
+ * Get the top N recommended spell IDs and timing metadata for the first slot.
+ *
+ * Slot 0 remains the same projected recommendation as the plain queue API, but
+ * this variant also tells the UI whether that first action is currently
+ * clickable or only becomes actionable after a projected wait.
+ */
+export function getRecommendationPreview(
+  state: GameState,
+  n: number,
+  runtime: SpecRuntime = monkWindwalkerRuntime,
+): RecommendationPreview {
   const ctx = createLookaheadContext(state, runtime);
   const result: string[] = [];
+  let firstSelection: SelectedAction | null = null;
+  let firstSelectionReadyAt: number | null = null;
   for (let i = 0; i < n; i++) {
     const selected = selectActionWithChannelProjection(ctx);
     if (!selected) break;
+    if (i === 0) {
+      firstSelection = selected;
+      firstSelectionReadyAt = ctx.state.currentTime;
+    }
     result.push(normalizeRecommendedSpellId(selected.spell.name, state));
     if (!executeLookaheadSpell(ctx, selected.spell).success) {
       break;
     }
   }
-  return result;
+
+  return buildRecommendationPreview(state, firstSelection, firstSelectionReadyAt, result);
 }

@@ -15,6 +15,7 @@ import {
   getWindwalkerBaselineDirectMultiplier,
 } from './monk_runtime';
 import { requireMonkSpellData } from '../../dbc/monk_spell_data';
+import { getMonkHitComboStacks, setMonkHitComboStacks } from './monk_state_keys';
 
 const WEAPON_OF_WIND_SPELL = requireMonkSpellData(1272678);
 const FEROCITY_OF_XUEN_SPELL = requireMonkSpellData(388674);
@@ -110,17 +111,24 @@ export abstract class MonkMeleeAction extends MonkAction {
   protected computeTickDamageFromSnapshot(
     snapshot: DamageSnapshot,
     rng: RngInstance,
+    targetIndex?: number,
   ): { damage: number; isCrit: boolean } {
     const base = snapshot.baseDmgMin === snapshot.baseDmgMax
       ? snapshot.baseDmgMin
       : rollRange(rng, snapshot.baseDmgMin, snapshot.baseDmgMax);
     const baseDamage = base + snapshot.apCoefficient * snapshot.attackPower;
+    // When targetIndex is supplied, recompute the target multiplier live so that
+    // target-specific debuffs (e.g. Hunter's Mark on target 0) are not incorrectly
+    // applied to secondary targets.
+    const targetMult = targetIndex !== undefined
+      ? this.composite_target_multiplier(targetIndex)
+      : snapshot.targetMultiplier;
     const combined = snapshot.actionMultiplier
       * snapshot.playerMultiplier
       * snapshot.masteryMultiplier
       * snapshot.hitComboMultiplier
       * snapshot.versatilityMultiplier
-      * snapshot.targetMultiplier;
+      * targetMult;
     const isCrit = rollChance(rng, this.composite_crit_chance() * 100);
     return { damage: baseDamage * combined * (isCrit ? this.critDamageMultiplier() : 1.0), isCrit };
   }
@@ -135,7 +143,7 @@ export abstract class MonkMeleeAction extends MonkAction {
     const mastery = isComboStrike ? this.p.getMasteryPercent() / 100 : 0;
 
     const hitComboBonus = this.p.hasTalent('hit_combo')
-      ? this.p.hitComboStacks * HIT_COMBO_BUFF_SPELL.effectN(1).percent()
+      ? getMonkHitComboStacks(this.p) * HIT_COMBO_BUFF_SPELL.effectN(1).percent()
       : 0;
 
     const masteryMultiplier = 1 + mastery;
@@ -154,18 +162,17 @@ export abstract class MonkMeleeAction extends MonkAction {
       return 1.0;
     }
 
-    return 1 + this.p.hitComboStacks * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
+    return 1 + getMonkHitComboStacks(this.p) * HIT_COMBO_BUFF_SPELL.effectN(1).percent();
   }
 
   protected comboStrikesTrigger(isComboStrike: boolean): void {
-    const gs = this.p as unknown as GameState;
-
     if (isComboStrike) {
       this.p.applyBuff('combo_strikes', COMBO_STRIKES_AURA_SECONDS, 1);
       this.p.lastComboStrikeAbility = normalizeComboSpellId(this.name);
       if (this.p.hasTalent('hit_combo')) {
-        gs.hitComboStacks = Math.min(5, this.p.hitComboStacks + 1);
-        this.p.applyBuff('hit_combo', 30, gs.hitComboStacks);
+        const newStacks = Math.min(5, getMonkHitComboStacks(this.p) + 1);
+        setMonkHitComboStacks(this.p, newStacks);
+        this.p.applyBuff('hit_combo', 30, newStacks);
       }
       return;
     }
@@ -173,7 +180,7 @@ export abstract class MonkMeleeAction extends MonkAction {
     this.p.expireBuff('combo_strikes');
     this.p.lastComboStrikeAbility = null;
     if (this.p.hasTalent('hit_combo')) {
-      gs.hitComboStacks = 0;
+      setMonkHitComboStacks(this.p, 0);
       this.p.expireBuff('hit_combo');
     }
   }

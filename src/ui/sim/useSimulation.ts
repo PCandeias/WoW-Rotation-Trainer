@@ -22,7 +22,8 @@ import { getTalentCatalogForProfileSpec } from '@core/data/talentStringDecoder';
 import { resolveSpecRuntime } from '@core/runtime/spec_registry';
 import type { DamageEvent } from '@ui/components/FloatingCombatText';
 import { createSimEventProcessor } from './simEventProcessor';
-import { getTopNRecommendations } from './aplRecommender';
+import { getRecommendationPreview, getTopNRecommendations } from './aplRecommender';
+import type { RecommendationPreview } from './aplRecommender';
 import type { SpellInputStatus } from '@core/engine/spell_input';
 import { buildSpellInputStatusMap } from '@core/engine/spell_input';
 import { SHARED_PLAYER_SPELLS } from '@core/shared/player_effects';
@@ -97,6 +98,7 @@ export interface SimulationState {
   isPaused: boolean;
   isEnded: boolean;
   recommendations: string[];
+  recommendationReadyIn: number | null;
   channelInfo: {
     isChanneling: boolean;
     spellId: string;
@@ -138,6 +140,59 @@ const MAX_DAMAGE_EVENTS = 10;
 const DAMAGE_EVENT_LIFETIME_MS = 1500;
 const PRE_PULL_COUNTDOWN_SECONDS = 3;
 const PRE_PULL_GO_DISPLAY_MS = 700;
+
+export interface ProjectedRecommendationLock {
+  recommendations: string[];
+  readyAt: number;
+}
+
+function buildLockedRecommendationPreview(
+  lock: ProjectedRecommendationLock,
+  simTime: number,
+): RecommendationPreview {
+  return {
+    recommendations: [...lock.recommendations],
+    firstRecommendationReadyAt: lock.readyAt,
+    firstRecommendationReadyIn: Math.max(0, lock.readyAt - simTime),
+    hasImmediateRecommendation: false,
+  };
+}
+
+export function resolveRecommendationPreview(
+  rawPreview: RecommendationPreview,
+  existingLock: ProjectedRecommendationLock | null,
+  simTime: number,
+  allowProjectedLock: boolean,
+): { preview: RecommendationPreview; lock: ProjectedRecommendationLock | null } {
+  if (!allowProjectedLock || rawPreview.recommendations.length === 0) {
+    return { preview: rawPreview, lock: null };
+  }
+
+  if (rawPreview.hasImmediateRecommendation) {
+    return { preview: rawPreview, lock: null };
+  }
+
+  if (existingLock && existingLock.readyAt > simTime + Number.EPSILON) {
+    return {
+      preview: buildLockedRecommendationPreview(existingLock, simTime),
+      lock: existingLock,
+    };
+  }
+
+  if (rawPreview.firstRecommendationReadyAt === null) {
+    return { preview: rawPreview, lock: null };
+  }
+
+  const nextLock = {
+    recommendations: [...rawPreview.recommendations],
+    readyAt: rawPreview.firstRecommendationReadyAt,
+  };
+
+  return {
+    preview: rawPreview,
+    lock: nextLock,
+  };
+}
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------
@@ -177,6 +232,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
   const prevRecommendationsRef = useRef<string[]>([]);
   const analysisCollectorRef = useRef<LiveTraceCollector | null>(null);
   const tutorialPromptRef = useRef<TutorialPrompt | null>(null);
+  const projectedRecommendationLockRef = useRef<ProjectedRecommendationLock | null>(null);
 
   // React state drives renders
   const [simState, setSimState] = useState<SimulationState>({
@@ -191,6 +247,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     isPaused: false,
     isEnded: false,
     recommendations: [],
+    recommendationReadyIn: null,
     channelInfo: { isChanneling: false, spellId: '', spellName: '', totalTime: 0, progress: 0, remainingTime: 0 },
     damageEvents: [],
     procHighlight: false,
@@ -296,6 +353,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
     tutorialPromptRef.current = null;
 
     channelRef.current = null;
+    projectedRecommendationLockRef.current = null;
 
     const processEvents = createSimEventProcessor(state, queue, rng, {
       runtime,
@@ -347,7 +405,17 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
         const snapshot = state.snapshot();
         const dps = snapshot.totalDamage / Math.max(0.1, simTime);
 
-        const analysisRecommendations = getTopNRecommendations(state, 4, runtime);
+        const rawRecommendationPreview = getRecommendationPreview(state, 4, runtime);
+        const resolvedRecommendationPreview = resolveRecommendationPreview(
+          rawRecommendationPreview,
+          projectedRecommendationLockRef.current,
+          simTime,
+          !usesCompetitiveTrainerRules(mode),
+        );
+        const recommendationPreview = resolvedRecommendationPreview.preview;
+        projectedRecommendationLockRef.current = resolvedRecommendationPreview.lock;
+
+        const analysisRecommendations = recommendationPreview.recommendations;
         const recommendations =
           usesCompetitiveTrainerRules(mode) ? [] : analysisRecommendations;
         analysisCollectorRef.current?.recordFrame(snapshot, analysisRecommendations);
@@ -405,6 +473,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
           isPaused: loop.paused,
           isEnded: !loop.running && simTime >= encounterDuration,
           recommendations,
+          recommendationReadyIn: usesCompetitiveTrainerRules(mode) ? null : recommendationPreview.firstRecommendationReadyIn,
           channelInfo: {
             isChanneling,
             spellId: ch?.spellId ?? '',
@@ -619,6 +688,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
   const restart = useCallback((): void => {
     loopRef.current?.stop();
     prevRecommendationsRef.current = [];
+    projectedRecommendationLockRef.current = null;
     damageEventsRef.current = [];
     endReasonRef.current = null;
     tutorialPromptRef.current = null;
@@ -637,6 +707,7 @@ export function useSimulation(options: UseSimulationOptions): UseSimulationResul
       isPaused: false,
       isEnded: false,
       recommendations: [],
+      recommendationReadyIn: null,
       channelInfo: { isChanneling: false, spellId: '', spellName: '', totalTime: 0, progress: 0, remainingTime: 0 },
       damageEvents: [],
       procHighlight: false,

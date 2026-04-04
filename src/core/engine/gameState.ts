@@ -6,6 +6,7 @@
  */
 
 import type { SpellId, BuffState, CooldownState, TrinketState } from '../apl/evaluator';
+import type { EvaluatorHooks } from '../apl/evaluator_hooks';
 import { resolveCharacterStatsWithTrainerDefaults } from '../data/defaultProfile';
 import type { CharacterProfile, CharacterProfileStatsSource, CharacterStats } from '../data/profileParser';
 import type { SpellDef } from '../data/spells';
@@ -31,6 +32,20 @@ import type { Target } from './target';
 import { createTarget } from './target';
 
 const BAKED_BATTLE_SHOUT_AP_MULTIPLIER = 1.05;
+
+/**
+ * Weapon AP coefficient used by SimC's `composite_weapon_attack_power_by_type()`.
+ *
+ * weapon_ap(slot) = floor(weapon_dps * WEAPON_POWER_COEFFICIENT)
+ *
+ * The same constant is used in the reverse direction when a caller converts
+ * weapon AP back to a per-swing damage contribution:
+ *   per_swing_ap_dmg = weapon_speed * total_ap / WEAPON_POWER_COEFFICIENT
+ *
+ * Centralised here so all callers — the weapon AP helpers and any auto-attack
+ * implementation — use the same value and cannot drift independently.
+ */
+export const WEAPON_POWER_COEFFICIENT = 6;
 
 // Re-export the interfaces for convenience
 export type { SpellId, BuffState, CooldownState, TrinketState };
@@ -92,13 +107,6 @@ export interface GameStateSnapshot {
   mhSwingTimer: number;
   ohSwingTimer: number;
 
-  // Shado-Pan specific
-  flurryCharges: number;
-  hitComboStacks: number;
-  nextCombatWisdomAt: number;
-  dualThreatMhAllowed: boolean;
-  dualThreatOhAllowed: boolean;
-
   // Spell queue
   queuedAbility: SpellId | null;
   queuedAt: number;
@@ -119,6 +127,7 @@ export interface PendingSpellStat {
 
 export interface GameStateStatHooks {
   getCritPercentBonus?(state: IGameState): number;
+  getMasteryPercentBonus?(state: IGameState): number;
   getAutoAttackHastePercentBonus?(state: IGameState): number;
   getAutoAttackSpeedMultiplier?(state: IGameState): number;
   getAttackPowerBonus?(state: IGameState): number;
@@ -154,6 +163,7 @@ export interface GameStateExecutionHooks {
   getGlobalChiCostReduction?(state: GameState, spell: SpellDef): number;
   getUnregisteredCooldownDuration?(state: GameState, spell: SpellDef, baseDuration: number, hasteScalesCooldown: boolean): number;
   getCooldownStateForQuery?(state: GameState, spellId: SpellId, baseState: CooldownState | undefined): CooldownState | undefined;
+  getBuffStackExpirationModel?(state: GameState, buffId: string): 'shared' | 'separate' | undefined;
   getUnregisteredChannelDuration?(state: GameState, spell: SpellDef, baseDuration: number, hastePercent: number): number;
   getUnregisteredChannelTicks?(state: GameState, spell: SpellDef, baseTicks: number): number;
   getUnregisteredChannelTickOffsets?(
@@ -338,6 +348,7 @@ export class GameState implements IGameState {
   statHooks: GameStateStatHooks = {};
   damageHooks: IGameStateDamageHooks = {};
   executionHooks: GameStateExecutionHooks = {};
+  evaluatorHooks: EvaluatorHooks = {};
   private nextTargetDebuffInstanceId = 1;
 
   // === Stats ===
@@ -358,14 +369,6 @@ export class GameState implements IGameState {
   // === Auto-attack timers ===
   mhSwingTimer = 0;
   ohSwingTimer = 0;
-
-  // === Shado-Pan specific ===
-  flurryCharges = 0;
-  hitComboStacks = 0;
-  nextCombatWisdomAt = Number.POSITIVE_INFINITY;
-  dualThreatMhAllowed = false;
-  dualThreatOhAllowed = false;
-  lastSkyfuryProcAt = Number.NEGATIVE_INFINITY;
 
   // === Spell queue ===
   queuedAbility: SpellId | null = null;
@@ -714,13 +717,12 @@ export class GameState implements IGameState {
   /**
    * SimC WEAPON_MAINHAND AP:
    *   total_ap = round(cache.attack_power * ap_mult + cache.weapon_ap(MH) * ap_mult)
-   * where weapon_ap(MH) = floor(mh_dps * 6).
+   * where weapon_ap(MH) = floor(mh_dps * WEAPON_POWER_COEFFICIENT).
    *
    * We mirror this using the trainer's base AP (getAttackPower()) plus the
    * weapon AP term scaled by the same AP multiplier.
    */
   getWeaponMainHandAttackPower(): number {
-    const WEAPON_POWER_COEFFICIENT = 6;
     const mhDps = this.stats.mainHandSpeed > 0
       ? (this.stats.mainHandMinDmg + this.stats.mainHandMaxDmg) / 2 / this.stats.mainHandSpeed
       : 0.5; // SimC unarmed fallback
@@ -730,8 +732,6 @@ export class GameState implements IGameState {
   }
 
   getWeaponOffHandAttackPower(): number {
-    const WEAPON_POWER_COEFFICIENT = 6;
-
     if (this.stats.offHandSpeed <= 0) {
       return 0;
     }
@@ -745,10 +745,9 @@ export class GameState implements IGameState {
   getWeaponBothAttackPower(): number {
     // SimC: composite_weapon_attack_power_by_type(WEAPON_BOTH)
     // wdps = (MH_dps + OH_dps / 2) * 2/3   [for DW]
-    // weapon_both_ap = floor(wdps * WEAPON_POWER_COEFFICIENT)   [WEAPON_POWER_COEFFICIENT = 6]
+    // weapon_both_ap = floor(wdps * WEAPON_POWER_COEFFICIENT)
     // Final AP uses base AP plus this weapon term, all multiplied by AP multipliers.
     // For 2H (no OH), SimC switches WEAPON_BOTH -> WEAPON_MAINHAND.
-    const WEAPON_POWER_COEFFICIENT = 6;
     const mhDps = this.stats.mainHandSpeed > 0
       ? (this.stats.mainHandMinDmg + this.stats.mainHandMaxDmg) / 2 / this.stats.mainHandSpeed
       : 0.5; // SimC unarmed fallback
@@ -765,6 +764,10 @@ export class GameState implements IGameState {
 
   getMaxHealth(): number {
     return (this.stats.maxHealth ?? 0) * getSharedPlayerMaxHealthMultiplier(this);
+  }
+
+  getBaseHastePercent(): number {
+    return this.stats.hastePercent;
   }
 
   getHastePercent(): number {
@@ -807,6 +810,7 @@ export class GameState implements IGameState {
   getMasteryPercent(): number {
     let mastery = this.stats.masteryPercent;
     mastery += getSharedPlayerMasteryBonus(this);
+    mastery += this.statHooks.getMasteryPercentBonus?.(this) ?? 0;
     return mastery;
   }
 
@@ -907,7 +911,24 @@ export class GameState implements IGameState {
   adjustCooldown(spellId: SpellId, deltaSeconds: number): void {
     if (deltaSeconds <= 0) return;
     const cd = this.settleCooldownState(spellId);
-    if (cd === undefined || cd.readyTimes) return;
+    if (cd === undefined) return;
+    if (cd.readyTimes) {
+      // Charged cooldown: advance the next pending recharge, if any.
+      // If all charges are available (readyTimes is empty), there is nothing to reduce.
+      if (cd.readyTimes.length === 0) return;
+      // Mirror SimC: clamp the first recharge to currentTime, then shift all later
+      // recharges by the same actual delta so the sequential recharge chain is preserved.
+      // e.g. [100, 190] --adjust 30--> [70, 160] keeps the 90 s gap intact.
+      const oldFirst = cd.readyTimes[0];
+      const newFirst = Math.max(this.currentTime, oldFirst - deltaSeconds);
+      const actualDelta = oldFirst - newFirst;
+      cd.readyTimes[0] = newFirst;
+      for (let i = 1; i < cd.readyTimes.length; i++) {
+        cd.readyTimes[i] -= actualDelta;
+      }
+      this.cooldowns.set(spellId, cd);
+      return;
+    }
     if (cd.readyAt === undefined || cd.readyAt <= this.currentTime) return;
     cd.readyAt = Math.max(this.currentTime, cd.readyAt - deltaSeconds);
     this.cooldowns.set(spellId, cd);
@@ -954,8 +975,12 @@ export class GameState implements IGameState {
   }
 
   // ---------------------------------------------------------------------------
-  // Buffs (independent-timer model: each stack tracks its own expiration)
+  // Buffs
   // ---------------------------------------------------------------------------
+
+  private getBuffStackExpirationModel(buffId: string): 'shared' | 'separate' {
+    return this.executionHooks.getBuffStackExpirationModel?.(this, buffId) ?? 'shared';
+  }
 
   applyBuff(buffId: string, duration: number, stacks = 1): void {
     // Accumulate uptime for any previous period — whether still active or already
@@ -964,6 +989,7 @@ export class GameState implements IGameState {
     const now = this.currentTime;
     const newExpiry = now + duration;
     const existing = this.buffs.get(buffId);
+    const stackExpirationModel = this.getBuffStackExpirationModel(buffId);
 
     if (existing) {
       const prevStart = this._buffStart.get(buffId) ?? 0;
@@ -973,31 +999,34 @@ export class GameState implements IGameState {
         this._buffUptimeAccum.set(buffId, (this._buffUptimeAccum.get(buffId) ?? 0) + elapsed);
       }
 
-      // Prune expired stacks
       const activeTimers = existing.stackTimers.filter(t => t === 0 || t > now);
       const activeCount = activeTimers.length;
 
-      if (stacks > activeCount) {
-        // Add new stacks with fresh timers; preserve existing stack timers
-        const toAdd = stacks - activeCount;
-        for (let i = 0; i < toAdd; i++) {
-          activeTimers.push(newExpiry);
-        }
-      } else if (stacks < activeCount) {
-        // Fewer stacks requested — trim oldest, refresh survivors
-        activeTimers.sort((a, b) => {
-          if (a === 0) return 1;
-          if (b === 0) return -1;
-          return a - b;
-        });
-        activeTimers.splice(0, activeCount - stacks);
-        for (let i = 0; i < activeTimers.length; i++) {
-          if (activeTimers[i] !== 0) activeTimers[i] = newExpiry;
+      if (stackExpirationModel === 'separate') {
+        if (stacks > activeCount) {
+          const toAdd = stacks - activeCount;
+          for (let i = 0; i < toAdd; i++) {
+            activeTimers.push(newExpiry);
+          }
+        } else if (stacks < activeCount) {
+          activeTimers.sort((a, b) => {
+            if (a === 0) return 1;
+            if (b === 0) return -1;
+            return a - b;
+          });
+          activeTimers.splice(0, activeCount - stacks);
+          for (let i = 0; i < activeTimers.length; i++) {
+            if (activeTimers[i] !== 0) activeTimers[i] = newExpiry;
+          }
+        } else {
+          for (let i = 0; i < activeTimers.length; i++) {
+            if (activeTimers[i] !== 0) activeTimers[i] = newExpiry;
+          }
         }
       } else {
-        // Same stack count — refresh all timers (SimC trigger() at max stacks)
-        for (let i = 0; i < activeTimers.length; i++) {
-          if (activeTimers[i] !== 0) activeTimers[i] = newExpiry;
+        activeTimers.length = 0;
+        for (let i = 0; i < stacks; i++) {
+          activeTimers.push(newExpiry);
         }
       }
 
@@ -1127,8 +1156,29 @@ export class GameState implements IGameState {
     return this.numericState.get(stateId) ?? 0;
   }
 
+  /**
+   * Returns a numeric state value, preserving the distinction between
+   * "missing" and `0`. Use this for timestamps/counters where `0` is valid.
+   */
+  getOptionalNumericState(stateId: string): number | undefined {
+    return this.numericState.get(stateId);
+  }
+
   setNumericState(stateId: string, value: number): void {
     if (value === 0) {
+      this.numericState.delete(stateId);
+      return;
+    }
+
+    this.numericState.set(stateId, value);
+  }
+
+  /**
+   * Sets a numeric state value, deleting the key only when `value` is undefined.
+   * Unlike `setNumericState`, this intentionally allows storing `0`.
+   */
+  setOptionalNumericState(stateId: string, value: number | undefined): void {
+    if (value === undefined) {
       this.numericState.delete(stateId);
       return;
     }
@@ -1146,9 +1196,13 @@ export class GameState implements IGameState {
     if (!this.isBuffActive(buffId)) return;
     const buff = this.buffs.get(buffId);
     if (buff !== undefined) {
-      // Inherit the timer of the longest-lived existing stack
+      const stackExpirationModel = this.getBuffStackExpirationModel(buffId);
       const maxTimer = buff.stackTimers.length > 0 ? Math.max(...buff.stackTimers) : 0;
-      buff.stackTimers.push(maxTimer);
+      if (stackExpirationModel === 'separate') {
+        buff.stackTimers.push(maxTimer);
+      } else {
+        buff.stackTimers = Array(buff.stackTimers.length + 1).fill(maxTimer) as number[];
+      }
       buff.stacks = buff.stackTimers.filter(t => t === 0 || t > this.currentTime).length;
       buff.expiresAt = Math.max(...buff.stackTimers);
     }
@@ -1159,17 +1213,19 @@ export class GameState implements IGameState {
     const buff = this.buffs.get(buffId);
     if (buff !== undefined) {
       const now = this.currentTime;
-      // Remove the oldest (soonest-to-expire) active stack
       const activeTimers = buff.stackTimers.filter(t => t === 0 || t > now);
       if (activeTimers.length === 0) return;
 
-      // Sort ascending by expiry (permanent stacks sort last)
-      activeTimers.sort((a, b) => {
-        if (a === 0) return 1;
-        if (b === 0) return -1;
-        return a - b;
-      });
-      activeTimers.shift(); // remove the oldest active stack
+      if (this.getBuffStackExpirationModel(buffId) === 'separate') {
+        activeTimers.sort((a, b) => {
+          if (a === 0) return 1;
+          if (b === 0) return -1;
+          return a - b;
+        });
+        activeTimers.shift();
+      } else {
+        activeTimers.pop();
+      }
 
       if (activeTimers.length === 0) {
         // Accumulate uptime before removing the buff entirely
@@ -1232,6 +1288,10 @@ export class GameState implements IGameState {
     time: number = this.currentTime,
   ): void {
     this.pendingSpellStats.push({ spellId, damage, casts, isCrit, outcome, time });
+  }
+
+  getPendingSpellStats(): readonly PendingSpellStat[] {
+    return this.pendingSpellStats;
   }
 
   drainPendingSpellStats(): PendingSpellStat[] {
@@ -1435,12 +1495,6 @@ export class GameState implements IGameState {
       mhSwingTimer: this.mhSwingTimer,
       ohSwingTimer: this.ohSwingTimer,
 
-      flurryCharges: this.flurryCharges,
-      hitComboStacks: this.hitComboStacks,
-      nextCombatWisdomAt: this.nextCombatWisdomAt,
-      dualThreatMhAllowed: this.dualThreatMhAllowed,
-      dualThreatOhAllowed: this.dualThreatOhAllowed,
-
       queuedAbility: this.queuedAbility,
       queuedAt: this.queuedAt,
       queuedWindow: this.queuedWindow,
@@ -1506,13 +1560,6 @@ export class GameState implements IGameState {
     c.mhSwingTimer = this.mhSwingTimer;
     c.ohSwingTimer = this.ohSwingTimer;
 
-    c.flurryCharges = this.flurryCharges;
-    c.hitComboStacks = this.hitComboStacks;
-    c.nextCombatWisdomAt = this.nextCombatWisdomAt;
-    c.dualThreatMhAllowed = this.dualThreatMhAllowed;
-    c.dualThreatOhAllowed = this.dualThreatOhAllowed;
-    c.lastSkyfuryProcAt = this.lastSkyfuryProcAt;
-
     c.queuedAbility = this.queuedAbility;
     c.queuedAt = this.queuedAt;
     c.queuedWindow = this.queuedWindow;
@@ -1549,6 +1596,7 @@ export class GameState implements IGameState {
     c.statHooks = this.statHooks;
     c.damageHooks = this.damageHooks;
     c.executionHooks = this.executionHooks;
+    c.evaluatorHooks = this.evaluatorHooks;
     c.nextTargetDebuffInstanceId = this.nextTargetDebuffInstanceId;
     c.action_list = this.action_list;
     c.disabledPlayerActions = this.disabledPlayerActions; // shared ref — read-only during lookahead

@@ -41,6 +41,37 @@ function fillTimelineGaps(timeline: number[]): number[] {
   return timeline;
 }
 
+function fillAuraTimelineGaps(timeline: number[]): number[] {
+  if (timeline.length === 0) {
+    return timeline;
+  }
+
+  let firstKnown = -1;
+  for (let i = 0; i < timeline.length; i += 1) {
+    if (!Number.isNaN(timeline[i])) {
+      firstKnown = i;
+      break;
+    }
+  }
+
+  if (firstKnown === -1) {
+    timeline.fill(0);
+    return timeline;
+  }
+
+  for (let i = 0; i < firstKnown; i += 1) {
+    timeline[i] = 0;
+  }
+
+  for (let i = firstKnown + 1; i < timeline.length; i += 1) {
+    if (Number.isNaN(timeline[i])) {
+      timeline[i] = timeline[i - 1];
+    }
+  }
+
+  return timeline;
+}
+
 function buildCumulativeTimeline(values: number[]): number[] {
   const output: number[] = [];
   let total = 0;
@@ -187,10 +218,10 @@ export class LiveTraceCollector {
     fillTimelineGaps(this.energyWasteTimelineBySecond);
     fillTimelineGaps(this.chiWasteTimelineBySecond);
     for (const timeline of Object.values(this.buffStacksTimelineBySecond)) {
-      fillTimelineGaps(timeline);
+      fillAuraTimelineGaps(timeline);
     }
     for (const timeline of Object.values(this.targetDebuffStacksTimelineBySecond)) {
-      fillTimelineGaps(timeline);
+      fillAuraTimelineGaps(timeline);
     }
     for (const timeline of Object.values(this.cooldownTimelineBySecond)) {
       fillTimelineGaps(timeline);

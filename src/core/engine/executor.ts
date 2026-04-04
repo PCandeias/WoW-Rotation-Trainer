@@ -65,6 +65,8 @@ export interface ExecutionResult {
   executeTime?: number;
   /** Events pushed to the queue during this execution */
   events: SimEvent[];
+  /** Cooldown adjustments applied during this execution. */
+  appliedCooldownAdjustments?: ReadonlyArray<{ spellId: string; delta: number }>;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +273,44 @@ function pushEvent(
   collected.push(event);
 }
 
+/**
+ * Apply a spell's self-buff (spell.buffApplied), scheduling BUFF_APPLY and
+ * BUFF_EXPIRE events. Energy-regen-affecting buffs settle/recompute regen
+ * around the state mutation.
+ *
+ * This is the single authoritative path for executor-level self-buff application.
+ * It is intentionally separate from applyActionResult, which does not schedule
+ * BUFF_EXPIRE events (those are owned by action subclasses via their ActionResult).
+ */
+function applySpellSelfBuff(
+  spell: SpellDef,
+  state: GameState,
+  queue: SimEventQueue,
+  collected: SimEvent[],
+): void {
+  if (!spell.buffApplied) return;
+  const buffDuration = spell.buffDuration ?? 0;
+  if (buffAffectsEnergyRegen(spell.buffApplied)) {
+    state.settleEnergy();
+  }
+  state.applyBuff(spell.buffApplied, buffDuration, spell.buffMaxStacks ?? 1);
+  if (buffAffectsEnergyRegen(spell.buffApplied)) {
+    state.recomputeEnergyRegenRate();
+  }
+  pushEvent(
+    { type: EventType.BUFF_APPLY, time: state.currentTime, buffId: spell.buffApplied },
+    queue,
+    collected,
+  );
+  if (buffDuration > 0) {
+    pushEvent(
+      { type: EventType.BUFF_EXPIRE, time: state.currentTime + buffDuration, buffId: spell.buffApplied },
+      queue,
+      collected,
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -315,6 +355,7 @@ export function executeAbility(
     isCrit: false,
     executeTime: 0,
     events: collected,
+    appliedCooldownAdjustments: [],
   });
 
   // -------------------------------------------------------------------------
@@ -442,15 +483,17 @@ export function executeAbility(
 
   let damage = 0;
   let isCrit = false;
+  let appliedCooldownAdjustments: ReadonlyArray<{ spellId: string; delta: number }> = [];
 
   if (spell.isChanneled) {
     // Dispatch to Action class for cast-start side effects (flurry release, WDP buff, etc.)
     // Damage from channeled spells comes from tick events, so we discard result.damage.
     const channelAction = state.action_list?.get(spell.name);
-    if (channelAction) {
-      const actionResult = channelAction.execute(queue, rng, isComboStrike, channelAction.createCastContext());
-      applyActionResult(state, queue, collected, actionResult);
-    }
+      if (channelAction) {
+        const actionResult = channelAction.execute(queue, rng, isComboStrike, channelAction.createCastContext());
+        applyActionResult(state, queue, collected, actionResult);
+        appliedCooldownAdjustments = actionResult.cooldownAdjustments;
+      }
 
     // Capture snapshot at cast-start (before any further state changes)
     const snapshot = channelAction
@@ -521,6 +564,7 @@ export function executeAbility(
         isCrit = result.isCrit;
         state.addDamage(damage);
         applyActionResult(state, queue, collected, result);
+        appliedCooldownAdjustments = result.cooldownAdjustments;
       } else {
         // Legacy path: execute damage handled externally by caller
         damage = 0;
@@ -534,6 +578,7 @@ export function executeAbility(
         isCrit = result.isCrit;
         state.addDamage(damage);
         applyActionResult(state, queue, collected, result);
+        appliedCooldownAdjustments = result.cooldownAdjustments;
       } else {
         // Fallback: existing path for non-migrated spells
         const dmgResult = calculateDamage(spell, state, rng, isComboStrike);
@@ -548,36 +593,7 @@ export function executeAbility(
   // Buff application
   // -------------------------------------------------------------------------
 
-  if (spell.buffApplied) {
-    const buffDuration = spell.buffDuration ?? 0;
-    if (buffAffectsEnergyRegen(spell.buffApplied)) {
-      state.settleEnergy();
-    }
-    state.applyBuff(spell.buffApplied, buffDuration, spell.buffMaxStacks ?? 1);
-    if (buffAffectsEnergyRegen(spell.buffApplied)) {
-      state.recomputeEnergyRegenRate();
-    }
-    pushEvent(
-      {
-        type: EventType.BUFF_APPLY,
-        time: state.currentTime,
-        buffId: spell.buffApplied,
-      },
-      queue,
-      collected
-    );
-    if (buffDuration > 0) {
-      pushEvent(
-        {
-          type: EventType.BUFF_EXPIRE,
-          time: state.currentTime + buffDuration,
-          buffId: spell.buffApplied,
-        },
-        queue,
-        collected
-      );
-    }
-  }
+  applySpellSelfBuff(spell, state, queue, collected);
 
   // -------------------------------------------------------------------------
   // Proc chains
@@ -609,6 +625,7 @@ export function executeAbility(
     isCrit,
     executeTime: 0,
     events: collected,
+    appliedCooldownAdjustments,
   };
 }
 
@@ -620,11 +637,11 @@ export function processAbilityCast(
 ): ExecutionResult {
   const spell = state.executionHooks.resolveSpellDef?.(state, event.spellId);
   if (!spell) {
-    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [] };
+    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [], appliedCooldownAdjustments: [] };
   }
 
   if (event.castId !== undefined && !state.completeCast(event.spellId, event.castId)) {
-    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [] };
+    return { success: false, failReason: 'not_available', damage: 0, isComboStrike: false, isCrit: false, executeTime: 0, events: [], appliedCooldownAdjustments: [] };
   }
 
   const collected: SimEvent[] = [];
@@ -658,36 +675,7 @@ export function processAbilityCast(
     }
   }
 
-  if (spell.buffApplied) {
-    const buffDuration = spell.buffDuration ?? 0;
-    if (buffAffectsEnergyRegen(spell.buffApplied)) {
-      state.settleEnergy();
-    }
-    state.applyBuff(spell.buffApplied, buffDuration, spell.buffMaxStacks ?? 1);
-    if (buffAffectsEnergyRegen(spell.buffApplied)) {
-      state.recomputeEnergyRegenRate();
-    }
-    pushEvent(
-      {
-        type: EventType.BUFF_APPLY,
-        time: state.currentTime,
-        buffId: spell.buffApplied,
-      },
-      queue,
-      collected,
-    );
-    if (buffDuration > 0) {
-      pushEvent(
-        {
-          type: EventType.BUFF_EXPIRE,
-          time: state.currentTime + buffDuration,
-          buffId: spell.buffApplied,
-        },
-        queue,
-        collected,
-      );
-    }
-  }
+  applySpellSelfBuff(spell, state, queue, collected);
 
   registeredAction?.afterExecute(queue, rng);
   state.executionHooks.onAbilityExecuted?.(state, spell, rng, queue);

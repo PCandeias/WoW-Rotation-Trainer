@@ -124,6 +124,9 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
   const onCooldown = cdRemaining > 0;
   const onGcd = gcdRemaining > 0;
   const buffActive = activeBuffRemaining > 0;
+  const hasAvailableCharges = charges !== undefined && charges.current > 0;
+  const cooldownBlocksCast = onCooldown && (!charges || !hasAvailableCharges);
+  const showCooldownOverlay = onCooldown && !buffActive;
 
   // Max-charges glow: triggers when at full charges and max > 1
   const atMaxCharges = charges !== undefined && charges.current === charges.max && charges.max > 1;
@@ -134,10 +137,10 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
   }
 
   // CD sweep angle: how much of the circle is "dark" (remaining)
-  const angle = onCooldown && cdTotal > 0 ? (cdRemaining / cdTotal) * 360 : 0;
+  const angle = showCooldownOverlay && cdTotal > 0 ? (cdRemaining / cdTotal) * 360 : 0;
 
   // GCD sweep angle (only shown when no individual CD active)
-  const gcdAngle = onGcd && !onCooldown && gcdTotal > 0 ? (gcdRemaining / gcdTotal) * 360 : 0;
+  const gcdAngle = onGcd && !showCooldownOverlay && gcdTotal > 0 ? (gcdRemaining / gcdTotal) * 360 : 0;
 
   // Slot container style
   const slotStyle: CSSProperties = {
@@ -187,16 +190,14 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
   const iconWrapperStyle: CSSProperties = {
     width: '100%',
     height: '100%',
-       filter: dimmed
-       ? 'grayscale(0.8) brightness(0.4)'
-       : onCooldown
-        ? 'grayscale(0.7) brightness(0.5)'
-        : !usable
-        ? 'grayscale(0.5) brightness(0.55) saturate(0.4)'
-        : buffActive
-          ? 'brightness(1.06) saturate(1.08)'
+    filter: cooldownBlocksCast
+      ? 'grayscale(0.7) brightness(0.5)'
+      : !usable
+      ? 'grayscale(0.5) brightness(0.55) saturate(0.4)'
+      : dimmed
+        ? 'grayscale(0.8) brightness(0.4)'
         : 'none',
-     opacity: dimmed ? 0.45 : !onCooldown && !usable ? 0.65 : 1,
+    opacity: dimmed ? 0.45 : !cooldownBlocksCast && !usable ? 0.65 : 1,
   };
 
   // CD sweep overlay style using conic-gradient
@@ -306,17 +307,17 @@ export const ActionBarSlot = React.memo(function ActionBarSlot({
       </div>
 
       {/* Layer 2: CD sweep overlay */}
-      {onCooldown && (
+      {showCooldownOverlay && (
         <div data-testid="cd-sweep" style={sweepStyle} />
       )}
 
       {/* Layer 2b: GCD sweep overlay (only when no individual CD) */}
-      {onGcd && !onCooldown && (
+      {onGcd && !showCooldownOverlay && (
         <div data-testid="gcd-sweep" style={gcdSweepStyle} />
       )}
 
       {/* Layer 3: OmniCC countdown text */}
-      {onCooldown && (
+      {showCooldownOverlay && (
         <div data-testid="cd-text" style={cdTextStyle}>
           {cdText}
         </div>

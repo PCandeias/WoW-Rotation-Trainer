@@ -7,6 +7,7 @@ import type { BuffDef } from '@core/data';
 import { getBuffbookForProfileSpec } from '@core/data';
 import type { BuffRegistry } from './BuffTracker';
 import { getBuffPresentationRegistryForProfileSpec } from '@ui/specs/specBuffPresentation';
+import { prepareBuffEntries } from './buffPresentation';
 
 export interface BuffBarTrackerProps {
   gameState: GameStateSnapshot;
@@ -85,27 +86,14 @@ export function BuffBarTracker({
     flexShrink: 0,
   };
 
-  const activePairs = Array.from(gameState.buffs.entries()).filter(([, state]) => state.expiresAt === 0 || state.expiresAt > currentTime);
-  const filteredPairs = activePairs.filter(([buffId]) => {
-    if (whitelist && whitelist.length > 0) {
-      return whitelist.includes(buffId);
-    }
-    if (blacklist?.includes(buffId)) {
-      return false;
-    }
-    return true;
+  const enrichedBuffs = prepareBuffEntries(gameState, currentTime, {
+    registry,
+    iconNameResolver,
+    whitelist,
+    blacklist,
   });
-  const orderedBuffs = whitelist && whitelist.length > 0
-    ? whitelist
-      .map((buffId) => filteredPairs.find(([candidateId]) => candidateId === buffId))
-      .filter((entry): entry is [string, typeof activePairs[number][1]] => entry !== undefined)
-    : filteredPairs;
 
-  const buffBars = orderedBuffs.map(([buffId, buffState]) => {
-    const definition = registry[buffId];
-    const displayName = definition?.displayName ?? buffId;
-    const iconName = iconNameResolver?.(buffId, gameState, definition?.iconName) ?? definition?.iconName;
-    const emoji = definition?.emoji ?? '?';
+  const buffBars = enrichedBuffs.map(({ buffId, buffState, iconName, emoji, displayName }) => {
     const buffDef = buffbook.get(buffId);
 
     const { expiresAt, stacks } = buffState;

@@ -4,6 +4,9 @@ import { T, FONTS } from '@ui/theme/elvui';
 import { buildHudFrameStyle } from '@ui/theme/stylePrimitives';
 import { AbilityIcon } from './AbilityIcon';
 import type { GameStateSnapshot } from '@core/engine/gameState';
+import { prepareBuffEntries, type EnrichedBuff } from './buffPresentation';
+
+export type { EnrichedBuff };
 
 export interface BuffIconDef {
   iconName?: string;
@@ -90,32 +93,12 @@ export function BuffTracker({
   // Filter and enrich buffs
   // ---------------------------------------------------------------------------
 
-  const activePairs = Array.from(gameState.buffs.entries()).filter(
-    ([, state]) => state.expiresAt === 0 || state.expiresAt > currentTime
-  );
-
-  const useWhitelist = Array.isArray(whitelist) && whitelist.length > 0;
-  const filtered = activePairs.filter(([buffId]) => {
-    if (useWhitelist && whitelist) return whitelist.includes(buffId);
-    if (blacklist && blacklist.length > 0) return !blacklist.includes(buffId);
-    return true;
+  const orderedEnriched = prepareBuffEntries(gameState, currentTime, {
+    registry,
+    iconNameResolver,
+    whitelist,
+    blacklist,
   });
-
-  const enriched = filtered.map(([buffId, buffState]) => {
-    const def = registry?.[buffId];
-    return {
-      buffId,
-      buffState,
-      iconName: iconNameResolver?.(buffId, gameState, def?.iconName) ?? def?.iconName,
-      emoji: def?.emoji ?? '?',
-      displayName: def?.displayName ?? buffId,
-      hideTimer: def?.hideTimer === true,
-    };
-  });
-
-  const orderedEnriched = useWhitelist && whitelist
-    ? whitelist.flatMap((buffId) => enriched.find((entry) => entry.buffId === buffId) ?? [])
-    : enriched;
 
   // Find enriched entry for the currently hovered buff (for tooltip content)
   const hoveredEntry = hover ? orderedEnriched.find(e => e.buffId === hover.buffId) ?? null : null;

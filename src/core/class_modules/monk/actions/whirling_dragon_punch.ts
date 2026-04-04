@@ -8,7 +8,16 @@ import { rollChance } from '../../../engine/rng';
 import type { RngInstance } from '../../../engine/rng';
 import { calculateDamage } from '../../../engine/damage';
 import type { SpellDef } from '../../../data/spells';
-import { MONK_WW_BUFFS } from '../../../data/spells/monk_windwalker';
+import {
+  THUNDERFIST_BASE_STACKS,
+  THUNDERFIST_MAX_STACKS,
+  THUNDERFIST_DURATION_SECONDS,
+  TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS,
+  TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS,
+  COMBO_BREAKER_MAX_STACKS,
+  COMBO_BREAKER_DURATION_SECONDS,
+} from '../monk_derived_values';
+
 import {
   WHIRLING_DRAGON_PUNCH_AOE_SPELL,
   WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL,
@@ -18,17 +27,6 @@ const KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL = requireMonkSpellData(451529);
 const COMMUNION_WITH_WIND_SPELL = requireMonkSpellData(451576);
 const MIDNIGHT_SEASON_2PC_SPELL = requireMonkSpellData(1264842);
 const REVOLVING_WHIRL_SPELL = requireMonkSpellData(451524);
-const THUNDERFIST_TALENT = requireMonkSpellData(392985);
-const THUNDERFIST_BUFF = requireMonkSpellData(393565);
-const THUNDERFIST_BASE_STACKS = THUNDERFIST_TALENT.effectN(1).base_value();
-const THUNDERFIST_MAX_STACKS = THUNDERFIST_BUFF.max_stacks() ?? MONK_WW_BUFFS.get('thunderfist')?.maxStacks ?? 10;
-const THUNDERFIST_DURATION_SECONDS = THUNDERFIST_BUFF.duration_ms() > 0
-  ? THUNDERFIST_BUFF.duration_ms() / 1000
-  : (MONK_WW_BUFFS.get('thunderfist')?.duration ?? 60);
-const TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.maxStacks ?? 4;
-const TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.duration ?? 20;
-const BLACKOUT_REINFORCEMENT_MAX_STACKS = MONK_WW_BUFFS.get('combo_breaker')?.maxStacks ?? 2;
-const BLACKOUT_REINFORCEMENT_DURATION_SECONDS = MONK_WW_BUFFS.get('combo_breaker')?.duration ?? 15;
 
 export class WhirlingDragonPunchAction extends MonkMeleeAction {
   readonly name = 'whirling_dragon_punch';
@@ -38,8 +36,9 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
     spell: SpellDef,
     rng: RngInstance,
     isComboStrike: boolean,
+    targetIndex?: number,
   ): { damage: number; isCrit: boolean } {
-    const result = calculateDamage(spell, this.p, rng, isComboStrike);
+    const result = calculateDamage(spell, this.p, rng, isComboStrike, undefined, targetIndex);
     // Child spell damage already passes through generic monk hooks in
     // calculateDamage(); apply only WDP-specific bonuses here.
     let spellSpecificMultiplier = 1.0;
@@ -58,14 +57,15 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
     };
   }
 
-  override calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
+  override calculateDamage(rng: RngInstance, isComboStrike: boolean, targetIndex?: number): { damage: number; isCrit: boolean } {
     const singletargetHit = this.calculateChildHitDamage(
       WHIRLING_DRAGON_PUNCH_SINGLETARGET_SPELL,
       rng,
       isComboStrike,
+      targetIndex,
     );
     const aoeHits = Array.from({ length: 3 }, () => (
-      this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike)
+      this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike, targetIndex)
     ));
 
     return {
@@ -121,7 +121,7 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
     const WDP_AOE_FULL_AMOUNT_TARGETS = 1;
     for (let tickIdx = 0; tickIdx < 3; tickIdx++) {
       for (let t = 0; t < n; t++) {
-        const aoeHit = this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike);
+        const aoeHit = this.calculateChildHitDamage(WHIRLING_DRAGON_PUNCH_AOE_SPELL, rng, isComboStrike, t);
         let damage = aoeHit.damage;
         if (t > 0) {
           // Apply sqrt reduction for secondary targets (mirrors aoeDamageMultiplier logic)
@@ -167,8 +167,8 @@ export class WhirlingDragonPunchAction extends MonkMeleeAction {
     // echo_technique: +1 combo_breaker stack (cap at 2)
     if (this.p.hasTalent('echo_technique')) {
       const stacksBefore = this.p.getBuffStacks('combo_breaker');
-      const stacksAfter = Math.min(BLACKOUT_REINFORCEMENT_MAX_STACKS, Math.max(1, stacksBefore + 1));
-      this.p.applyBuff('combo_breaker', BLACKOUT_REINFORCEMENT_DURATION_SECONDS, stacksAfter);
+      const stacksAfter = Math.min(COMBO_BREAKER_MAX_STACKS, Math.max(1, stacksBefore + 1));
+      this.p.applyBuff('combo_breaker', COMBO_BREAKER_DURATION_SECONDS, stacksAfter);
       if (stacksBefore > 0) {
         result.newEvents.push({
           type: EventType.BUFF_STACK_CHANGE,

@@ -1,21 +1,17 @@
 import type { ActionResult } from '../../../engine/action';
-import type { DamageSnapshot, SimEventQueue } from '../../../engine/eventQueue';
+import type { SimEventQueue } from '../../../engine/eventQueue';
 import type { IGameState } from '../../../engine/i_game_state';
+import { rollChance } from '../../../engine/rng';
 import type { RngInstance } from '../../../engine/rng';
 import { requireShamanSpellData } from '../../../dbc/shaman_spell_data';
+import { triggerLivelyTotemsVolleys } from './lively_totems';
+import { FireNovaAction } from './fire_nova';
 import { FlameShockAction } from './flame_shock';
-import { applyShamanBuffStacks, ShamanAction } from '../shaman_action';
+import { ShamanAction } from '../shaman_action';
 
 const VOLTAIC_BLAZE = requireShamanSpellData(470057);
 const VOLTAIC_BLAZE_DAMAGE = requireShamanSpellData(1259101);
-
-export function triggerVoltaicBlazeProc(state: IGameState, newEvents: ActionResult['newEvents']): void {
-  if (!state.hasTalent('voltaic_blaze')) {
-    return;
-  }
-
-  applyShamanBuffStacks(state, 'voltaic_blaze', 1, newEvents);
-}
+const FIRE_NOVA = requireShamanSpellData(1260666);
 
 class VoltaicBlazeDamageAction extends ShamanAction {
   readonly name = 'voltaic_blaze_damage';
@@ -30,6 +26,22 @@ class VoltaicBlazeDamageAction extends ShamanAction {
 
   protected override actionIsPhysical(): boolean {
     return false;
+  }
+
+  override composite_da_multiplier(): number {
+    return super.composite_da_multiplier() / 1.08;
+  }
+
+  override composite_player_multiplier(isComboStrike: boolean): number {
+    const fullMasteryMultiplier = 1 + this.p.getMasteryPercent() / 100;
+    const simcVoltaicBlazeMasteryMultiplier = 1 + this.p.getMasteryPercent() / 200;
+    return super.composite_player_multiplier(isComboStrike)
+      / fullMasteryMultiplier
+      * simcVoltaicBlazeMasteryMultiplier;
+  }
+
+  protected override snapshotMasteryMultiplier(_isComboStrike: boolean): number {
+    return 1 + this.p.getMasteryPercent() / 200;
   }
 
   override composite_crit_chance(): number {
@@ -48,11 +60,7 @@ class VoltaicBlazeDamageAction extends ShamanAction {
     const newEvents: ActionResult['newEvents'] = [];
 
     for (let targetId = 0; targetId < nTargets; targetId += 1) {
-      const targetSnapshot: DamageSnapshot = {
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, nTargets),
-      };
-      const impact = this.calculateDamageFromSnapshot(targetSnapshot, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, nTargets));
       this.p.addDamage(impact.damage, targetId);
       totalDamage += impact.damage;
       isCrit = isCrit || impact.isCrit;
@@ -69,18 +77,16 @@ export class VoltaicBlazeAction extends ShamanAction {
   readonly name = 'voltaic_blaze';
   readonly spellData = VOLTAIC_BLAZE;
   private readonly damageAction: VoltaicBlazeDamageAction;
+  private readonly fireNovaAction: FireNovaAction;
 
   constructor(state: IGameState) {
     super(state);
     this.damageAction = new VoltaicBlazeDamageAction(state);
+    this.fireNovaAction = new FireNovaAction(state);
   }
 
   protected override actionIsPhysical(): boolean {
     return false;
-  }
-
-  override preCastFailReason(): 'not_available' | undefined {
-    return this.p.isBuffActive('voltaic_blaze') ? undefined : 'not_available';
   }
 
   override execute(
@@ -97,10 +103,17 @@ export class VoltaicBlazeAction extends ShamanAction {
     };
 
     this.pushMaelstromWeaponStacks(this.spellData.effectN(2).base_value(), result.newEvents);
+    if (this.p.hasTalent('fire_nova') && rollChance(rng, FIRE_NOVA.effectN(2).base_value())) {
+      result.isCrit = this.fireNovaAction.executeProc(rng, isComboStrike).isCrit || result.isCrit;
+    }
 
     const impact = this.damageAction.executeTargets(queue, rng, isComboStrike);
     result.isCrit = impact.isCrit;
     result.newEvents.push(...impact.newEvents);
+
+    const livelyTotems = triggerLivelyTotemsVolleys(this.p, queue, rng, isComboStrike);
+    result.newEvents.push(...livelyTotems.newEvents);
+    result.isCrit = result.isCrit || livelyTotems.isCrit;
 
     this.p.recordPendingSpellStat(this.name, impact.damage, 1, impact.isCrit);
     return result;

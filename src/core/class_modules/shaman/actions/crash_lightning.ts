@@ -5,15 +5,23 @@ import type { IGameState } from '../../../engine/i_game_state';
 import type { SimEventQueue } from '../../../engine/eventQueue';
 import type { RngInstance } from '../../../engine/rng';
 import { requireShamanSpellData } from '../../../dbc/shaman_spell_data';
-import { applyShamanBuffStacks, consumeShamanBuffStacks, ShamanAction } from '../shaman_action';
+import {
+  applyShamanBuffStacks,
+  consumeShamanBuffStacks,
+  expireShamanBuff,
+  ShamanAction,
+  triggerMaelstromWeaponProc,
+} from '../shaman_action';
 import { createAlphaWolfEvents } from './feral_spirit';
 import { triggerThorimsInvocation } from './lightning_bolt';
+import { triggerFlametongueWeapon, triggerWindfuryWeapon } from './windfury_weapon';
 
 const CRASH_LIGHTNING_BUFF = requireShamanSpellData(187874);
 const CRASH_LIGHTNING_PROC = requireShamanSpellData(195592);
 const STORM_UNLEASHED_RANK4 = requireShamanSpellData(1252373);
 const CRASH_LIGHTNING_UNLEASHED = requireShamanSpellData(1252431);
 const ELECTROSTATIC_WAGER_DAMAGE = requireShamanSpellData(1223332);
+const CL_CRASH_LIGHTNING_DAMAGE = requireShamanSpellData(333964);
 
 const STORM_UNLEASHED_REPEAT_INTERVAL_SECONDS = 1;
 
@@ -45,15 +53,18 @@ class CrashLightningProcAction extends ShamanAction {
     const nTargets = Math.min(this.nTargets(), 5);
     let totalDamage = 0;
     let isCrit = false;
+    const newEvents: ActionResult['newEvents'] = [];
 
     for (let targetId = 0; targetId < nTargets; targetId += 1) {
       const targetSnapshot: DamageSnapshot = {
         ...snapshot,
         actionMultiplier: snapshot.actionMultiplier * crashLightningStacks,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, nTargets),
       };
-      const impact = this.calculateDamageFromSnapshot(targetSnapshot, rng);
+      const impact = this.calculateDamageFromSnapshot(targetSnapshot, rng, targetId, this.aoeDamageMultiplier(targetId, nTargets));
       this.p.addDamage(impact.damage, targetId);
+      if (impact.damage > 0) {
+        triggerMaelstromWeaponProc(this.p, rng, newEvents);
+      }
       totalDamage += impact.damage;
       isCrit = isCrit || impact.isCrit;
     }
@@ -62,7 +73,7 @@ class CrashLightningProcAction extends ShamanAction {
     return {
       damage: 0,
       isCrit,
-      newEvents: [],
+      newEvents,
       buffsApplied: [],
       cooldownAdjustments: [],
     };
@@ -88,7 +99,7 @@ export class CrashLightningUnleashedAction extends ShamanAction {
 
   executeOnTarget(targetId: number, rng: RngInstance, isComboStrike: boolean): { amount: number; isCrit: boolean } {
     const snapshot = this.captureSnapshot(isComboStrike);
-    const impact = this.calculateDamageFromSnapshot(snapshot, rng);
+    const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId);
     this.p.addDamage(impact.damage, targetId);
     return { amount: impact.damage, isCrit: impact.isCrit };
   }
@@ -129,6 +140,7 @@ export class CrashLightningAction extends ShamanAction {
 
   override composite_da_multiplier(): number {
     return super.composite_da_multiplier()
+      * (1 + CL_CRASH_LIGHTNING_DAMAGE.effectN(1).percent() * this.p.getBuffStacks('cl_crash_lightning'))
       * (1 + ELECTROSTATIC_WAGER_DAMAGE.effectN(1).percent() * this.p.getBuffStacks('electrostatic_wager_damage'));
   }
 
@@ -141,14 +153,14 @@ export class CrashLightningAction extends ShamanAction {
     const nTargets = this.nTargets();
     let totalDamage = 0;
     let isCrit = false;
+    const newEvents: ActionResult['newEvents'] = [];
 
     for (let targetId = 0; targetId < nTargets; targetId += 1) {
-      const targetSnapshot: DamageSnapshot = {
-        ...snapshot,
-        targetMultiplier: snapshot.targetMultiplier * this.aoeDamageMultiplier(targetId, nTargets),
-      };
-      const impact = this.calculateDamageFromSnapshot(targetSnapshot, rng);
+      const impact = this.calculateDamageFromSnapshot(snapshot, rng, targetId, this.aoeDamageMultiplier(targetId, nTargets));
       this.p.addDamage(impact.damage, targetId);
+      if (impact.damage > 0) {
+        triggerMaelstromWeaponProc(this.p, rng, newEvents);
+      }
       totalDamage += impact.damage;
       isCrit = isCrit || impact.isCrit;
     }
@@ -156,10 +168,20 @@ export class CrashLightningAction extends ShamanAction {
     const result: ActionResult = {
       damage: 0,
       isCrit,
-      newEvents: [],
+      newEvents,
       buffsApplied: [],
       cooldownAdjustments: [],
     };
+
+    if (totalDamage > 0) {
+      const flametongue = triggerFlametongueWeapon(this.p, rng, isComboStrike);
+      result.isCrit = result.isCrit || flametongue.isCrit;
+      result.newEvents.push(...flametongue.newEvents);
+
+      const windfury = triggerWindfuryWeapon(this.p, _queue, rng, isComboStrike);
+      result.isCrit = result.isCrit || windfury.isCrit;
+      result.newEvents.push(...windfury.newEvents);
+    }
 
     const crashLightningStacks = this.p.hasTalent('storm_unleashed')
       ? this.p.getBuffStacks('crash_lightning') + 1
@@ -174,6 +196,8 @@ export class CrashLightningAction extends ShamanAction {
     if (this.p.isBuffActive('storm_unleashed')) {
       consumeShamanBuffStacks(this.p, 'storm_unleashed', 1, result.newEvents);
     }
+
+    expireShamanBuff(this.p, 'cl_crash_lightning', result.newEvents);
 
     if (this.p.isBuffActive('doom_winds')) {
       const thorimsInvocation = triggerThorimsInvocation(this.p, _queue, rng, isComboStrike);

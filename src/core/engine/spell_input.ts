@@ -20,11 +20,15 @@ export function getSpellInputStatus(
 
   return {
     failReason,
+    // Allow the player to attempt pressing even when gated by timing/lock,
+    // but block hard-gated reasons like talent_missing, not_available, execute_not_ready, etc.
     canPress:
       failReason === undefined
       || failReason === 'on_gcd'
       || failReason === 'channel_locked'
       || failReason === 'cast_locked',
+    // Show the icon as usable when only timing prevents the cast; dim it
+    // for hard blocks (talent_missing, not_available, execute_not_ready, etc.).
     visuallyUsable:
       hasEnoughResources
       && (

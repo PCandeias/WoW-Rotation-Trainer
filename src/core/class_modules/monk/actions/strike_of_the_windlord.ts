@@ -5,21 +5,18 @@ import type { ActionResult } from '../../../engine/action';
 import { EventType } from '../../../engine/eventQueue';
 import type { SimEventQueue } from '../../../engine/eventQueue';
 import type { RngInstance } from '../../../engine/rng';
-import { MONK_WW_BUFFS } from '../../../data/spells/monk_windwalker';
+import {
+  THUNDERFIST_BASE_STACKS,
+  THUNDERFIST_MAX_STACKS,
+  THUNDERFIST_DURATION_SECONDS,
+  TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS,
+  TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS,
+  COMBO_BREAKER_MAX_STACKS,
+  COMBO_BREAKER_DURATION_SECONDS,
+} from '../monk_derived_values';
 
 const MIDNIGHT_SEASON_2PC_SPELL = requireMonkSpellData(1264842);
 const KNOWLEDGE_OF_THE_BROKEN_TEMPLE_SPELL = requireMonkSpellData(451529);
-const THUNDERFIST_TALENT = requireMonkSpellData(392985);
-const THUNDERFIST_BUFF = requireMonkSpellData(393565);
-const THUNDERFIST_BASE_STACKS = THUNDERFIST_TALENT.effectN(1).base_value();
-const THUNDERFIST_MAX_STACKS = THUNDERFIST_BUFF.max_stacks() ?? MONK_WW_BUFFS.get('thunderfist')?.maxStacks ?? 10;
-const THUNDERFIST_DURATION_SECONDS = THUNDERFIST_BUFF.duration_ms() > 0
-  ? THUNDERFIST_BUFF.duration_ms() / 1000
-  : (MONK_WW_BUFFS.get('thunderfist')?.duration ?? 60);
-const TEACHINGS_OF_THE_MONASTERY_BASE_MAX_STACKS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.maxStacks ?? 4;
-const TEACHINGS_OF_THE_MONASTERY_DURATION_SECONDS = MONK_WW_BUFFS.get('teachings_of_the_monastery')?.duration ?? 20;
-const BLACKOUT_REINFORCEMENT_MAX_STACKS = MONK_WW_BUFFS.get('combo_breaker')?.maxStacks ?? 2;
-const BLACKOUT_REINFORCEMENT_DURATION_SECONDS = MONK_WW_BUFFS.get('combo_breaker')?.duration ?? 15;
 
 export class StrikeOfTheWindlordAction extends MonkMeleeAction {
   readonly name = 'strike_of_the_windlord';
@@ -83,7 +80,7 @@ export class StrikeOfTheWindlordAction extends MonkMeleeAction {
 
     // Secondary targets — independent crit, AOE multiplier applied
     for (let t = 1; t < n; t++) {
-      const secondary = this.calculateDamage(rng, isComboStrike);
+      const secondary = this.calculateDamage(rng, isComboStrike, t);
       const damage = secondary.damage * this.aoeDamageMultiplier(t, n);
       this.p.addDamage(damage, t);
       this.p.recordPendingSpellStat(this.name, damage, 0, secondary.isCrit);
@@ -130,8 +127,8 @@ export class StrikeOfTheWindlordAction extends MonkMeleeAction {
     // echo_technique: +1 combo_breaker stack (cap at 2)
     if (this.p.hasTalent('echo_technique')) {
       const stacksBefore = this.p.getBuffStacks('combo_breaker');
-      const stacksAfter = Math.min(BLACKOUT_REINFORCEMENT_MAX_STACKS, Math.max(1, stacksBefore + 1));
-      this.p.applyBuff('combo_breaker', BLACKOUT_REINFORCEMENT_DURATION_SECONDS, stacksAfter);
+      const stacksAfter = Math.min(COMBO_BREAKER_MAX_STACKS, Math.max(1, stacksBefore + 1));
+      this.p.applyBuff('combo_breaker', COMBO_BREAKER_DURATION_SECONDS, stacksAfter);
       if (stacksBefore > 0) {
         result.newEvents.push({
           type: EventType.BUFF_STACK_CHANGE,

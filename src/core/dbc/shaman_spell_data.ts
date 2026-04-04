@@ -39,6 +39,11 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  3606: new SpellData(3606, 'Searing Bolt',
+    [{ _id: 1252, _subtype: 2, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0.65205 }],
+    0,
+    2000),
+
   77223: new SpellData(77223, 'Mastery: Enhanced Elements',
     [
       { _id: 68076, _subtype: 108, _value: 0, _ap_coefficient: 0, _sp_coefficient: 2 },
@@ -78,8 +83,49 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  333964: new SpellData(333964, 'Crash Lightning',
+    [
+      { _id: 829611, _subtype: 218, _value: 10, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 829612, _subtype: 3, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0,
+    { _duration_ms: 15000, _max_stacks: 3 }),
+
+  344357: new SpellData(344357, 'Stormflurry',
+    [
+      { _id: 896844, _subtype: 4, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 896845, _subtype: 4, _value: 40, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  382889: new SpellData(382889, 'Flurry',
+    [{ _id: 999765, _subtype: 193, _value: 15, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0,
+    { _duration_ms: 15000, _max_stacks: 3 }),
+
   390287: new SpellData(390287, 'Stormblast',
     [{ _id: 1027004, _subtype: 2, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0),
+
+  381655: new SpellData(381655, 'Nature\'s Fury',
+    [{ _id: 998136, _subtype: 7, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0),
+
+  1251026: new SpellData(1251026, 'Overcharge',
+    [
+      { _id: 1255386, _subtype: 163, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1255435, _subtype: 226, _value: 40, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  1270375: new SpellData(1270375, 'Spiritual Awakening',
+    [{ _id: 1272276, _subtype: 318, _value: 3, _ap_coefficient: 0, _sp_coefficient: 0 }],
     0,
     0),
 
@@ -88,6 +134,15 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0,
     { _duration_ms: 12000, _max_stacks: 6 }),
+
+  382042: new SpellData(382042, 'Surging Elements',
+    [
+      { _id: 1013242, _subtype: 4, _value: 15, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1252207, _subtype: 42, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1254444, _subtype: 4, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
 
   392352: new SpellData(392352, 'Storm\'s Wrath',
     [
@@ -102,6 +157,12 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0,
     { _duration_ms: 12000, _max_stacks: 2 }),
+
+  1239170: new SpellData(1239170, 'Elemental Overflow',
+    [{ _id: 1236671, _subtype: 6, _value: 150, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0,
+    { _duration_ms: 20000, _max_stacks: 1 }),
 
   188389: new SpellData(188389, 'Flame Shock',
     [
@@ -164,10 +225,34 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     { _duration_ms: 12000, _max_stacks: 6 }),
 
+  210853: new SpellData(210853, 'Elemental Assault',
+    [
+      { _id: 312325, _subtype: 108, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 843152, _subtype: 4, _value: 1, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1027013, _subtype: 107, _value: 100, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0,
+    { _proc_chance_pct: 101 }),
+
+  384355: new SpellData(384355, 'Elemental Weapons',
+    [{ _id: 1016896, _subtype: 4, _value: 50, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0),
+
   1252373: new SpellData(1252373, 'Storm Unleashed',
     [
       { _id: 1257483, _subtype: 4, _value: 50, _ap_coefficient: 0, _sp_coefficient: 0 },
       { _id: 1257484, _subtype: 4, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1273234, _subtype: 219, _value: 15, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  1262761: new SpellData(1262761, 'Storm Unleashed',
+    [
+      { _id: 1268373, _subtype: 107, _value: 8, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1268374, _subtype: 107, _value: 10, _ap_coefficient: 0, _sp_coefficient: 0 },
     ],
     0,
     0),
@@ -271,6 +356,14 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  445033: new SpellData(445033, 'Supportive Imbuements',
+    [
+      { _id: 1141754, _subtype: 7, _value: 25, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1141755, _subtype: 15, _value: 100, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
   445035: new SpellData(445035, 'Splitstream',
     [
       { _id: 1141760, _subtype: 4, _value: 80, _ap_coefficient: 0, _sp_coefficient: 0 },
@@ -351,6 +444,11 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  157444: new SpellData(157444, 'Critical Strikes',
+    [{ _id: 219547, _subtype: 290, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0),
+
   198455: new SpellData(198455, 'Alpha Wolf',
     [{ _id: 291691, _subtype: 2, _value: 0, _ap_coefficient: 0.16, _sp_coefficient: 0 }],
     0,
@@ -408,6 +506,14 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  382886: new SpellData(382886, 'Fire and Ice',
+    [
+      { _id: 999755, _subtype: 108, _value: 3, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 999756, _subtype: 108, _value: 3, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
   384437: new SpellData(384437, 'Static Accumulation',
     [{ _id: 1017055, _subtype: 226, _value: 1, _ap_coefficient: 0, _sp_coefficient: 0 }],
     0,
@@ -457,6 +563,29 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     0),
 
+  455590: new SpellData(455590, 'Earthsurge',
+    [
+      { _id: 1159161, _subtype: 4, _value: 125, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1177979, _subtype: 4, _value: 40, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1283981, _subtype: 219, _value: 15, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  458101: new SpellData(458101, 'Lively Totems',
+    [
+      { _id: 1163858, _subtype: 28, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1169524, _subtype: 64, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0,
+    { _duration_ms: 8000 }),
+
+  458147: new SpellData(458147, 'Searing Volley',
+    [{ _id: 1163943, _subtype: 2, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0.92736 }],
+    0,
+    2000),
+
   444995: new SpellData(444995, 'Surging Totem',
     [{ _id: 1141743, _subtype: 6, _value: 24000, _ap_coefficient: 0, _sp_coefficient: 0 }],
     25000,
@@ -467,6 +596,12 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     [{ _id: 1164134, _subtype: 2, _value: 0, _ap_coefficient: 1.61, _sp_coefficient: 0 }],
     0,
     0),
+
+  461242: new SpellData(461242, 'Lively Totems',
+    [{ _id: 1169523, _subtype: 6, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0,
+    { _duration_ms: 8000, _max_stacks: 10 }),
 
   470057: new SpellData(470057, 'Voltaic Blaze',
     [
@@ -480,6 +615,15 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
 
   1259101: new SpellData(1259101, 'Voltaic Blaze',
     [{ _id: 1268023, _subtype: 2, _value: 0, _ap_coefficient: 0, _sp_coefficient: 4 }],
+    0,
+    0),
+
+  1260644: new SpellData(1260644, 'Totemic Momentum',
+    [
+      { _id: 1270087, _subtype: 4, _value: 200, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1273838, _subtype: 108, _value: 10, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1282760, _subtype: 453, _value: -3000, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
     0,
     0),
 
@@ -529,6 +673,22 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0,
     50),
 
+  333977: new SpellData(333977, 'Fire Nova',
+    [{ _id: 822568, _subtype: 2, _value: 0, _ap_coefficient: 0.99682, _sp_coefficient: 0 }],
+    0,
+    0),
+
+  462796: new SpellData(462796, 'Enhanced Imbues',
+    [
+      { _id: 1178801, _subtype: 4, _value: 30, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1178802, _subtype: 108, _value: 15, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1178803, _subtype: 108, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1178804, _subtype: 15, _value: 30, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1178805, _subtype: 23, _value: 30, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
   115356: new SpellData(115356, 'Windstrike',
     [
       { _id: 129136, _subtype: 64, _value: 0, _ap_coefficient: 0, _sp_coefficient: 0 },
@@ -548,7 +708,13 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     0),
 
   187880: new SpellData(187880, 'Maelstrom Weapon',
-    [{ _id: 274047, _subtype: 4, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    [
+      { _id: 274047, _subtype: 4, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 829582, _subtype: 4, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1276992, _subtype: 107, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1276993, _subtype: 107, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1277006, _subtype: 107, _value: -20, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
     0,
     0,
     { _proc_chance_pct: 20 }),
@@ -569,7 +735,59 @@ export const SHAMAN_DBC: Record<number, SpellData> = {
     ],
     0,
     0,
-    { _duration_ms: 30000, _max_stacks: 10 }),
+    { _duration_ms: 30000, _max_stacks: 5 }),
+
+  384143: new SpellData(384143, 'Raging Maelstrom',
+    [
+      { _id: 1016544, _subtype: 107, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1278869, _subtype: 4, _value: 50, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  384149: new SpellData(384149, 'Overflowing Maelstrom',
+    [
+      { _id: 1016558, _subtype: 4, _value: 10, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1033577, _subtype: 107, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1045499, _subtype: 219, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  1263288: new SpellData(1263288, 'Elemental Attunement',
+    [{ _id: 1266247, _subtype: 29, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0),
+
+  1262635: new SpellData(1262635, 'Thunder Capacitor',
+    [
+      { _id: 1265978, _subtype: 4, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1265979, _subtype: 4, _value: 20, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  1260666: new SpellData(1260666, 'Fire Nova',
+    [
+      { _id: 1266286, _subtype: 12, _value: 2, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1266287, _subtype: 4, _value: 30, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  384450: new SpellData(384450, 'Lightning Strikes',
+    [
+      { _id: 1017073, _subtype: 4, _value: 5, _ap_coefficient: 0, _sp_coefficient: 0 },
+      { _id: 1017364, _subtype: 4, _value: 10, _ap_coefficient: 0, _sp_coefficient: 0 },
+    ],
+    0,
+    0),
+
+  384451: new SpellData(384451, 'Lightning Strikes',
+    [{ _id: 1017074, _subtype: 108, _value: 25, _ap_coefficient: 0, _sp_coefficient: 0 }],
+    0,
+    0,
+    { _duration_ms: 30000, _max_stacks: 3 }),
 
   454015: new SpellData(454015, 'Tempest',
     [{ _id: 1156250, _subtype: 332, _value: 452201, _ap_coefficient: 0, _sp_coefficient: 0 }],

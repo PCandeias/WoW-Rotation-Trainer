@@ -1,7 +1,7 @@
 // src/core/class_modules/monk/actions/rising_sun_kick.ts
 import { MonkMeleeAction } from '../monk_action';
 import { requireMonkSpellData } from '../../../dbc/monk_spell_data';
-import type { ActionCastFailReason, ActionResult } from '../../../engine/action';
+import type { ActionResult } from '../../../engine/action';
 import { EventType } from '../../../engine/eventQueue';
 import type { SimEventQueue } from '../../../engine/eventQueue';
 import { rollChance } from '../../../engine/rng';
@@ -47,7 +47,7 @@ export class RisingSunKickAction extends MonkMeleeAction {
     return this.p.hasTalent('knowledge_of_the_broken_temple') ? 1 : 2;
   }
 
-  override preCastFailReason(): ActionCastFailReason | undefined {
+  override preCastFailReason(): 'not_available' | undefined {
     return this.p.isBuffActive('rushing_wind_kick') ? 'not_available' : undefined;
   }
 
@@ -77,8 +77,8 @@ export class RisingSunKickAction extends MonkMeleeAction {
     return true;
   }
 
-  override calculateDamage(rng: RngInstance, isComboStrike: boolean): { damage: number; isCrit: boolean } {
-    const result = super.calculateDamage(rng, isComboStrike);
+  override calculateDamage(rng: RngInstance, isComboStrike: boolean, targetIndex?: number): { damage: number; isCrit: boolean } {
+    const result = super.calculateDamage(rng, isComboStrike, targetIndex);
     let damage = this.applyRisingStarModifiers(result.damage, result.isCrit);
     if (this.appliesSunfireSpiral() && isComboStrike && this.p.hasTalent('sunfire_spiral')) {
       damage *= 1 + SUNFIRE_SPIRAL_SPELL.effectN(1).percent();

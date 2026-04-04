@@ -15,6 +15,7 @@ export interface SpellDef {
   id: number;
   name: string;
   displayName: string;
+  schools?: readonly string[];
   castTime?: number;
   energyCost: number;
   chiCost: number;
@@ -57,6 +58,7 @@ export interface BuffDef {
   duration: number;
   maxStacks: number;
   isHarmful: boolean;
+  stackExpirationModel?: 'shared' | 'separate';
 }
 
 export function spellRequiresGcdReady(spell: SpellDef): boolean {

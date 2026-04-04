@@ -17,7 +17,6 @@ export enum EventType {
   ENCOUNTER_END,
   GCD_READY,
   OFF_GCD_READY,
-  CWC_READY,
   RESOURCE_THRESHOLD_READY,
   PLAYER_INPUT,
   PLAYER_CANCEL,
@@ -56,9 +55,9 @@ export type SimEvent =
       type:
         | EventType.GCD_READY
         | EventType.OFF_GCD_READY
-        | EventType.CWC_READY
         | EventType.QUEUED_ABILITY_FIRE;
       time: number;
+      token?: number;
     }
   | { type: EventType.RESOURCE_THRESHOLD_READY; time: number; token: number }
   | { type: EventType.PLAYER_INPUT; time: number; ability: SpellId }
@@ -111,7 +110,7 @@ export type SimEvent =
       interrupted?: boolean;
     }
   | { type: EventType.COOLDOWN_READY; time: number; spellId: SpellId }
-  | { type: EventType.BUFF_APPLY; time: number; buffId: BuffId; stacks?: number }
+  | { type: EventType.BUFF_APPLY; time: number; buffId: BuffId; stacks?: number; duration?: number }
   | { type: EventType.BUFF_EXPIRE; time: number; buffId: BuffId }
   | {
       type: EventType.BUFF_STACK_CHANGE;

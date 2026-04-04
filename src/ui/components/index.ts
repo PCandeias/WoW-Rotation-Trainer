@@ -18,6 +18,15 @@ export { FloatingCombatText, type FloatingCombatTextProps, type DamageEvent } fr
 export { RecommendationQueue, type RecommendationQueueProps } from './RecommendationQueue';
 export { BuffTracker, type BuffIconDef, type BuffRegistry, type BuffTrackerProps } from './BuffTracker';
 export { BuffBarTracker, type BuffBarTrackerProps } from './BuffBarTracker';
+export {
+  prepareBuffEntries,
+  filterActiveBuffs,
+  applyWhitelistBlacklist,
+  enrichBuffEntries,
+  orderByWhitelist,
+  type EnrichedBuff,
+  type PrepareBuffEntriesOptions,
+} from './buffPresentation';
 export { ConsumableTracker, type ConsumableTrackerProps } from './ConsumableTracker';
 export { ChallengeOverlay } from './ChallengeOverlay';
 export { ChallengeHud } from './ChallengeHud';

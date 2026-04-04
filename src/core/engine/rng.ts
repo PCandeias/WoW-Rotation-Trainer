@@ -81,3 +81,27 @@ export function rollRange(rng: RngInstance, min: number, max: number): number {
   }
   return Math.floor(rng.next() * (max - min + 1)) + min;
 }
+
+/**
+ * Roll a normally distributed value using Box-Muller transform.
+ * @param rng - The RNG instance to use
+ * @param mean - Mean of the distribution
+ * @param stdDev - Standard deviation of the distribution
+ * @returns A deterministic Gaussian-distributed sample
+ */
+export function rollGaussian(rng: RngInstance, mean: number, stdDev: number): number {
+  if (stdDev < 0) {
+    throw new RangeError(`rollGaussian: stdDev must be >= 0, got ${stdDev}`);
+  }
+  if (stdDev === 0) {
+    return mean;
+  }
+
+  // Guard against log(0) while preserving deterministic consumption.
+  const u1 = Math.max(rng.next(), Number.MIN_VALUE);
+  const u2 = rng.next();
+  const magnitude = Math.sqrt(-2 * Math.log(u1));
+  const angle = 2 * Math.PI * u2;
+  const z0 = magnitude * Math.cos(angle);
+  return mean + z0 * stdDev;
+}

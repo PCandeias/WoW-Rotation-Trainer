@@ -54,6 +54,8 @@ export interface DamageSnapshot {
   critChance: number;
   /** Simulation time when snapshot was captured */
   snapshotTime: number;
+  /** Optional periodic tick spacing for refresh-sensitive DoTs. */
+  tickIntervalSeconds?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,8 +111,8 @@ function computeVersatilityMultiplier(state: IGameState): number {
   return 1 + state.getVersatilityPercent() / 100;
 }
 
-function computeTargetMultiplier(spell: SpellDef, state: IGameState): number {
-  const hookTargetMult = state.damageHooks?.getTargetMultiplier?.(spell, state) ?? 1.0;
+function computeTargetMultiplier(spell: SpellDef, state: IGameState, targetIndex?: number): number {
+  const hookTargetMult = state.damageHooks?.getTargetMultiplier?.(spell, state, targetIndex) ?? 1.0;
 
   // Physical damage reduction from boss armor.
   // Nature/magic spells set isPhysical: false to bypass armor entirely.
@@ -144,7 +146,8 @@ function computeCritDamageMultiplier(spell: SpellDef, state: IGameState): number
 export function captureSnapshot(
   spell: SpellDef,
   state: IGameState,
-  isComboStrike: boolean
+  isComboStrike: boolean,
+  targetIndex?: number,
 ): DamageSnapshot {
   return {
     actionMultiplier: computeActionMultiplier(spell, state),
@@ -152,7 +155,7 @@ export function captureSnapshot(
     masteryMultiplier: computeMasteryMultiplier(state, isComboStrike),
     hitComboMultiplier: computeHitComboMultiplier(state),
     versatilityMultiplier: computeVersatilityMultiplier(state),
-    targetMultiplier: computeTargetMultiplier(spell, state),
+    targetMultiplier: computeTargetMultiplier(spell, state, targetIndex),
     apCoefficient: spell.apCoefficient,
     spellPowerCoefficient: spell.spCoefficient ?? 0,
     attackPower: state.getWeaponMainHandAttackPower?.() ?? state.getAttackPower(),
@@ -178,7 +181,8 @@ export function calculateDamage(
   state: IGameState,
   rng: RngInstance,
   isComboStrike: boolean,
-  snapshot?: DamageSnapshot
+  snapshot?: DamageSnapshot,
+  targetIndex?: number,
 ): DamageResult {
   // Execute spells (Touch of Death) — damage is based on target HP, handled externally
   // Zero-coefficient utility spells return zero immediately
@@ -201,13 +205,18 @@ export function calculateDamage(
     };
   }
 
-  // Resolve multipliers — use snapshot values if provided
+  // Resolve multipliers — use snapshot values if provided.
+  // targetMultiplier is always computed live when targetIndex is explicitly supplied:
+  // debuffs like Hunter's Mark are target-specific and the snapshot only captured
+  // the primary-target value, so reusing it for secondary hits would be incorrect.
   const actionMult = snapshot?.actionMultiplier ?? computeActionMultiplier(spell, state);
   const playerMult = snapshot?.playerMultiplier ?? computePlayerMultiplier(state);
   const masteryMult = snapshot?.masteryMultiplier ?? computeMasteryMultiplier(state, isComboStrike);
   const hitComboMult = snapshot?.hitComboMultiplier ?? computeHitComboMultiplier(state);
   const versMult = snapshot?.versatilityMultiplier ?? computeVersatilityMultiplier(state);
-  const targetMult = snapshot?.targetMultiplier ?? computeTargetMultiplier(spell, state);
+  const targetMult = targetIndex !== undefined
+    ? computeTargetMultiplier(spell, state, targetIndex)
+    : (snapshot?.targetMultiplier ?? computeTargetMultiplier(spell, state, undefined));
 
   // Resolve base values — use snapshot if provided
   const apCoeff = snapshot?.apCoefficient ?? spell.apCoefficient;

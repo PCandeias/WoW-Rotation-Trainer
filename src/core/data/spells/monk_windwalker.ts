@@ -437,6 +437,7 @@ const BUFFS: BuffDef[] = [
     duration: 15,
     maxStacks: 2,
     isHarmful: false,
+    stackExpirationModel: 'separate' as const,
   },
   {
     id: 'dance_of_chi_ji',

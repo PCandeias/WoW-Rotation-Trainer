@@ -14,6 +14,7 @@ import type { SimEventQueue, SimEvent } from '../../engine/eventQueue';
 import { EventType } from '../../engine/eventQueue';
 import type { RngInstance } from '../../engine/rng';
 import { processDelayedSpellImpact } from './flurry_strikes';
+import { setMonkNextCombatWisdomAt } from './monk_state_keys';
 
 let defaultAplCompatibilityChecked = false;
 
@@ -126,7 +127,7 @@ export const monkWindwalkerRuntime: SpecRuntime = {
         if (state.hasTalent('combat_wisdom')) {
           state.applyBuff('combat_wisdom', encounterDuration - state.currentTime);
           const nextTick = state.currentTime + 15;
-          state.nextCombatWisdomAt = nextTick;
+          setMonkNextCombatWisdomAt(state, nextTick);
           if (nextTick < encounterDuration) {
             queue.push({ type: EventType.COMBAT_WISDOM_TICK, time: nextTick });
           }

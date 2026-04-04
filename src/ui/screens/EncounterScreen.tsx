@@ -21,8 +21,8 @@ import {
   augmentActionBarSlots,
   getVisibleActionBarSlots,
   resolveActionBarButtonSpellIds,
-  type ActionBarSlotDef,
 } from '@ui/components/ActionBar';
+import type { ActionBarSlotDef } from '@ui/specs/actionBarTypes';
 import { getDefaultProfileForSpec } from '@core/data/defaultProfile';
 import { getBuffbookForProfileSpec } from '@core/data/specBuffbook';
 import { getSpellbookForProfileSpec } from '@core/data/specSpellbook';
@@ -187,6 +187,7 @@ export function EncounterScreen({
     isPaused,
     isEnded,
     recommendations,
+    recommendationReadyIn,
     channelInfo,
     damageEvents,
     procHighlight,
@@ -438,6 +439,7 @@ export function EncounterScreen({
   }, [isPaused, loadoutOpen, pause, resume]);
 
   const showRecommendations = !usesCompetitiveTrainerRules(mode) && hasStarted && countdownValue === null;
+  const recommendationGcdRemaining = snapshot ? Math.max(0, snapshot.gcdReady - simTime) : 0;
   const showChallengePlayfield = challengeEnabled && countdownValue === null && hasStarted && !isEnded;
   const reportedAnalysisRef = useRef<RunAnalysisReport | null>(null);
   const postRunAnalysis = usePostRunAnalysis({
@@ -1013,6 +1015,8 @@ export function EncounterScreen({
           <div style={recQueuePos}>
             <RecommendationQueue
               recommendations={recommendations}
+              firstRecommendationReadyIn={recommendationReadyIn}
+              gcdRemaining={recommendationGcdRemaining}
               visible={showRecommendations}
               debug={debugRec}
               procHighlight={procHighlight}

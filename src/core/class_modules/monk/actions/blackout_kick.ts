@@ -8,6 +8,8 @@ import { rollChance } from '../../../engine/rng';
 import type { RngInstance } from '../../../engine/rng';
 import { calculateDamage } from '../../../engine/damage';
 
+import { BOK_WW_SPEC_MULTIPLIER } from '../monk_derived_values';
+
 import { TEACHINGS_OF_THE_MONASTERY_SPELL } from '../monk_proc_spells';
 
 const ENERGY_BURST_SPELL = requireMonkSpellData(451498);
@@ -35,9 +37,9 @@ export class BlackoutKickAction extends MonkMeleeAction {
     return this.p.getWeaponBothAttackPower?.() ?? this.p.getAttackPower();
   }
 
-  /** 4.29× spec bonus on top of WW 0.9× base. */
+  /** BOK_WW_SPEC_MULTIPLIER (×4.29) spec bonus on top of WW 0.9× base. */
   override composite_da_multiplier(): number {
-    return super.composite_da_multiplier() * 4.29;
+    return super.composite_da_multiplier() * BOK_WW_SPEC_MULTIPLIER;
   }
 
   /**
@@ -72,7 +74,7 @@ export class BlackoutKickAction extends MonkMeleeAction {
       const additionalTargets = Math.min(maxAdditionalTargets, this.p.activeEnemies - 1);
 
       for (let t = 0; t < additionalTargets; t++) {
-        const secondaryResult = this.calculateDamage(rng, isComboStrike);
+        const secondaryResult = this.calculateDamage(rng, isComboStrike, t + 1);
         const secondaryDamage = secondaryResult.damage * secondaryEffectiveness;
         this.p.addDamage(secondaryDamage, t + 1);
         this.p.recordPendingSpellStat('blackout_kick', secondaryDamage, 0, secondaryResult.isCrit);

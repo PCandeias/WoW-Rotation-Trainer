@@ -159,7 +159,7 @@ export class FistsOfFuryAction extends MonkMeleeAction {
 
     // Phase 1: Calculate and record damage for all targets (snapshot phase)
     for (let t = 0; t < n; t++) {
-      const { damage: baseTick, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng);
+      const { damage: baseTick, isCrit } = this.computeTickDamageFromSnapshot(snapshot, rng, t);
       let damage = baseTick;
 
       if (hasMomentumBoost) {

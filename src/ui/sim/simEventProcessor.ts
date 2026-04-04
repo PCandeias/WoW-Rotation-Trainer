@@ -10,7 +10,12 @@ import { EventType } from '@core/engine/eventQueue';
 import type { GameState, GameStateSnapshot } from '@core/engine/gameState';
 import type { SimEventQueue } from '@core/engine/eventQueue';
 import { executeAbility, processAbilityCast } from '@core/engine/executor';
-import { initAutoAttacks, processAutoAttack } from '@core/engine/autoAttack';
+import {
+  captureAutoAttackSpeedSnapshot,
+  initAutoAttacks,
+  processAutoAttack,
+  rescheduleAutoAttacksForSpeedChange,
+} from '@core/engine/autoAttack';
 import { interruptActiveChannel, processChannelEnd, processChannelTickDetailed } from '@core/engine/channel';
 import { processDotTickDetailed } from '@core/engine/dot';
 import { tryQueueAbility } from '@core/engine/spellQueue';
@@ -146,13 +151,17 @@ export function createSimEventProcessor(
           break;
 
         case EventType.AUTO_ATTACK_MH: {
+          const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
           const aaDmg = processAutoAttack('mainHand', state, queue, rng, cm);
+          rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
           if (aaDmg > 0) emitDirectDamage('auto_attack', aaDmg, false, state.currentTime);
           break;
         }
 
         case EventType.AUTO_ATTACK_OH: {
+          const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
           const aaDmg = processAutoAttack('offHand', state, queue, rng, cm);
+          rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
           if (aaDmg > 0) emitDirectDamage('auto_attack', aaDmg, false, state.currentTime);
           break;
         }
@@ -160,7 +169,9 @@ export function createSimEventProcessor(
         case EventType.DELAYED_SPELL_IMPACT:
         case EventType.TIGEREYE_BREW_TICK:
         case EventType.COMBAT_WISDOM_TICK: {
+          const previousAutoAttackSpeed = captureAutoAttackSpeedSnapshot(state);
           const result = runtime.processScheduledEvent?.(event, state, queue, rng, state.encounterDuration);
+          rescheduleAutoAttacksForSpeedChange(state, queue, previousAutoAttackSpeed);
           if (result?.handled) {
             const damages = result.damages ?? (result.damage ? [result.damage] : []);
             for (const damage of damages) {
